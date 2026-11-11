@@ -12,12 +12,17 @@ import {
   Terminal,
   Volume2,
 } from 'lucide-react';
+import { bonsaiEngine } from '../ai/bonsaiEngine';
 import { brainRouter } from '../ai/brainRouter';
 import { chatWithLocalApi, probeLocalApiModels } from '../ai/localApiClient';
 import { minicpmEngine } from '../ai/minicpmEngine';
 import { omniEngine } from '../ai/omniEngine';
 import { MicRecorder, StreamingPcmPlayer } from '../ai/audioPipeline';
-import { WEBGPU_BRAIN_PRESETS } from '../data/defaultData';
+import {
+  DEFAULT_MODEL_SETTINGS,
+  OMNI_SPEECH_LANGUAGES,
+  WEBGPU_BRAIN_PRESETS,
+} from '../data/defaultData';
 import type { VillageSimulation } from '../engine/simulation';
 import type {
   InferenceMode,
@@ -49,6 +54,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
 }) => {
   const [textStatus, setTextStatus] = useState<ModelProgress>(brainRouter.textProgress);
   const [minicpmStatus, setMinicpmStatus] = useState<ModelProgress>(minicpmEngine.progress);
+  const [bonsaiStatus, setBonsaiStatus] = useState<ModelProgress>(bonsaiEngine.progress);
   const [omniStatus, setOmniStatus] = useState<ModelProgress>(omniEngine.progress);
   const [events, setEvents] = useState<TelemetryEvent[]>(brainRouter.telemetryLog);
   const [channelFilter, setChannelFilter] = useState<string>('all');
@@ -77,6 +83,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
     const u2 = omniEngine.subscribe(setOmniStatus);
     const u5 = minicpmEngine.subscribe(setMinicpmStatus);
+    const u6 = bonsaiEngine.subscribe(setBonsaiStatus);
     const u3 = brainRouter.subscribeTelemetry(() => {
       setEvents([...brainRouter.telemetryLog]);
     });
@@ -87,6 +94,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
       u3();
       u4();
       u5();
+      u6();
     };
   }, [sim]);
 
@@ -97,7 +105,9 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
       ? omniStatus
       : settings.brainEngine === 'minicpm5-gguf'
         ? minicpmStatus
-        : textStatus;
+        : settings.brainEngine === 'bonsai2-gguf'
+          ? bonsaiStatus
+          : textStatus;
 
   const handleLoadText = async () => {
     if (settings.brainEngine === 'lfm3-omni') {
@@ -118,6 +128,25 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
           channel: 'lfm3-1.7b',
           level: 'error',
           title: 'MiniCPM5-2B Load Error',
+          detail: err?.message || String(err),
+        });
+      }
+      return;
+    }
+    if (settings.brainEngine === 'bonsai2-gguf') {
+      try {
+        await bonsaiEngine.load(settings.textModelId.trim() || 'prism-ml/Ternary-Bonsai-2-27B-gguf');
+        brainRouter.log({
+          channel: 'lfm3-1.7b',
+          level: 'success',
+          title: 'Ternary Bonsai-2 27B Ready',
+          detail: `${settings.textModelId} loaded on WebGPU`,
+        });
+      } catch (err: any) {
+        brainRouter.log({
+          channel: 'lfm3-1.7b',
+          level: 'error',
+          title: 'Bonsai-2 27B Load Error',
           detail: err?.message || String(err),
         });
       }
@@ -169,10 +198,15 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                 maxNewTokens: 120,
                 onChunk: (c) => setTestOutput((prev) => prev + c),
               })
-            : await brainRouter.generateText(msgs, {
-                maxNewTokens: 120,
-                onChunk: (c) => setTestOutput((prev) => prev + c),
-              });
+            : settings.brainEngine === 'bonsai2-gguf' && bonsaiEngine.isReady()
+              ? await bonsaiEngine.generateText(msgs, {
+                  maxNewTokens: 120,
+                  onChunk: (c) => setTestOutput((prev) => prev + c),
+                })
+              : await brainRouter.generateText(msgs, {
+                  maxNewTokens: 120,
+                  onChunk: (c) => setTestOutput((prev) => prev + c),
+                });
       setTestOutput(res.text);
       brainRouter.log({
         channel: 'lfm3-1.7b',
@@ -376,7 +410,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_110px] gap-2">
                 <div>
                   <label htmlFor="text-model-id" className="block text-[11px] font-medium text-muted mb-1">
-                    {settings.brainEngine === 'minicpm5-gguf'
+                    {settings.brainEngine === 'minicpm5-gguf' || settings.brainEngine === 'bonsai2-gguf'
                       ? 'GGUF Repo / Local Path'
                       : 'Hugging Face ONNX Repo / Local Finetune Path'}
                   </label>
@@ -398,7 +432,9 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   <select
                     id="text-dtype"
                     value={settings.textDtype}
-                    disabled={settings.brainEngine === 'minicpm5-gguf'}
+                    disabled={
+                      settings.brainEngine === 'minicpm5-gguf' || settings.brainEngine === 'bonsai2-gguf'
+                    }
                     onChange={(e) =>
                       onUpdateSettings({ textDtype: e.target.value as TextDtype })
                     }
@@ -460,7 +496,9 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                       ? omniEngine.unload()
                       : settings.brainEngine === 'minicpm5-gguf'
                         ? minicpmEngine.unload()
-                        : brainRouter.unloadTextModel()
+                        : settings.brainEngine === 'bonsai2-gguf'
+                          ? bonsaiEngine.unload()
+                          : brainRouter.unloadTextModel()
                   }
                   className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
                 >
@@ -873,6 +911,208 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               </div>
             </fieldset>
           </div>
+
+          {/* Narrator / Scribe (Dungeon Master) Controls */}
+          <fieldset className="mt-4 border-t border-borderFolk pt-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <legend className="text-xs font-semibold uppercase tracking-wider text-muted">
+                Narrator / Scribe (Reads Non-Conversation Beats in Turn)
+              </legend>
+              <button
+                type="button"
+                onClick={() =>
+                  brainRouter.speakNarration(
+                    `Evening light settles over the windmill as the villagers pause to share their craft.`,
+                    settings,
+                  )
+                }
+                disabled={!settings.narratorEnabled}
+                className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs font-medium hover:bg-card disabled:opacity-50"
+              >
+                <Volume2 className="h-3.5 w-3.5 text-ochre" />
+                <span>Test {settings.narratorName || 'Scribe'} Voice</span>
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-4 text-xs">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.narratorEnabled}
+                  onChange={(e) => onUpdateSettings({ narratorEnabled: e.target.checked })}
+                />
+                <span>Enable Scribe narrator voice</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.narrateEvents}
+                  disabled={!settings.narratorEnabled}
+                  onChange={(e) => onUpdateSettings({ narrateEvents: e.target.checked })}
+                />
+                <span>Narrate scene intros, stage actions &amp; closings</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+              <div>
+                <label htmlFor="narrator-name" className="block text-[11px] font-medium text-muted mb-1">
+                  Narrator Name
+                </label>
+                <input
+                  id="narrator-name"
+                  type="text"
+                  value={settings.narratorName}
+                  onChange={(e) => onUpdateSettings({ narratorName: e.target.value })}
+                  className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-xs"
+                />
+              </div>
+              <div>
+                <label htmlFor="narrator-style" className="block text-[11px] font-medium text-muted mb-1">
+                  Narration Tone
+                </label>
+                <select
+                  id="narrator-style"
+                  value={settings.narratorStyle}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      narratorStyle: e.target.value as ModelSettings['narratorStyle'],
+                    })
+                  }
+                  className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-xs"
+                >
+                  <option value="dungeon-master">Dungeon Master</option>
+                  <option value="storybook">Fireside Storybook</option>
+                  <option value="chronicler">Village Chronicler</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="narrator-lang" className="block text-[11px] font-medium text-muted mb-1">
+                  Accent / Locale
+                </label>
+                <select
+                  id="narrator-lang"
+                  value={settings.narratorVoice?.language ?? DEFAULT_MODEL_SETTINGS.narratorVoice.language}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      narratorVoice: {
+                        ...(settings.narratorVoice ?? DEFAULT_MODEL_SETTINGS.narratorVoice),
+                        language: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-xs"
+                >
+                  {OMNI_SPEECH_LANGUAGES.map((lang) => (
+                    <option key={lang} value={lang}>
+                      {lang}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="narrator-gender" className="block text-[11px] font-medium text-muted mb-1">
+                  Voice Register
+                </label>
+                <select
+                  id="narrator-gender"
+                  value={settings.narratorVoice?.gender ?? DEFAULT_MODEL_SETTINGS.narratorVoice.gender}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      narratorVoice: {
+                        ...(settings.narratorVoice ?? DEFAULT_MODEL_SETTINGS.narratorVoice),
+                        gender: e.target.value as 'female' | 'male',
+                      },
+                    })
+                  }
+                  className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-xs"
+                >
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-1">
+              <div>
+                <label htmlFor="narrator-pitch" className="block text-[11px] text-muted mb-0.5">
+                  Pitch:{' '}
+                  <span className="font-mono text-ink tabular-nums">
+                    {(settings.narratorVoice?.pitchSemitones ?? -1.5) >= 0 ? '+' : ''}
+                    {(settings.narratorVoice?.pitchSemitones ?? -1.5).toFixed(1)} st
+                  </span>
+                </label>
+                <input
+                  id="narrator-pitch"
+                  type="range"
+                  min={-6}
+                  max={6}
+                  step={0.5}
+                  value={settings.narratorVoice?.pitchSemitones ?? -1.5}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      narratorVoice: {
+                        ...(settings.narratorVoice ?? DEFAULT_MODEL_SETTINGS.narratorVoice),
+                        pitchSemitones: Number(e.target.value),
+                      },
+                    })
+                  }
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label htmlFor="narrator-rate" className="block text-[11px] text-muted mb-0.5">
+                  Pacing:{' '}
+                  <span className="font-mono text-ink tabular-nums">
+                    {(settings.narratorVoice?.speakingRate ?? 0.94).toFixed(2)}×
+                  </span>
+                </label>
+                <input
+                  id="narrator-rate"
+                  type="range"
+                  min={0.75}
+                  max={1.35}
+                  step={0.02}
+                  value={settings.narratorVoice?.speakingRate ?? 0.94}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      narratorVoice: {
+                        ...(settings.narratorVoice ?? DEFAULT_MODEL_SETTINGS.narratorVoice),
+                        speakingRate: Number(e.target.value),
+                      },
+                    })
+                  }
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label htmlFor="narrator-warmth" className="block text-[11px] text-muted mb-0.5">
+                  Warmth:{' '}
+                  <span className="font-mono text-ink tabular-nums">
+                    {(settings.narratorVoice?.warmthDb ?? 2.5) >= 0 ? '+' : ''}
+                    {(settings.narratorVoice?.warmthDb ?? 2.5).toFixed(1)} dB
+                  </span>
+                </label>
+                <input
+                  id="narrator-warmth"
+                  type="range"
+                  min={-6}
+                  max={6}
+                  step={0.5}
+                  value={settings.narratorVoice?.warmthDb ?? 2.5}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      narratorVoice: {
+                        ...(settings.narratorVoice ?? DEFAULT_MODEL_SETTINGS.narratorVoice),
+                        warmthDb: Number(e.target.value),
+                      },
+                    })
+                  }
+                  className="w-full"
+                />
+              </div>
+            </div>
+          </fieldset>
         </section>
 
         {/* Villager State Matrix + Live Telemetry Log */}

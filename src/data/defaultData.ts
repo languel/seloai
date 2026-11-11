@@ -106,6 +106,16 @@ export const WEBGPU_BRAIN_PRESETS: BrainPreset[] = [
     sizeNote: '~3.4 GB',
     description: 'Google Gemma 4 E2B instruction-tuned via Transformers.js WebGPU.',
   },
+  {
+    id: 'bonsai-2-27b',
+    label: 'Ternary Bonsai-2 27B (webml-community)',
+    engine: 'bonsai2-gguf',
+    modelId: 'prism-ml/Ternary-Bonsai-2-27B-gguf',
+    dtype: 'q2',
+    sizeNote: '~5.95 GB (needs 8–12+ GB VRAM)',
+    description:
+      'Prism ML 27B 1.58-bit ternary model via custom WebGPU GGUF kernels (Ternary-Bonsai-2-27B-PTQ1_0.gguf). Requires large WebGPU buffer limits & high GPU/unified memory.',
+  },
 ];
 
 export const OMNI_SPEECH_LANGUAGES = [
@@ -137,6 +147,31 @@ export function getEffectiveVoice(v: Pick<VillagerConfig, 'voice'>): VillagerVoi
     pitchSemitones: v.voice?.pitchSemitones ?? 0,
     speakingRate: v.voice?.speakingRate ?? 1.0,
     warmthDb: v.voice?.warmthDb ?? 0,
+  };
+}
+
+export function buildNarratorConfig(settings: ModelSettings): VillagerConfig {
+  const voiceStyle =
+    settings.narratorStyle === 'dungeon-master'
+      ? 'Warm, dramatic dungeon-master storyteller guiding the scene in calm measured cadence.'
+      : settings.narratorStyle === 'chronicler'
+        ? 'Observant village chronicler recording folklore and gestures crisply.'
+        : 'Gentle fireside storybook narrator.';
+  return {
+    id: 'narrator',
+    name: settings.narratorName.trim() || 'Scribe',
+    role: 'Village Scribe',
+    spritesheetId: 'f1',
+    accentColor: '#c98a3b',
+    identity: 'The invisible chronicler of Selo who reads scene beats, gestures, and reflections.',
+    plan: 'Observe and narrate non-dialogue moments in turn.',
+    voiceStyle,
+    voice: {
+      ...DEFAULT_MODEL_SETTINGS.narratorVoice,
+      ...(settings.narratorVoice ?? {}),
+    },
+    homeTile: { x: 16, y: 12 },
+    speed: 0,
   };
 }
 
@@ -371,4 +406,15 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   proximityRadiusTiles: 9,
   ambientAudioEnabled: false,
   autoConverse: true,
+  narratorEnabled: true,
+  narratorName: 'Scribe',
+  narratorStyle: 'dungeon-master',
+  narrateEvents: true,
+  narratorVoice: {
+    gender: 'male',
+    language: 'British English',
+    pitchSemitones: -1.5,
+    speakingRate: 0.94,
+    warmthDb: 2.5,
+  },
 };

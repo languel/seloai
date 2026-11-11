@@ -1,5 +1,5 @@
-import { computeSpatialMix } from '../ai/audioPipeline';
-import { brainRouter } from '../ai/brainRouter';
+import { computeSpatialMix, type SpatialMix } from '../ai/audioPipeline';
+import { brainRouter, parseDialogueAndNarration } from '../ai/brainRouter';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
 import type {
   ChatMessage,
@@ -318,15 +318,58 @@ export class VillageSimulation {
     }
   }
 
-  private async startAutonomousConversation(idA: string, idB: string) {
+  private buildSceneIntro(cfgA: VillagerConfig, cfgB: VillagerConfig): string {
+    const style = this.modelSettings.narratorStyle;
+    if (style === 'chronicler') {
+      return `${cfgA.name} and ${cfgB.name} pause nearby in Selo for a word.`;
+    }
+    if (style === 'storybook') {
+      return `Along the village lane, ${cfgA.name} crosses paths with ${cfgB.name}.`;
+    }
+    return `${cfgA.name}, the ${cfgA.role.toLowerCase()}, meets ${cfgB.name}, the ${cfgB.role.toLowerCase()}, and they step close to speak.`;
+  }
+
+  private async emitNarrationTurn(
+    conv: Conversation,
+    text: string,
+    speakAudio: boolean,
+    spatialResolver?: () => SpatialMix,
+  ): Promise<void> {
+    const clean = text.trim();
+    if (!clean) return;
+    conv.messages.push({
+      id: `msg-nar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      senderId: 'narrator',
+      senderName: this.modelSettings.narratorName.trim() || 'Scribe',
+      text: clean,
+      timestamp: Date.now(),
+      kind: 'narration',
+      source: 'story-sim',
+    });
+    conv.updatedAt = Date.now();
+    this.notify(true);
+
+    if (speakAudio && this.modelSettings.narratorEnabled) {
+      const mix = spatialResolver?.();
+      if (!spatialResolver || mix?.inRange) {
+        await brainRouter.speakNarration(clean, this.modelSettings, spatialResolver);
+      }
+    }
+  }
+
+  public async runConversationBetween(idA: string, idB: string): Promise<Conversation | undefined> {
+    return this.startAutonomousConversation(idA, idB);
+  }
+
+  private async startAutonomousConversation(idA: string, idB: string): Promise<Conversation | undefined> {
     const rtA = this.runtimes.get(idA);
     const rtB = this.runtimes.get(idB);
     const cfgA = this.configs.get(idA);
     const cfgB = this.configs.get(idB);
-    if (!rtA || !rtB || !cfgA || !cfgB) return;
+    if (!rtA || !rtB || !cfgA || !cfgB) return undefined;
 
     const convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    if (this.busyConversations.has(convId)) return;
+    if (this.busyConversations.has(convId)) return undefined;
     this.busyConversations.add(convId);
 
     const conv: Conversation = {
@@ -351,7 +394,25 @@ export class VillageSimulation {
     rtB.activityLabel = `Chatting with ${cfgA.name}`;
     this.notify(true);
 
+    const midpointResolver = () =>
+      computeSpatialMix(
+        (rtA.x + rtB.x) / 2,
+        (rtA.y + rtB.y) / 2,
+        this.player.x,
+        this.player.y,
+        this.modelSettings.proximityRadiusTiles,
+      );
+
     try {
+      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
+        await this.emitNarrationTurn(
+          conv,
+          this.buildSceneIntro(cfgA, cfgB),
+          this.modelSettings.proximityAudioEnabled,
+          midpointResolver,
+        );
+      }
+
       const turns: Array<[VillagerConfig, VillagerRuntime, VillagerConfig]> = [
         [cfgA, rtA, cfgB],
         [cfgB, rtB, cfgA],
@@ -381,35 +442,55 @@ export class VillageSimulation {
           speakSpatialResolver: this.modelSettings.proximityAudioEnabled ? resolver : undefined,
         });
 
+        const parsed = parseDialogueAndNarration(res.text, speakerCfg.name);
+
+        if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
+          for (const beat of parsed.narration) {
+            const actionText = `${speakerCfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`;
+            await this.emitNarrationTurn(
+              conv,
+              actionText,
+              this.modelSettings.proximityAudioEnabled && !res.audioHandled,
+              resolver,
+            );
+          }
+        }
+
+        const spokenLine = parsed.spoken || parsed.display;
         speakerRt.lastLatencyMs = res.durationMs;
-        speakerRt.state = 'conversing';
+        speakerRt.state = 'speaking';
         speakerRt.currentBubble = {
-          text: res.text,
+          text: spokenLine,
           expiresAt: Date.now() + 5500,
         };
         conv.messages.push({
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           senderId: speakerCfg.id,
           senderName: speakerCfg.name,
-          text: res.text,
+          text: spokenLine,
           timestamp: Date.now(),
+          kind: 'speech',
           source: res.source,
         });
         conv.updatedAt = Date.now();
         this.notify(true);
 
-        if (this.modelSettings.proximityAudioEnabled && !res.audioHandled) {
+        if (this.modelSettings.proximityAudioEnabled && !res.audioHandled && parsed.spoken) {
           const mix = resolver();
           if (mix.inRange) {
-            await brainRouter.speakLine(res.text, speakerCfg, this.modelSettings, resolver);
+            await brainRouter.speakLine(parsed.spoken, speakerCfg, this.modelSettings, resolver);
           }
         }
+        speakerRt.state = 'conversing';
 
-        await new Promise((r) => setTimeout(r, 950));
+        await new Promise((r) => setTimeout(r, 400));
       }
 
       // Reflect short conversation into memory for both villagers
-      const transcript = conv.messages.map((m) => `${m.senderName}: ${m.text}`).join('\n');
+      const transcript = conv.messages
+        .filter((m) => m.kind !== 'narration')
+        .map((m) => `${m.senderName}: ${m.text}`)
+        .join('\n');
       const memA = await brainRouter.reflectMemory({
         villager: cfgA,
         transcript,
@@ -422,13 +503,25 @@ export class VillageSimulation {
         kind: 'conversation',
         summary: memA,
       });
+      const firstSpoken = conv.messages.find((m) => m.kind !== 'narration');
       rtB.memories.push({
         id: `mem-${Date.now()}-b`,
         timestamp: Date.now(),
         importance: 6,
         kind: 'conversation',
-        summary: `Talked with ${cfgA.name}: ${conv.messages[0]?.text.slice(0, 64) ?? ''}`,
+        summary: `Talked with ${cfgA.name}: ${firstSpoken?.text.slice(0, 64) ?? ''}`,
       });
+
+      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
+        const closing = `${cfgA.name} and ${cfgB.name} part ways, carrying their thoughts back into Selo.`;
+        await this.emitNarrationTurn(
+          conv,
+          closing,
+          this.modelSettings.proximityAudioEnabled,
+          midpointResolver,
+        );
+      }
+      return conv;
     } catch {
       // Ignore transient errors in background chatter
     } finally {
@@ -533,23 +626,37 @@ export class VillageSimulation {
         },
       });
 
-      streamingMsg.text = res.text;
+      const parsed = parseDialogueAndNarration(res.text, cfg.name);
+      if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
+        for (const beat of parsed.narration) {
+          await this.emitNarrationTurn(
+            conv,
+            `${cfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`,
+            speakReply && !res.audioHandled,
+            resolver,
+          );
+        }
+      }
+
+      const finalSpoken = parsed.spoken || parsed.display;
+      streamingMsg.text = finalSpoken;
+      streamingMsg.kind = 'speech';
       streamingMsg.source = res.source;
       rt.lastLatencyMs = res.durationMs;
-      rt.currentBubble = { text: res.text, expiresAt: Date.now() + 7000 };
+      rt.currentBubble = { text: finalSpoken, expiresAt: Date.now() + 7000 };
       rt.memories.push({
         id: `mem-u-${Date.now()}`,
         timestamp: Date.now(),
         importance: 7,
         kind: 'conversation',
-        summary: `${this.player.name} said: "${text.slice(0, 50)}". I replied: "${res.text.slice(0, 55)}"`,
+        summary: `${this.player.name} said: "${text.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`,
       });
       rt.state = speakReply ? 'speaking' : 'idle';
       rt.activityLabel = cfg.plan;
       this.notify(true);
 
-      if (speakReply && !res.audioHandled) {
-        await brainRouter.speakLine(res.text, cfg, this.modelSettings, resolver);
+      if (speakReply && !res.audioHandled && finalSpoken) {
+        await brainRouter.speakLine(finalSpoken, cfg, this.modelSettings, resolver);
       }
     } finally {
       rt.state = 'idle';

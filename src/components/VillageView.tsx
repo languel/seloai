@@ -599,19 +599,22 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 <ul className="space-y-2">
                   {activeConversation.messages.map((msg) => {
                     const isHuman = msg.senderId === sim.player.id;
+                    const isNarration = msg.kind === 'narration' || msg.senderId === 'narrator';
                     return (
                       <li
                         key={msg.id}
                         className={`rounded-lg border px-3 py-2 text-xs ${
-                          isHuman
-                            ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
-                            : 'mr-2 border-borderFolk bg-card'
+                          isNarration
+                            ? 'border-ochre/40 bg-ochre/10 italic'
+                            : isHuman
+                              ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
+                              : 'mr-2 border-borderFolk bg-card'
                         }`}
                       >
-                        <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted">
+                        <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted not-italic">
                           <span className="font-semibold text-ink">{msg.senderName}</span>
                           <span className="rounded bg-surface px-1.5 py-0.5 font-mono uppercase">
-                            {msg.source}
+                            {isNarration ? 'scribe' : msg.source}
                           </span>
                         </div>
                         <p className="leading-relaxed whitespace-pre-wrap">{msg.text || '…'}</p>

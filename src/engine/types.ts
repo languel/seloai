@@ -128,10 +128,12 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
+  kind?: 'speech' | 'narration';
   source:
     | 'lfm3-1.7b'
     | 'lfm3-omni'
     | 'minicpm5'
+    | 'bonsai2'
     | 'webgpu-onnx'
     | 'ollama'
     | 'lmstudio'
@@ -151,7 +153,11 @@ export interface Conversation {
 }
 
 export type TextDtype = 'q4f16' | 'q4' | 'q2f16' | 'q2' | 'q1' | 'fp16';
-export type BrainEngineKind = 'transformers-onnx' | 'lfm3-omni' | 'minicpm5-gguf';
+export type BrainEngineKind =
+  | 'transformers-onnx'
+  | 'lfm3-omni'
+  | 'minicpm5-gguf'
+  | 'bonsai2-gguf';
 export type InferenceMode =
   | 'auto'
   | 'lfm3-omni-brain'
@@ -176,6 +182,11 @@ export interface ModelSettings {
   proximityRadiusTiles: number;
   ambientAudioEnabled: boolean;
   autoConverse: boolean;
+  narratorEnabled: boolean;
+  narratorName: string;
+  narratorStyle: 'dungeon-master' | 'storybook' | 'chronicler';
+  narrateEvents: boolean;
+  narratorVoice: VillagerVoiceProfile;
 }
 
 export type ModelStatus = 'unloaded' | 'loading' | 'ready' | 'error';

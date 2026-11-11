@@ -152,6 +152,8 @@ export class StreamingPcmPlayer {
   private sampleRate: number;
   private onEnd?: () => void;
   private completed = false;
+  private ended = false;
+  private endWaiters: Array<() => void> = [];
   private pitchSemitones: number;
   private speakingRate: number;
 
@@ -220,8 +222,7 @@ export class StreamingPcmPlayer {
     src.onended = () => {
       this.sources.delete(src);
       if (this.completed && this.sources.size === 0) {
-        this.disconnect();
-        this.onEnd?.();
+        this.finish();
       }
     };
     this.sources.add(src);
@@ -230,24 +231,40 @@ export class StreamingPcmPlayer {
     this.playhead += buffer.duration / Math.max(0.5, effectiveRate);
   }
 
+  waitForEnd(): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.endWaiters.push(resolve);
+    });
+  }
+
+  private finish() {
+    if (this.ended) return;
+    this.ended = true;
+    this.disconnect();
+    const waiters = this.endWaiters.splice(0);
+    for (const w of waiters) w();
+    this.onEnd?.();
+  }
+
   end() {
     this.completed = true;
     if (this.sources.size === 0) {
-      this.disconnect();
-      this.onEnd?.();
+      this.finish();
     }
   }
 
   stop() {
     for (const s of this.sources) {
       try {
+        s.onended = null;
         s.stop();
       } catch {
         // ignore
       }
     }
     this.sources.clear();
-    this.disconnect();
+    this.finish();
   }
 
   private disconnect() {
@@ -265,19 +282,55 @@ export function speakWebSpeechFallback(
   text: string,
   volume = 1,
   acoustic?: AcousticShaping,
+  onEnd?: () => void,
 ): boolean {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
+  if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
+    onEnd?.();
+    return false;
+  }
   try {
     const clamped = Math.max(0, Math.min(1, volume));
-    if (clamped <= 0.02) return false;
+    if (clamped <= 0.02) {
+      onEnd?.();
+      return false;
+    }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(guardTimer);
+      onEnd?.();
+    };
+    const words = Math.max(1, text.trim().split(/\s+/).length);
+    const guardMs = Math.max(2500, Math.min(16000, words * 550));
+    const guardTimer = setTimeout(finish, guardMs);
+
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = Math.max(0.7, Math.min(1.4, acoustic?.speakingRate ?? 0.98));
     utter.pitch = Math.max(0.5, Math.min(1.6, 1.0 + (acoustic?.pitchSemitones ?? 0) * 0.05));
     utter.volume = clamped;
+    utter.onend = finish;
+    utter.onerror = finish;
     window.speechSynthesis.speak(utter);
     return true;
   } catch {
+    onEnd?.();
     return false;
   }
+}
+
+export function speakWebSpeechAsync(
+  text: string,
+  volume = 1,
+  acoustic?: AcousticShaping,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const started = speakWebSpeechFallback(text, volume, acoustic, () => {
+      resolve(true);
+    });
+    if (!started) {
+      resolve(false);
+    }
+  });
 }

@@ -64,7 +64,14 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
       return {
         map: stored.map,
         villagers: stored.villagers,
-        modelSettings: { ...DEFAULT_MODEL_SETTINGS, ...(stored.modelSettings ?? {}) },
+        modelSettings: {
+          ...DEFAULT_MODEL_SETTINGS,
+          ...(stored.modelSettings ?? {}),
+          narratorVoice: {
+            ...DEFAULT_MODEL_SETTINGS.narratorVoice,
+            ...(stored.modelSettings?.narratorVoice ?? {}),
+          },
+        },
         conversations: Array.isArray(stored.conversations) ? stored.conversations : [],
         savedAt: stored.savedAt ?? Date.now(),
       };

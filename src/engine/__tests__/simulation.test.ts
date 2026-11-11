@@ -8,6 +8,7 @@ import {
   WEBGPU_BRAIN_PRESETS,
 } from '../../data/defaultData';
 import { computeSpatialMix } from '../../ai/audioPipeline';
+import { parseDialogueAndNarration } from '../../ai/brainRouter';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
 import { VillageSimulation } from '../simulation';
 import { exportVillageJson, parseImportedVillageJson } from '../../storage/villageStore';
@@ -105,7 +106,7 @@ describe('SeloAI core engine', () => {
     });
   });
 
-  it('includes LFM3-Omni all-in-one and webml-community WebGPU brain presets', () => {
+  it('includes LFM3-Omni all-in-one, Bonsai-2 27B at the bottom, and webml-community WebGPU brain presets', () => {
     const ids = WEBGPU_BRAIN_PRESETS.map((p) => p.id);
     expect(ids).toContain('lfm3-omni-allinone');
     expect(ids).toContain('qwen3.5-0.8b-text');
@@ -113,5 +114,56 @@ describe('SeloAI core engine', () => {
     expect(ids).toContain('bonsai-1.7b-q1');
     expect(ids).toContain('minicpm5-2b');
     expect(ids).toContain('gemma-4-e2b');
+    const last = WEBGPU_BRAIN_PRESETS[WEBGPU_BRAIN_PRESETS.length - 1];
+    expect(last.id).toBe('bonsai-2-27b');
+    expect(last.engine).toBe('bonsai2-gguf');
+    expect(last.modelId).toBe('prism-ml/Ternary-Bonsai-2-27B-gguf');
+  });
+
+  it('strips NPC self-name prefixes and separates stage narration for the Scribe', () => {
+    const parsed = parseDialogueAndNarration(
+      'Olena: *adjusts her shawl by the loom* "Good morning, neighbor!" [smiles warmly]',
+      'Olena',
+    );
+    expect(parsed.spoken).toBe('"Good morning, neighbor!"');
+    expect(parsed.spoken.toLowerCase().startsWith('olena:')).toBe(false);
+    expect(parsed.narration).toEqual([
+      'Adjusts her shawl by the loom',
+      'Smiles warmly',
+    ]);
+
+    const quoted = parseDialogueAndNarration('**Taras**: "The flour is freshly milled."', 'Taras');
+    expect(quoted.spoken).toBe('The flour is freshly milled.');
+  });
+
+  it('interleaves Scribe narration and alternate NPC turns in strict sequence without self-names', async () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityAudioEnabled: false,
+      enableWebSpeechFallback: false,
+      narratorEnabled: true,
+      narrateEvents: true,
+    });
+
+    const vA = DEFAULT_VILLAGERS[0];
+    const vB = DEFAULT_VILLAGERS[1];
+    const conv = await sim.runConversationBetween(vA.id, vB.id);
+    expect(conv).toBeDefined();
+
+    const msgs = conv!.messages;
+    expect(msgs[0].kind).toBe('narration');
+    expect(msgs[0].senderId).toBe('narrator');
+    expect(msgs[0].senderName).toBe(DEFAULT_MODEL_SETTINGS.narratorName);
+
+    const speechMsgs = msgs.filter((m) => m.kind === 'speech');
+    expect(speechMsgs.map((m) => m.senderId)).toEqual([vA.id, vB.id, vA.id]);
+    for (const m of speechMsgs) {
+      expect(m.text.startsWith(`${m.senderName}:`)).toBe(false);
+    }
+
+    expect(msgs[msgs.length - 1].kind).toBe('narration');
+    expect(msgs[msgs.length - 1].senderId).toBe('narrator');
   });
 });
