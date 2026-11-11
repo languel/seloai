@@ -13,13 +13,100 @@ import gentlesplashAnim from './animations/gentlesplash.json';
 import gentlewaterfallAnim from './animations/gentlewaterfall.json';
 import windmillAnim from './animations/windmill.json';
 import type {
+  BrainEngineKind,
   ModelSettings,
   SpritesheetPreset,
+  TextDtype,
   TileGrid,
   VillageMap,
   VillagerConfig,
   VillagerVoiceProfile,
 } from '../engine/types';
+
+export interface BrainPreset {
+  id: string;
+  label: string;
+  engine: BrainEngineKind;
+  modelId: string;
+  dtype: TextDtype;
+  sizeNote: string;
+  description: string;
+}
+
+export const WEBGPU_BRAIN_PRESETS: BrainPreset[] = [
+  {
+    id: 'lfm3-1.7b-local',
+    label: 'Liquid LFM3-1.7B (ONNX · Local)',
+    engine: 'transformers-onnx',
+    modelId: 'onnx-community/LFM3-1.7B-ONNX',
+    dtype: 'q4f16',
+    sizeNote: '~1.1 GB (Downloaded)',
+    description: 'Tri-hybrid local agent model served from public/models/.',
+  },
+  {
+    id: 'lfm3-omni-allinone',
+    label: 'Liquid LFM3-Omni-2B (All-in-One Brain + Voice)',
+    engine: 'lfm3-omni',
+    modelId: 'LiquidAI/LFM3-Omni-2B-GGUF',
+    dtype: 'q4f16',
+    sizeNote: '~1.6 GB (Downloaded, shared)',
+    description: 'Single WebGPU model for NPC thinking, conversations, STT & TTS — saves ~1.1 GB VRAM.',
+  },
+  {
+    id: 'qwen3.5-0.8b-text',
+    label: 'Qwen 3.5 0.8B Text (webml-community)',
+    engine: 'transformers-onnx',
+    modelId: 'onnx-community/Qwen3.5-0.8B-Text-ONNX',
+    dtype: 'q4f16',
+    sizeNote: '~469 MB',
+    description: 'Ultra-light & fast text model for rapid multi-NPC village chatter.',
+  },
+  {
+    id: 'ternary-bonsai-1.7b',
+    label: 'Ternary Bonsai 1.7B (webml-community)',
+    engine: 'transformers-onnx',
+    modelId: 'onnx-community/Ternary-Bonsai-1.7B-ONNX',
+    dtype: 'q2f16',
+    sizeNote: '~470 MB',
+    description: '2-bit / ternary quantized 1.7B model for low-VRAM GPUs.',
+  },
+  {
+    id: 'bonsai-1.7b-q1',
+    label: 'Bonsai 1.7B 1-bit (webml-community)',
+    engine: 'transformers-onnx',
+    modelId: 'onnx-community/Bonsai-1.7B-ONNX',
+    dtype: 'q1',
+    sizeNote: '~291 MB',
+    description: 'Smallest 1-bit quantized 1.7B WebGPU model.',
+  },
+  {
+    id: 'qwen3.5-2b',
+    label: 'Qwen 3.5 2B (webml-community)',
+    engine: 'transformers-onnx',
+    modelId: 'onnx-community/Qwen3.5-2B-ONNX',
+    dtype: 'q4f16',
+    sizeNote: '~1.2 GB',
+    description: 'Stronger 2B reasoning & roleplay via Transformers.js WebGPU.',
+  },
+  {
+    id: 'minicpm5-2b',
+    label: 'MiniCPM5 2B GGUF (webml-community)',
+    engine: 'minicpm5-gguf',
+    modelId: 'openbmb/MiniCPM5-2B-GGUF',
+    dtype: 'q4f16',
+    sizeNote: '~1.6 GB',
+    description: 'Runs openbmb/MiniCPM5-2B-GGUF via the MiniCPM5 WebGPU GGUF runtime.',
+  },
+  {
+    id: 'gemma-4-e2b',
+    label: 'Gemma 4 E2B-it (webml-community)',
+    engine: 'transformers-onnx',
+    modelId: 'onnx-community/gemma-4-E2B-it-ONNX',
+    dtype: 'q4f16',
+    sizeNote: '~3.4 GB',
+    description: 'Google Gemma 4 E2B instruction-tuned via Transformers.js WebGPU.',
+  },
+];
 
 export const OMNI_SPEECH_LANGUAGES = [
   'American English',
@@ -268,6 +355,7 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
 ];
 
 export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
+  brainEngine: 'transformers-onnx',
   textModelId: 'onnx-community/LFM3-1.7B-ONNX',
   textDtype: 'q4f16',
   omniModelId: 'LiquidAI/LFM3-Omni-2B-GGUF',

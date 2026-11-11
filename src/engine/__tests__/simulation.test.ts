@@ -5,6 +5,7 @@ import {
   DEFAULT_VILLAGERS,
   getEffectiveVoice,
   OMNI_SPEECH_LANGUAGES,
+  WEBGPU_BRAIN_PRESETS,
 } from '../../data/defaultData';
 import { computeSpatialMix } from '../../ai/audioPipeline';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
@@ -102,5 +103,15 @@ describe('SeloAI core engine', () => {
       speakingRate: 1.0,
       warmthDb: 0,
     });
+  });
+
+  it('includes LFM3-Omni all-in-one and webml-community WebGPU brain presets', () => {
+    const ids = WEBGPU_BRAIN_PRESETS.map((p) => p.id);
+    expect(ids).toContain('lfm3-omni-allinone');
+    expect(ids).toContain('qwen3.5-0.8b-text');
+    expect(ids).toContain('ternary-bonsai-1.7b');
+    expect(ids).toContain('bonsai-1.7b-q1');
+    expect(ids).toContain('minicpm5-2b');
+    expect(ids).toContain('gemma-4-e2b');
   });
 });

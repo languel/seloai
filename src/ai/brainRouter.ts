@@ -4,10 +4,12 @@ import type {
   ModelProgress,
   ModelSettings,
   TelemetryEvent,
+  TextDtype,
   VillagerConfig,
   VillagerRuntime,
 } from '../engine/types';
 import { omniEngine } from './omniEngine';
+import { minicpmEngine } from './minicpmEngine';
 import { chatWithLocalApi } from './localApiClient';
 import {
   StreamingPcmPlayer,
@@ -132,11 +134,11 @@ class BrainRouter {
     return this.worker;
   }
 
-  loadTextModel(modelId: string, dtype: 'q4f16' | 'q4' | 'fp16') {
+  loadTextModel(modelId: string, dtype: TextDtype) {
     this.log({
       channel: 'lfm3-1.7b',
       level: 'info',
-      title: 'Loading LFM3-1.7B',
+      title: 'Loading ONNX Brain',
       detail: `Model: ${modelId} (${dtype})`,
     });
     const w = this.ensureWorker();
@@ -179,7 +181,13 @@ class BrainRouter {
     history: ChatMessage[];
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
-  }): Promise<{ text: string; source: ChatMessage['source']; durationMs: number }> {
+    speakSpatialResolver?: () => SpatialMix;
+  }): Promise<{
+    text: string;
+    source: ChatMessage['source'];
+    durationMs: number;
+    audioHandled?: boolean;
+  }> {
     const { villager, runtime, partnerName, history, settings } = params;
     const memories = runtime.memories
       .slice(-4)
@@ -211,17 +219,138 @@ class BrainRouter {
       });
     }
 
-    const useWebGpuText =
+    // 1. LFM3-Omni-2B as All-in-One Village Brain (when selected or when it's the only WebGPU model loaded)
+    const preferOmniBrain =
+      settings.inferenceMode === 'lfm3-omni-brain' ||
+      (settings.inferenceMode === 'auto' && settings.brainEngine === 'lfm3-omni') ||
+      (settings.inferenceMode === 'auto' &&
+        !this.isTextModelReady() &&
+        !minicpmEngine.isReady() &&
+        omniEngine.isReady());
+
+    if (preferOmniBrain) {
+      if (omniEngine.isReady()) {
+        const voice = getEffectiveVoice(villager);
+        const mix = params.speakSpatialResolver?.();
+        const wantVoice = Boolean(
+          params.speakSpatialResolver && settings.enableOmniTts && mix?.inRange,
+        );
+        let player: StreamingPcmPlayer | null = null;
+        if (wantVoice && mix) {
+          this.stopSpeech();
+          this.activeSpatialResolver = params.speakSpatialResolver ?? null;
+          player = new StreamingPcmPlayer(
+            omniEngine.audioSampleRate,
+            () => {
+              if (this.activePlayer === player) {
+                this.activePlayer = null;
+                this.activeSpatialResolver = null;
+              }
+            },
+            mix,
+            voice,
+          );
+          this.activePlayer = player;
+        }
+
+        const omniMessages = wantVoice
+          ? [
+              {
+                role: 'system' as const,
+                content: `Respond with interleaved text and audio. Speak in ${voice.language} using a ${voice.gender} voice.\n${systemPrompt}`,
+              },
+              ...chatMessages.slice(1),
+            ]
+          : chatMessages;
+
+        try {
+          const res = await omniEngine.generateChatReply({
+            messages: omniMessages,
+            voice: wantVoice,
+            maxNewTokens: wantVoice ? 260 : 120,
+            onTextChunk: params.onChunk,
+            onAudioChunk: (pcm) => player?.push(pcm),
+          });
+          player?.end();
+          this.lastMetrics.lastOmniLatencyMs = res.durationMs;
+          this.lastMetrics.lastTextLatencyMs = res.durationMs;
+          this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
+          this.lastMetrics.totalCalls += 1;
+          this.log({
+            channel: 'lfm3-omni',
+            level: 'success',
+            title: `${villager.name} → ${partnerName} (Omni Brain${wantVoice ? '+Voice' : ''})`,
+            detail: res.text,
+            durationMs: res.durationMs,
+            tokensPerSec: res.tokensPerSec,
+          });
+          return {
+            text: res.text,
+            source: 'lfm3-omni',
+            durationMs: res.durationMs,
+            audioHandled: wantVoice,
+          };
+        } catch (err: any) {
+          player?.stop();
+          this.activeSpatialResolver = null;
+          this.log({
+            channel: 'lfm3-omni',
+            level: 'warn',
+            title: 'Omni Brain fallback',
+            detail: err?.message || String(err),
+          });
+          if (settings.inferenceMode === 'lfm3-omni-brain' || settings.inferenceMode === 'strict-webgpu') {
+            throw err;
+          }
+        }
+      } else if (settings.inferenceMode === 'lfm3-omni-brain') {
+        throw new Error('LFM3-Omni Brain mode selected, but LFM3-Omni-2B is not loaded yet.');
+      }
+    }
+
+    // 2. MiniCPM5-2B GGUF WebGPU Brain
+    if (
+      (settings.inferenceMode === 'auto' || settings.inferenceMode === 'strict-webgpu') &&
+      settings.brainEngine === 'minicpm5-gguf' &&
+      minicpmEngine.isReady()
+    ) {
+      try {
+        const res = await minicpmEngine.generateText(chatMessages, {
+          maxNewTokens: 110,
+          onChunk: params.onChunk,
+        });
+        this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
+        this.lastMetrics.lastTextLatencyMs = res.durationMs;
+        this.lastMetrics.totalCalls += 1;
+        this.log({
+          channel: 'lfm3-1.7b',
+          level: 'success',
+          title: `${villager.name} → ${partnerName} (MiniCPM5-2B)`,
+          detail: res.text,
+          durationMs: res.durationMs,
+          tokensPerSec: res.tokensPerSec,
+        });
+        return { text: res.text, source: 'minicpm5', durationMs: res.durationMs };
+      } catch (err: any) {
+        if (settings.inferenceMode === 'strict-webgpu') throw err;
+      }
+    }
+
+    // 3. Transformers.js ONNX WebGPU Brain (LFM3-1.7B, Qwen3.5, Gemma 4, Bonsai)
+    const useOnnxWebGpu =
       (settings.inferenceMode === 'auto' || settings.inferenceMode === 'strict-webgpu') &&
       this.isTextModelReady();
 
-    if (useWebGpuText) {
+    if (useOnnxWebGpu) {
       try {
         const res = await this.generateText(chatMessages, {
           maxNewTokens: 110,
           temperature: 0.45,
           onChunk: params.onChunk,
         });
+        const source: ChatMessage['source'] = settings.textModelId.toLowerCase().includes('lfm3')
+          ? 'lfm3-1.7b'
+          : 'webgpu-onnx';
         this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
@@ -233,12 +362,12 @@ class BrainRouter {
           durationMs: res.durationMs,
           tokensPerSec: res.tokensPerSec,
         });
-        return { text: res.text, source: 'lfm3-1.7b', durationMs: res.durationMs };
+        return { text: res.text, source, durationMs: res.durationMs };
       } catch (err: any) {
         this.log({
           channel: 'lfm3-1.7b',
           level: 'warn',
-          title: 'LFM3-1.7B fallback',
+          title: 'ONNX WebGPU fallback',
           detail: err?.message || String(err),
         });
         if (settings.inferenceMode === 'strict-webgpu') throw err;
@@ -246,7 +375,7 @@ class BrainRouter {
     }
 
     if (settings.inferenceMode === 'strict-webgpu') {
-      throw new Error('Strict WebGPU mode enabled, but LFM3-1.7B is not loaded yet.');
+      throw new Error('Strict WebGPU mode enabled, but no WebGPU brain model is loaded yet.');
     }
 
     // Ollama / LM Studio HTTP fallback (or primary when inferenceMode === 'local-api')
@@ -307,19 +436,36 @@ class BrainRouter {
     transcript: string;
     settings: ModelSettings;
   }): Promise<string> {
-    if (params.settings.inferenceMode !== 'story-sim' && this.isTextModelReady()) {
+    const msgs = [
+      {
+        role: 'system' as const,
+        content: `Summarize this short village conversation from ${params.villager.name}'s first-person perspective in one concise sentence (max 22 words).`,
+      },
+      { role: 'user' as const, content: params.transcript },
+    ];
+    if (params.settings.inferenceMode !== 'story-sim') {
       try {
-        const res = await this.generateText(
-          [
-            {
-              role: 'system',
-              content: `Summarize this short village conversation from ${params.villager.name}'s first-person perspective in one concise sentence (max 22 words).`,
-            },
-            { role: 'user', content: params.transcript },
-          ],
-          { maxNewTokens: 55, temperature: 0.25 },
-        );
-        return res.text;
+        if (
+          (params.settings.inferenceMode === 'lfm3-omni-brain' ||
+            params.settings.brainEngine === 'lfm3-omni' ||
+            (!this.isTextModelReady() && !minicpmEngine.isReady())) &&
+          omniEngine.isReady()
+        ) {
+          const res = await omniEngine.generateChatReply({
+            messages: msgs,
+            voice: false,
+            maxNewTokens: 55,
+          });
+          return res.text;
+        }
+        if (params.settings.brainEngine === 'minicpm5-gguf' && minicpmEngine.isReady()) {
+          const res = await minicpmEngine.generateText(msgs, { maxNewTokens: 55 });
+          return res.text;
+        }
+        if (this.isTextModelReady()) {
+          const res = await this.generateText(msgs, { maxNewTokens: 55, temperature: 0.25 });
+          return res.text;
+        }
       } catch {
         // fall through
       }

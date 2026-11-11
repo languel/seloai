@@ -385,6 +385,50 @@ class OmniEngine {
       };
     });
   }
+
+  /**
+   * Use LFM3-Omni-2B as a general multi-turn Village Brain (text-only or single-pass interleaved voice).
+   */
+  async generateChatReply(params: {
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    voice: boolean;
+    maxNewTokens?: number;
+    onTextChunk?: (text: string) => void;
+    onAudioChunk?: (pcm: Float32Array) => void;
+    signal?: AbortSignal;
+  }): Promise<{ text: string; durationMs: number; tokensPerSec: number }> {
+    if (!this.model) throw new Error('LFM3-Omni-2B is not loaded.');
+    return this.enqueue(async () => {
+      const session = this.model!.create_session();
+      const startedAt = performance.now();
+      let fullText = '';
+      let textChunks = 0;
+
+      const gen = session.generate(params.messages, {
+        generation_mode: params.voice ? 'interleaved' : 'text',
+        max_new_tokens: params.maxNewTokens ?? 160,
+        signal: params.signal,
+      });
+
+      for await (const ev of gen) {
+        if (ev.type === 'text' && ev.text) {
+          textChunks += 1;
+          fullText += ev.text;
+          params.onTextChunk?.(ev.text);
+        } else if (ev.type === 'audio' && ev.audio?.length) {
+          params.onAudioChunk?.(ev.audio);
+        }
+      }
+      await gen.result;
+      const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
+      const tokensPerSec = Number(((Math.max(1, textChunks) / durationMs) * 1000).toFixed(1));
+      return {
+        text: fullText.trim(),
+        durationMs,
+        tokensPerSec,
+      };
+    });
+  }
 }
 
 export const omniEngine = new OmniEngine();

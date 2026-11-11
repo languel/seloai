@@ -14,14 +14,17 @@ import {
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { chatWithLocalApi, probeLocalApiModels } from '../ai/localApiClient';
+import { minicpmEngine } from '../ai/minicpmEngine';
 import { omniEngine } from '../ai/omniEngine';
 import { MicRecorder, StreamingPcmPlayer } from '../ai/audioPipeline';
+import { WEBGPU_BRAIN_PRESETS } from '../data/defaultData';
 import type { VillageSimulation } from '../engine/simulation';
 import type {
   InferenceMode,
   ModelProgress,
   ModelSettings,
   TelemetryEvent,
+  TextDtype,
   VillagerConfig,
 } from '../engine/types';
 
@@ -45,6 +48,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   onUpdateSettings,
 }) => {
   const [textStatus, setTextStatus] = useState<ModelProgress>(brainRouter.textProgress);
+  const [minicpmStatus, setMinicpmStatus] = useState<ModelProgress>(minicpmEngine.progress);
   const [omniStatus, setOmniStatus] = useState<ModelProgress>(omniEngine.progress);
   const [events, setEvents] = useState<TelemetryEvent[]>(brainRouter.telemetryLog);
   const [channelFilter, setChannelFilter] = useState<string>('all');
@@ -72,6 +76,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   useEffect(() => {
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
     const u2 = omniEngine.subscribe(setOmniStatus);
+    const u5 = minicpmEngine.subscribe(setMinicpmStatus);
     const u3 = brainRouter.subscribeTelemetry(() => {
       setEvents([...brainRouter.telemetryLog]);
     });
@@ -81,12 +86,43 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
       u2();
       u3();
       u4();
+      u5();
     };
   }, [sim]);
 
   void simTick;
 
-  const handleLoadText = () => {
+  const activeBrainStatus =
+    settings.brainEngine === 'lfm3-omni'
+      ? omniStatus
+      : settings.brainEngine === 'minicpm5-gguf'
+        ? minicpmStatus
+        : textStatus;
+
+  const handleLoadText = async () => {
+    if (settings.brainEngine === 'lfm3-omni') {
+      await handleLoadOmni();
+      return;
+    }
+    if (settings.brainEngine === 'minicpm5-gguf') {
+      try {
+        await minicpmEngine.load(settings.textModelId.trim() || 'openbmb/MiniCPM5-2B-GGUF');
+        brainRouter.log({
+          channel: 'lfm3-1.7b',
+          level: 'success',
+          title: 'MiniCPM5-2B Ready',
+          detail: `${settings.textModelId} loaded on WebGPU`,
+        });
+      } catch (err: any) {
+        brainRouter.log({
+          channel: 'lfm3-1.7b',
+          level: 'error',
+          title: 'MiniCPM5-2B Load Error',
+          detail: err?.message || String(err),
+        });
+      }
+      return;
+    }
     brainRouter.loadTextModel(settings.textModelId.trim(), settings.textDtype);
   };
 
@@ -116,16 +152,27 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
     setTestingText(true);
     setTestOutput('');
     try {
-      const res = await brainRouter.generateText(
-        [
-          { role: 'system', content: 'You are a concise, poetic village chronicler.' },
-          { role: 'user', content: testPrompt.trim() },
-        ],
-        {
-          maxNewTokens: 120,
-          onChunk: (c) => setTestOutput((prev) => prev + c),
-        },
-      );
+      const msgs = [
+        { role: 'system' as const, content: 'You are a concise, poetic village chronicler.' },
+        { role: 'user' as const, content: testPrompt.trim() },
+      ];
+      const res =
+        settings.brainEngine === 'lfm3-omni' && omniEngine.isReady()
+          ? await omniEngine.generateChatReply({
+              messages: msgs,
+              voice: false,
+              maxNewTokens: 120,
+              onTextChunk: (c) => setTestOutput((prev) => prev + c),
+            })
+          : settings.brainEngine === 'minicpm5-gguf' && minicpmEngine.isReady()
+            ? await minicpmEngine.generateText(msgs, {
+                maxNewTokens: 120,
+                onChunk: (c) => setTestOutput((prev) => prev + c),
+              })
+            : await brainRouter.generateText(msgs, {
+                maxNewTokens: 120,
+                onChunk: (c) => setTestOutput((prev) => prev + c),
+              });
       setTestOutput(res.text);
       brainRouter.log({
         channel: 'lfm3-1.7b',
@@ -269,67 +316,121 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
 
         {/* Model Loaders & Local Finetune Endpoints */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4" aria-label="WebGPU Model Loaders">
-          {/* LFM3-1.7B Card */}
+          {/* Village Brain Card (LFM3 / Omni / Qwen3.5 / Gemma4 / Bonsai / MiniCPM5) */}
           <div className="rushnyk-card rounded-lg p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-indigoFolk" />
-                <h2 className="text-sm font-bold">LFM3-1.7B (Village Brain · Transformers.js WebGPU)</h2>
+                <h2 className="text-sm font-bold">Village Brain (WebGPU LLM)</h2>
               </div>
-              <StatusBadge status={textStatus.status} />
+              <StatusBadge status={activeBrainStatus.status} />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_110px] gap-2">
-              <div>
-                <label htmlFor="text-model-id" className="block text-[11px] font-medium text-muted mb-1">
-                  Hugging Face ONNX Repo / Local Finetune Path
-                </label>
-                <input
-                  id="text-model-id"
-                  type="text"
-                  value={settings.textModelId}
-                  onChange={(e) => onUpdateSettings({ textModelId: e.target.value })}
-                  autoCorrect="off"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs font-mono"
-                />
-              </div>
-              <div>
-                <label htmlFor="text-dtype" className="block text-[11px] font-medium text-muted mb-1">
-                  Quantization
-                </label>
-                <select
-                  id="text-dtype"
-                  value={settings.textDtype}
-                  onChange={(e) =>
-                    onUpdateSettings({ textDtype: e.target.value as ModelSettings['textDtype'] })
-                  }
-                  className="w-full rounded border border-borderFolk bg-surface px-2 py-1.5 text-xs font-mono"
-                >
-                  <option value="q4f16">q4f16</option>
-                  <option value="q4">q4</option>
-                  <option value="fp16">fp16</option>
-                </select>
-              </div>
+            <div>
+              <label htmlFor="brain-preset" className="block text-[11px] font-medium text-muted mb-1">
+                Model Preset (LiquidAI · webml-community · onnx-community)
+              </label>
+              <select
+                id="brain-preset"
+                value={
+                  WEBGPU_BRAIN_PRESETS.find(
+                    (p) =>
+                      p.engine === settings.brainEngine &&
+                      (p.engine === 'lfm3-omni' || p.modelId === settings.textModelId),
+                  )?.id ?? 'custom'
+                }
+                onChange={(e) => {
+                  const preset = WEBGPU_BRAIN_PRESETS.find((p) => p.id === e.target.value);
+                  if (!preset) return;
+                  onUpdateSettings({
+                    brainEngine: preset.engine,
+                    textModelId: preset.engine === 'lfm3-omni' ? settings.textModelId : preset.modelId,
+                    textDtype: preset.dtype,
+                    inferenceMode:
+                      preset.engine === 'lfm3-omni'
+                        ? 'lfm3-omni-brain'
+                        : settings.inferenceMode === 'lfm3-omni-brain'
+                          ? 'auto'
+                          : settings.inferenceMode,
+                  });
+                }}
+                className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
+              >
+                {WEBGPU_BRAIN_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} — {p.sizeNote}
+                  </option>
+                ))}
+                <option value="custom">Custom Model ID / Finetune…</option>
+              </select>
+              <p className="mt-1 text-[11px] text-muted">
+                {WEBGPU_BRAIN_PRESETS.find(
+                  (p) =>
+                    p.engine === settings.brainEngine &&
+                    (p.engine === 'lfm3-omni' || p.modelId === settings.textModelId),
+                )?.description ?? 'Custom WebGPU ONNX / GGUF checkpoint.'}
+              </p>
             </div>
 
-            {textStatus.status === 'loading' && (
+            {settings.brainEngine !== 'lfm3-omni' && (
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_110px] gap-2">
+                <div>
+                  <label htmlFor="text-model-id" className="block text-[11px] font-medium text-muted mb-1">
+                    {settings.brainEngine === 'minicpm5-gguf'
+                      ? 'GGUF Repo / Local Path'
+                      : 'Hugging Face ONNX Repo / Local Finetune Path'}
+                  </label>
+                  <input
+                    id="text-model-id"
+                    type="text"
+                    value={settings.textModelId}
+                    onChange={(e) => onUpdateSettings({ textModelId: e.target.value })}
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="text-dtype" className="block text-[11px] font-medium text-muted mb-1">
+                    Quantization
+                  </label>
+                  <select
+                    id="text-dtype"
+                    value={settings.textDtype}
+                    disabled={settings.brainEngine === 'minicpm5-gguf'}
+                    onChange={(e) =>
+                      onUpdateSettings({ textDtype: e.target.value as TextDtype })
+                    }
+                    className="w-full rounded border border-borderFolk bg-surface px-2 py-1.5 text-xs font-mono disabled:opacity-50"
+                  >
+                    <option value="q4f16">q4f16</option>
+                    <option value="q4">q4</option>
+                    <option value="q2f16">q2f16</option>
+                    <option value="q2">q2</option>
+                    <option value="q1">q1</option>
+                    <option value="fp16">fp16</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {activeBrainStatus.status === 'loading' && (
               <div className="space-y-1">
-                <progress max={1} value={textStatus.fraction} className="w-full h-2" />
+                <progress max={1} value={activeBrainStatus.fraction} className="w-full h-2" />
                 <div className="flex justify-between text-[11px] text-muted">
-                  <span className="truncate">{textStatus.message}</span>
+                  <span className="truncate">{activeBrainStatus.message}</span>
                   <span className="font-mono">
-                    {Math.round(textStatus.fraction * 100)}%{' '}
-                    {textStatus.totalBytes ? `of ${formatBytes(textStatus.totalBytes)}` : ''}
+                    {Math.round(activeBrainStatus.fraction * 100)}%{' '}
+                    {activeBrainStatus.totalBytes ? `of ${formatBytes(activeBrainStatus.totalBytes)}` : ''}
                   </span>
                 </div>
               </div>
             )}
 
-            {textStatus.error && (
+            {activeBrainStatus.error && (
               <div role="alert" className="rounded border border-crimson/50 bg-crimson/10 p-2 text-xs text-crimson">
-                {textStatus.error}
+                {activeBrainStatus.error}
               </div>
             )}
 
@@ -337,16 +438,30 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               <button
                 type="button"
                 onClick={handleLoadText}
-                disabled={textStatus.status === 'loading'}
+                disabled={activeBrainStatus.status === 'loading'}
                 className="inline-flex items-center gap-1.5 rounded bg-indigoFolk px-3 py-1.5 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-50"
               >
                 <Download className="h-3.5 w-3.5" />
-                <span>{textStatus.status === 'ready' ? 'Reload LFM3-1.7B' : 'Load LFM3-1.7B'}</span>
+                <span>
+                  {settings.brainEngine === 'lfm3-omni'
+                    ? activeBrainStatus.status === 'ready'
+                      ? 'Reload LFM3-Omni Brain'
+                      : 'Load LFM3-Omni-2B (All-in-One)'
+                    : activeBrainStatus.status === 'ready'
+                      ? 'Reload Brain Model'
+                      : 'Load Brain Model'}
+                </span>
               </button>
-              {textStatus.status === 'ready' && (
+              {activeBrainStatus.status === 'ready' && (
                 <button
                   type="button"
-                  onClick={() => brainRouter.unloadTextModel()}
+                  onClick={() =>
+                    settings.brainEngine === 'lfm3-omni'
+                      ? omniEngine.unload()
+                      : settings.brainEngine === 'minicpm5-gguf'
+                        ? minicpmEngine.unload()
+                        : brainRouter.unloadTextModel()
+                  }
                   className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
                 >
                   <Square className="h-3 w-3" />
@@ -370,7 +485,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                 />
                 <button
                   type="submit"
-                  disabled={testingText || textStatus.status !== 'ready'}
+                  disabled={testingText || activeBrainStatus.status !== 'ready'}
                   className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2.5 py-1 text-xs font-medium disabled:opacity-40"
                 >
                   <Play className="h-3 w-3" />
@@ -682,9 +797,10 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               <div className="space-y-1.5 text-xs">
                 {(
                   [
-                    ['auto', 'Auto: WebGPU → Ollama/LM Studio fallback → Story Sim'],
+                    ['auto', 'Auto: Active WebGPU Brain (or Omni) → Ollama/LM Studio → Story Sim'],
+                    ['lfm3-omni-brain', 'LFM3-Omni-2B All-in-One (Single Model Brain + Voice)'],
                     ['local-api', 'Ollama / LM Studio HTTP Only'],
-                    ['strict-webgpu', 'Strict WebGPU Only (require loaded LFM3 models)'],
+                    ['strict-webgpu', 'Strict WebGPU Only (require loaded WebGPU brain)'],
                     ['story-sim', 'Offline Story Sim (Zero VRAM, instant deterministic testing)'],
                   ] as Array<[InferenceMode, string]>
                 ).map(([val, label]) => (

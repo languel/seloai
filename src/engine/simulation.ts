@@ -363,12 +363,22 @@ export class VillageSimulation {
         speakerRt.state = 'thinking';
         this.notify(true);
 
+        const resolver = () =>
+          computeSpatialMix(
+            speakerRt.x,
+            speakerRt.y,
+            this.player.x,
+            this.player.y,
+            this.modelSettings.proximityRadiusTiles,
+          );
+
         const res = await brainRouter.generateVillagerReply({
           villager: speakerCfg,
           runtime: speakerRt,
           partnerName: partnerCfg.name,
           history: conv.messages,
           settings: this.modelSettings,
+          speakSpatialResolver: this.modelSettings.proximityAudioEnabled ? resolver : undefined,
         });
 
         speakerRt.lastLatencyMs = res.durationMs;
@@ -388,15 +398,7 @@ export class VillageSimulation {
         conv.updatedAt = Date.now();
         this.notify(true);
 
-        if (this.modelSettings.proximityAudioEnabled) {
-          const resolver = () =>
-            computeSpatialMix(
-              speakerRt.x,
-              speakerRt.y,
-              this.player.x,
-              this.player.y,
-              this.modelSettings.proximityRadiusTiles,
-            );
+        if (this.modelSettings.proximityAudioEnabled && !res.audioHandled) {
           const mix = resolver();
           if (mix.inRange) {
             await brainRouter.speakLine(res.text, speakerCfg, this.modelSettings, resolver);
@@ -502,12 +504,28 @@ export class VillageSimulation {
     conv.messages.push(streamingMsg);
 
     try {
+      const resolver = () => {
+        const mix = computeSpatialMix(
+          rt.x,
+          rt.y,
+          this.player.x,
+          this.player.y,
+          this.modelSettings.proximityRadiusTiles,
+        );
+        return {
+          ...mix,
+          gain: Math.max(0.35, mix.gain),
+          inRange: true,
+        };
+      };
+
       const res = await brainRouter.generateVillagerReply({
         villager: cfg,
         runtime: rt,
         partnerName: this.player.name,
         history: conv.messages.slice(0, -1),
         settings: this.modelSettings,
+        speakSpatialResolver: speakReply ? resolver : undefined,
         onChunk: (chunk) => {
           streamingMsg.text += chunk;
           rt.currentBubble = { text: streamingMsg.text, expiresAt: Date.now() + 8000 };
@@ -530,21 +548,7 @@ export class VillageSimulation {
       rt.activityLabel = cfg.plan;
       this.notify(true);
 
-      if (speakReply) {
-        const resolver = () => {
-          const mix = computeSpatialMix(
-            rt.x,
-            rt.y,
-            this.player.x,
-            this.player.y,
-            this.modelSettings.proximityRadiusTiles,
-          );
-          return {
-            ...mix,
-            gain: Math.max(0.35, mix.gain),
-            inRange: true,
-          };
-        };
+      if (speakReply && !res.audioHandled) {
         await brainRouter.speakLine(res.text, cfg, this.modelSettings, resolver);
       }
     } finally {

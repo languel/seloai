@@ -131,6 +131,8 @@ export interface ChatMessage {
   source:
     | 'lfm3-1.7b'
     | 'lfm3-omni'
+    | 'minicpm5'
+    | 'webgpu-onnx'
     | 'ollama'
     | 'lmstudio'
     | 'human-text'
@@ -148,11 +150,19 @@ export interface Conversation {
   active: boolean;
 }
 
-export type InferenceMode = 'auto' | 'strict-webgpu' | 'local-api' | 'story-sim';
+export type TextDtype = 'q4f16' | 'q4' | 'q2f16' | 'q2' | 'q1' | 'fp16';
+export type BrainEngineKind = 'transformers-onnx' | 'lfm3-omni' | 'minicpm5-gguf';
+export type InferenceMode =
+  | 'auto'
+  | 'lfm3-omni-brain'
+  | 'strict-webgpu'
+  | 'local-api'
+  | 'story-sim';
 
 export interface ModelSettings {
+  brainEngine: BrainEngineKind;
   textModelId: string;
-  textDtype: 'q4f16' | 'q4' | 'fp16';
+  textDtype: TextDtype;
   omniModelId: string;
   omniMmproj: string;
   inferenceMode: InferenceMode;

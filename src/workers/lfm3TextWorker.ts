@@ -6,8 +6,10 @@ env.allowLocalModels = true;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
 
+type TextDtype = 'q4f16' | 'q4' | 'q2f16' | 'q2' | 'q1' | 'fp16';
+
 type WorkerCommand =
-  | { type: 'load'; modelId: string; dtype: 'q4f16' | 'q4' | 'fp16' }
+  | { type: 'load'; modelId: string; dtype: TextDtype }
   | {
       type: 'generate';
       requestId: string;
@@ -26,7 +28,7 @@ function post(msg: unknown) {
   self.postMessage(msg);
 }
 
-async function handleLoad(modelId: string, dtype: 'q4f16' | 'q4' | 'fp16') {
+async function handleLoad(modelId: string, dtype: TextDtype) {
   if (generator && loadedModelId === modelId && loadedDtype === dtype) {
     post({ type: 'status', status: 'ready', fraction: 1, message: `${modelId} already loaded` });
     return;
