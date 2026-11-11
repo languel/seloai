@@ -3,6 +3,8 @@ import {
   createDefaultMap,
   DEFAULT_MODEL_SETTINGS,
   DEFAULT_VILLAGERS,
+  getEffectiveVoice,
+  OMNI_SPEECH_LANGUAGES,
 } from '../../data/defaultData';
 import { computeSpatialMix } from '../../ai/audioPipeline';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
@@ -82,5 +84,23 @@ describe('SeloAI core engine', () => {
     const outOfRange = computeSpatialMix(25, 25, 10, 10, 8);
     expect(outOfRange.inRange).toBe(false);
     expect(outOfRange.gain).toBe(0);
+  });
+
+  it('provides effective Omni voice profiles and documented speech locales', () => {
+    expect(OMNI_SPEECH_LANGUAGES).toContain('British English');
+    expect(OMNI_SPEECH_LANGUAGES).toContain('Polish');
+    const taras = DEFAULT_VILLAGERS.find((v) => v.name === 'Taras')!;
+    const v = getEffectiveVoice(taras);
+    expect(v.gender).toBe('male');
+    expect(v.pitchSemitones).toBeLessThan(0);
+
+    const legacyFallback = getEffectiveVoice({ voice: undefined });
+    expect(legacyFallback).toEqual({
+      gender: 'female',
+      language: 'American English',
+      pitchSemitones: 0,
+      speakingRate: 1.0,
+      warmthDb: 0,
+    });
   });
 });

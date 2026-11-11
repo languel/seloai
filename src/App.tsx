@@ -317,6 +317,7 @@ export function App() {
           <CharacterEditorView
             villagers={villagers}
             map={map}
+            settings={settings}
             onApplyVillagers={handleApplyVillagers}
           />
         )}

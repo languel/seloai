@@ -137,33 +137,57 @@ export function computeSpatialMix(
   return { gain, pan, distance, inRange: gain > 0.03 };
 }
 
+export interface AcousticShaping {
+  pitchSemitones?: number;
+  speakingRate?: number;
+  warmthDb?: number;
+}
+
 export class StreamingPcmPlayer {
   private output: GainNode;
+  private filter: BiquadFilterNode | null = null;
   private panner: StereoPannerNode | null = null;
   private playhead = 0;
   private sources = new Set<AudioBufferSourceNode>();
   private sampleRate: number;
   private onEnd?: () => void;
   private completed = false;
+  private pitchSemitones: number;
+  private speakingRate: number;
 
   constructor(
     sampleRate = 24000,
     onEnd?: () => void,
     spatial?: { gain: number; pan: number },
+    acoustic?: AcousticShaping,
   ) {
     const ctx = getAudioContext();
     this.sampleRate = sampleRate;
     this.onEnd = onEnd;
+    this.pitchSemitones = Math.max(-6, Math.min(6, acoustic?.pitchSemitones ?? 0));
+    this.speakingRate = Math.max(0.75, Math.min(1.35, acoustic?.speakingRate ?? 1.0));
+    const warmthDb = Math.max(-8, Math.min(8, acoustic?.warmthDb ?? 0));
+
     this.output = ctx.createGain();
     this.output.gain.value = spatial ? Math.max(0, Math.min(1, spatial.gain)) : 1;
+
+    let tail: AudioNode = this.output;
+    if (Math.abs(warmthDb) > 0.1 && typeof ctx.createBiquadFilter === 'function') {
+      this.filter = ctx.createBiquadFilter();
+      this.filter.type = 'lowshelf';
+      this.filter.frequency.value = 320;
+      this.filter.gain.value = warmthDb;
+      tail.connect(this.filter);
+      tail = this.filter;
+    }
 
     if (typeof ctx.createStereoPanner === 'function') {
       this.panner = ctx.createStereoPanner();
       this.panner.pan.value = spatial ? Math.max(-1, Math.min(1, spatial.pan)) : 0;
-      this.output.connect(this.panner);
+      tail.connect(this.panner);
       this.panner.connect(ctx.destination);
     } else {
-      this.output.connect(ctx.destination);
+      tail.connect(ctx.destination);
     }
     this.playhead = ctx.currentTime + 0.08;
   }
@@ -187,6 +211,10 @@ export class StreamingPcmPlayer {
     buffer.copyToChannel(new Float32Array(chunk), 0);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
+    src.playbackRate.value = this.speakingRate;
+    if (this.pitchSemitones !== 0 && 'detune' in src) {
+      src.detune.value = this.pitchSemitones * 100;
+    }
     src.connect(this.output);
     src.start(this.playhead);
     src.onended = () => {
@@ -197,7 +225,9 @@ export class StreamingPcmPlayer {
       }
     };
     this.sources.add(src);
-    this.playhead += buffer.duration;
+    const effectiveRate =
+      this.speakingRate * Math.pow(2, this.pitchSemitones / 12);
+    this.playhead += buffer.duration / Math.max(0.5, effectiveRate);
   }
 
   end() {
@@ -223,6 +253,7 @@ export class StreamingPcmPlayer {
   private disconnect() {
     try {
       this.output.disconnect();
+      this.filter?.disconnect();
       this.panner?.disconnect();
     } catch {
       // ignore
@@ -230,15 +261,19 @@ export class StreamingPcmPlayer {
   }
 }
 
-export function speakWebSpeechFallback(text: string, volume = 1): boolean {
+export function speakWebSpeechFallback(
+  text: string,
+  volume = 1,
+  acoustic?: AcousticShaping,
+): boolean {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
   try {
     const clamped = Math.max(0, Math.min(1, volume));
     if (clamped <= 0.02) return false;
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 0.98;
-    utter.pitch = 1.0;
+    utter.rate = Math.max(0.7, Math.min(1.4, acoustic?.speakingRate ?? 0.98));
+    utter.pitch = Math.max(0.5, Math.min(1.6, 1.0 + (acoustic?.pitchSemitones ?? 0) * 0.05));
     utter.volume = clamped;
     window.speechSynthesis.speak(utter);
     return true;

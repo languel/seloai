@@ -18,7 +18,40 @@ import type {
   TileGrid,
   VillageMap,
   VillagerConfig,
+  VillagerVoiceProfile,
 } from '../engine/types';
+
+export const OMNI_SPEECH_LANGUAGES = [
+  'American English',
+  'British English',
+  'Polish',
+  'German',
+  'French',
+  'Italian',
+  'Spanish',
+  'Portuguese',
+  'Dutch',
+  'Danish',
+  'Swedish',
+  'Finnish',
+  'Greek',
+  'Turkish',
+  'Hebrew',
+  'Arabic',
+  'Japanese',
+  'Korean',
+  'Chinese',
+] as const;
+
+export function getEffectiveVoice(v: Pick<VillagerConfig, 'voice'>): VillagerVoiceProfile {
+  return {
+    gender: v.voice?.gender ?? 'female',
+    language: v.voice?.language ?? 'American English',
+    pitchSemitones: v.voice?.pitchSemitones ?? 0,
+    speakingRate: v.voice?.speakingRate ?? 1.0,
+    warmthDb: v.voice?.warmthDb ?? 0,
+  };
+}
 
 export const ANIMATION_CATALOG: Record<
   string,
@@ -142,6 +175,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
       'Olena is a spirited embroidery weaver who encodes village stories into red-and-black cross-stitch patterns on linen rushnyky. She is warm, observant, and fiercely proud of craft.',
     plan: 'Gather madder root dyes near the meadow and compare geometric motifs with neighbors.',
     voiceStyle: 'Warm, melodic, unhurried village storyteller.',
+    voice: {
+      gender: 'female',
+      language: 'British English',
+      pitchSemitones: 0.5,
+      speakingRate: 0.96,
+      warmthDb: 2.5,
+    },
     homeTile: { x: 21, y: 15 },
     speed: 0.78,
   },
@@ -155,6 +195,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
       'Taras tends the village forge and repairs the wooden windmill gears. Blunt yet deeply generous, he prefers practical fixes over idle philosophy.',
     plan: 'Inspect the southern windmill blades and trade iron hinges for fresh bread.',
     voiceStyle: 'Grounded, rhythmic baritone, concise sentences.',
+    voice: {
+      gender: 'male',
+      language: 'American English',
+      pitchSemitones: -2.0,
+      speakingRate: 0.94,
+      warmthDb: 3.5,
+    },
     homeTile: { x: 31, y: 18 },
     speed: 0.72,
   },
@@ -168,6 +215,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
       'Marusia studies wild thyme, chamomile, and river reeds. She speaks in gentle nature metaphors and remembers every villager’s seasonal ailments.',
     plan: 'Check the riverbank herbs near the waterfall and brew evening tea for the square.',
     voiceStyle: 'Soft, curious, lyrical tone.',
+    voice: {
+      gender: 'female',
+      language: 'American English',
+      pitchSemitones: 2.0,
+      speakingRate: 1.02,
+      warmthDb: 1.0,
+    },
     homeTile: { x: 14, y: 14 },
     speed: 0.75,
   },
@@ -181,6 +235,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
       'Bogdan maps the stars above the Carpathian ridge and keeps the village almanac. He asks quirky questions about time, memory, and how minds work.',
     plan: 'Stroll toward the campfire to record evening weather notes and debate big ideas.',
     voiceStyle: 'Thoughtful, inquisitive, slight dry humor.',
+    voice: {
+      gender: 'male',
+      language: 'British English',
+      pitchSemitones: -0.5,
+      speakingRate: 0.98,
+      warmthDb: -1.0,
+    },
     homeTile: { x: 26, y: 12 },
     speed: 0.7,
   },
@@ -194,6 +255,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
       'Kalyna just arrived from neighboring valleys with songs, gossip, and sketches of folk ornaments. She loves sparking lively debates at the village square.',
     plan: 'Interview every villager to compile a living oral history of the settlement.',
     voiceStyle: 'Energetic, expressive, playful.',
+    voice: {
+      gender: 'female',
+      language: 'Polish',
+      pitchSemitones: 1.0,
+      speakingRate: 1.06,
+      warmthDb: 0,
+    },
     homeTile: { x: 24, y: 20 },
     speed: 0.85,
   },

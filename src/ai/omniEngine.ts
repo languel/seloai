@@ -275,30 +275,42 @@ class OmniEngine {
   }
 
   /**
-   * Text-to-Speech (TTS) using LFM3-Omni-2B interleaved audio_out mode.
+   * Text-to-Speech (TTS) using LFM3-Omni-2B's documented audio generation mode:
+   * `Perform TTS in <language> using a <gender> voice.` + `generation_mode: "audio"`.
    */
   async synthesizeSpeech(
     line: string,
-    voiceStyle: string,
+    options:
+      | string
+      | {
+          voiceStyle?: string;
+          gender?: 'female' | 'male';
+          language?: string;
+        },
     onAudioChunk: (pcm: Float32Array) => void,
     signal?: AbortSignal,
   ): Promise<{ durationMs: number; sampleRate: number }> {
     if (!this.model) throw new Error('LFM3-Omni-2B is not loaded.');
+    const opts = typeof options === 'string' ? { voiceStyle: options } : options;
+    const language = opts.language?.trim() || 'American English';
+    const gender = opts.gender ?? 'female';
+    const styleSuffix = opts.voiceStyle?.trim() ? ` Delivery style: ${opts.voiceStyle.trim()}` : '';
+
     return this.enqueue(async () => {
       const session = this.model!.create_session();
       const startedAt = performance.now();
       const messages = [
         {
           role: 'system',
-          content: `Respond with interleaved text and audio. Speak the exact line requested by the user naturally in this voice style: ${voiceStyle || 'warm and natural'}. Do not add extra words.`,
+          content: `Perform TTS in ${language} using a ${gender} voice.${styleSuffix}`,
         },
         {
           role: 'user',
-          content: `Read aloud verbatim: "${line}"`,
+          content: line,
         },
       ];
       const gen = session.generate(messages, {
-        generation_mode: 'interleaved',
+        generation_mode: 'audio',
         max_new_tokens: 512,
         signal,
       });

@@ -1,3 +1,4 @@
+import { getEffectiveVoice } from '../data/defaultData';
 import type {
   ChatMessage,
   ModelProgress,
@@ -348,26 +349,40 @@ class BrainRouter {
 
     this.stopSpeech();
     this.activeSpatialResolver = spatialResolver ?? null;
+    const voice = getEffectiveVoice(villager);
 
     if (settings.enableOmniTts && omniEngine.isReady()) {
-      const player = new StreamingPcmPlayer(omniEngine.audioSampleRate, () => {
-        if (this.activePlayer === player) {
-          this.activePlayer = null;
-          this.activeSpatialResolver = null;
-        }
-      }, initialMix);
+      const player = new StreamingPcmPlayer(
+        omniEngine.audioSampleRate,
+        () => {
+          if (this.activePlayer === player) {
+            this.activePlayer = null;
+            this.activeSpatialResolver = null;
+          }
+        },
+        initialMix,
+        voice,
+      );
       this.activePlayer = player;
       try {
-        const res = await omniEngine.synthesizeSpeech(text, villager.voiceStyle, (pcm) => {
-          player.push(pcm);
-        });
+        const res = await omniEngine.synthesizeSpeech(
+          text,
+          {
+            voiceStyle: villager.voiceStyle,
+            gender: voice.gender,
+            language: voice.language,
+          },
+          (pcm) => {
+            player.push(pcm);
+          },
+        );
         player.end();
         this.lastMetrics.lastOmniLatencyMs = res.durationMs;
         this.log({
           channel: 'lfm3-omni',
           level: 'success',
-          title: `TTS (${villager.name})`,
-          detail: `${text} [vol ${Math.round(initialMix.gain * 100)}%, pan ${initialMix.pan.toFixed(2)}]`,
+          title: `TTS (${villager.name} · ${voice.language} ${voice.gender})`,
+          detail: `${text} [vol ${Math.round(initialMix.gain * 100)}%, pan ${initialMix.pan.toFixed(2)}, pitch ${voice.pitchSemitones >= 0 ? '+' : ''}${voice.pitchSemitones}st]`,
           durationMs: res.durationMs,
         });
         return;
@@ -384,7 +399,7 @@ class BrainRouter {
     }
 
     if (settings.enableWebSpeechFallback) {
-      speakWebSpeechFallback(text, initialMix.gain);
+      speakWebSpeechFallback(text, initialMix.gain, voice);
       this.log({
         channel: 'audio',
         level: 'info',
@@ -428,15 +443,16 @@ class BrainRouter {
     });
 
     // 2. Generate villager's interleaved voice + text response directly via Omni
+    const voice = getEffectiveVoice(params.villager);
     const player = params.settings.enableOmniTts
-      ? new StreamingPcmPlayer(omniEngine.audioSampleRate)
+      ? new StreamingPcmPlayer(omniEngine.audioSampleRate, undefined, undefined, voice)
       : null;
     this.activePlayer = player;
 
     const systemPrompt = [
       `You are ${params.villager.name}, the ${params.villager.role} in the village of Selo.`,
       params.villager.identity,
-      `Voice style: ${params.villager.voiceStyle}.`,
+      `Speak in ${voice.language} using a ${voice.gender} voice. Style: ${params.villager.voiceStyle}.`,
       `Respond naturally to the visitor in 1 to 2 short sentences.`,
     ].join(' ');
 

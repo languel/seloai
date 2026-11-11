@@ -1,12 +1,25 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Plus, Trash2, Upload } from 'lucide-react';
-import { SPRITESHEET_PRESETS } from '../data/defaultData';
+import { Check, Copy, Plus, Trash2, Upload, Volume2 } from 'lucide-react';
+import { brainRouter } from '../ai/brainRouter';
+import {
+  getEffectiveVoice,
+  OMNI_SPEECH_LANGUAGES,
+  SPRITESHEET_PRESETS,
+} from '../data/defaultData';
 import { getCachedImage, getCustomSpriteFrame, getPresetSpriteFrame } from '../engine/renderer';
-import type { Direction, VillageMap, VillagerConfig } from '../engine/types';
+import type {
+  Direction,
+  ModelSettings,
+  VillageMap,
+  VillagerConfig,
+  VillagerVoiceProfile,
+  VoiceGender,
+} from '../engine/types';
 
 interface CharacterEditorViewProps {
   villagers: VillagerConfig[];
   map: VillageMap;
+  settings: ModelSettings;
   onApplyVillagers: (next: VillagerConfig[]) => void;
 }
 
@@ -15,11 +28,13 @@ const DIRECTIONS: Direction[] = ['down', 'left', 'right', 'up'];
 export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
   villagers,
   map,
+  settings,
   onApplyVillagers,
 }) => {
   const [drafts, setDrafts] = useState<VillagerConfig[]>(() => structuredClone(villagers));
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? '');
   const [savedNotice, setSavedNotice] = useState(false);
+  const [testingVoice, setTestingVoice] = useState(false);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -96,6 +111,23 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
   const updateCurrent = (patch: Partial<VillagerConfig>) => {
     if (!current) return;
     setDrafts((prev) => prev.map((v) => (v.id === current.id ? { ...v, ...patch } : v)));
+  };
+
+  const updateCurrentVoice = (patch: Partial<VillagerVoiceProfile>) => {
+    if (!current) return;
+    const base = getEffectiveVoice(current);
+    updateCurrent({ voice: { ...base, ...patch } });
+  };
+
+  const handleTestVoice = async () => {
+    if (!current || testingVoice) return;
+    setTestingVoice(true);
+    try {
+      const sample = `Greetings! I am ${current.name}, the ${current.role} of Selo village.`;
+      await brainRouter.speakLine(sample, current, settings);
+    } finally {
+      setTestingVoice(false);
+    }
   };
 
   const addNewVillager = () => {
@@ -349,31 +381,17 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="char-plan" className="block text-xs font-medium mb-1">
-                    Current Plan / Goal
-                  </label>
-                  <textarea
-                    id="char-plan"
-                    rows={2}
-                    value={current.plan}
-                    onChange={(e) => updateCurrent({ plan: e.target.value })}
-                    className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="char-voice" className="block text-xs font-medium mb-1">
-                    Voice Persona (LFM3-Omni TTS)
-                  </label>
-                  <textarea
-                    id="char-voice"
-                    rows={2}
-                    value={current.voiceStyle}
-                    onChange={(e) => updateCurrent({ voiceStyle: e.target.value })}
-                    className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
-                  />
-                </div>
+              <div>
+                <label htmlFor="char-plan" className="block text-xs font-medium mb-1">
+                  Current Plan / Goal
+                </label>
+                <textarea
+                  id="char-plan"
+                  rows={2}
+                  value={current.plan}
+                  onChange={(e) => updateCurrent({ plan: e.target.value })}
+                  className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
+                />
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -411,6 +429,144 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* LFM3-Omni Voice & Acoustic Dials */}
+            {(() => {
+              const voice = getEffectiveVoice(current);
+              return (
+                <div className="rushnyk-card rounded-lg p-4 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
+                        Voice &amp; Acoustic Dials (LFM3-Omni-2B + Web Audio)
+                      </h2>
+                      <p className="text-[11px] text-muted">
+                        Uses Omni&apos;s native <code>Perform TTS in &lt;locale&gt; using a &lt;gender&gt; voice</code> prompt plus client-side acoustic shaping.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTestVoice}
+                      disabled={testingVoice}
+                      className="inline-flex items-center gap-1.5 rounded bg-indigoFolk px-3 py-1.5 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-50"
+                    >
+                      <Volume2 className="h-3.5 w-3.5" />
+                      <span>{testingVoice ? 'Speaking…' : 'Test Voice'}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <fieldset className="space-y-1.5">
+                      <legend className="text-xs font-medium">Omni Voice Gender</legend>
+                      <div className="flex items-center gap-4 text-xs pt-1">
+                        {(['female', 'male'] as VoiceGender[]).map((g) => (
+                          <label key={g} className="inline-flex items-center gap-1.5 cursor-pointer capitalize">
+                            <input
+                              type="radio"
+                              name={`voice-gender-${current.id}`}
+                              value={g}
+                              checked={voice.gender === g}
+                              onChange={() => updateCurrentVoice({ gender: g })}
+                            />
+                            <span>{g}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <div>
+                      <label htmlFor="char-voice-lang" className="block text-xs font-medium mb-1">
+                        Speech Locale / Accent (19 Omni Languages)
+                      </label>
+                      <select
+                        id="char-voice-lang"
+                        value={voice.language}
+                        onChange={(e) => updateCurrentVoice({ language: e.target.value })}
+                        className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
+                      >
+                        {OMNI_SPEECH_LANGUAGES.map((lang) => (
+                          <option key={lang} value={lang}>
+                            {lang}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <label htmlFor="char-voice-pitch" className="flex justify-between font-medium mb-1">
+                        <span>Pitch Shift</span>
+                        <span className="font-mono text-muted">
+                          {voice.pitchSemitones >= 0 ? '+' : ''}
+                          {voice.pitchSemitones.toFixed(1)} st
+                        </span>
+                      </label>
+                      <input
+                        id="char-voice-pitch"
+                        type="range"
+                        min={-6}
+                        max={6}
+                        step={0.5}
+                        value={voice.pitchSemitones}
+                        onChange={(e) => updateCurrentVoice({ pitchSemitones: Number(e.target.value) })}
+                        className="w-full"
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="char-voice-rate" className="flex justify-between font-medium mb-1">
+                        <span>Speaking Rate</span>
+                        <span className="font-mono text-muted">{voice.speakingRate.toFixed(2)}×</span>
+                      </label>
+                      <input
+                        id="char-voice-rate"
+                        type="range"
+                        min={0.8}
+                        max={1.25}
+                        step={0.02}
+                        value={voice.speakingRate}
+                        onChange={(e) => updateCurrentVoice({ speakingRate: Number(e.target.value) })}
+                        className="w-full"
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="char-voice-warmth" className="flex justify-between font-medium mb-1">
+                        <span>Timbre Warmth</span>
+                        <span className="font-mono text-muted">
+                          {voice.warmthDb >= 0 ? '+' : ''}
+                          {voice.warmthDb.toFixed(1)} dB
+                        </span>
+                      </label>
+                      <input
+                        id="char-voice-warmth"
+                        type="range"
+                        min={-6}
+                        max={6}
+                        step={0.5}
+                        value={voice.warmthDb}
+                        onChange={(e) => updateCurrentVoice({ warmthDb: Number(e.target.value) })}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="char-voice" className="block text-xs font-medium mb-1">
+                      Delivery Style Notes / Finetune Speaker Tag
+                    </label>
+                    <textarea
+                      id="char-voice"
+                      rows={2}
+                      value={current.voiceStyle}
+                      onChange={(e) => updateCurrent({ voiceStyle: e.target.value })}
+                      className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Spritesheet Picker + Custom Embroidery Sprite Upload */}
             <div className="rushnyk-card rounded-lg p-4 space-y-3">

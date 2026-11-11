@@ -57,6 +57,20 @@ export interface CustomSpriteSheet {
   framesPerDirection: number;
 }
 
+export type VoiceGender = 'female' | 'male';
+
+export interface VillagerVoiceProfile {
+  gender: VoiceGender;
+  /** Any of the 19 LFM3-Omni-2B speech locales (e.g. "American English", "British English", "Polish") */
+  language: string;
+  /** Client-side Web Audio pitch shift in semitones (-6 to +6) */
+  pitchSemitones: number;
+  /** Client-side speaking speed multiplier (0.80 to 1.25) */
+  speakingRate: number;
+  /** Client-side low-shelf warmth EQ in dB (-6 to +6) */
+  warmthDb: number;
+}
+
 export interface VillagerConfig {
   id: string;
   name: string;
@@ -67,6 +81,7 @@ export interface VillagerConfig {
   identity: string;
   plan: string;
   voiceStyle: string;
+  voice?: VillagerVoiceProfile;
   homeTile: { x: number; y: number };
   speed: number;
 }
