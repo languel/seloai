@@ -1,0 +1,182 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Upheaval Pro';
+  src: url('/assets/fonts/upheaval_pro.ttf') format('truetype');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VCR OSD Mono';
+  src: url('/assets/fonts/vcr_osd_mono.ttf') format('truetype');
+  font-display: swap;
+}
+
+:root {
+  /* Light: unbleached linen parchment & vyshyvanka madder/indigo/ochre */
+  --linen-light: #f6f0e4;
+  --surface-light: #efe6d5;
+  --card-light: #fbf7ef;
+  --ink-light: #1e1a17;
+  --muted-light: #5c534a;
+  --border-light: #d6c7b0;
+  --crimson-light: #a82424;
+  --indigo-light: #23436b;
+  --ochre-light: #a86b18;
+  --sage-light: #2f6b47;
+
+  /* Dark: midnight indigo & warm hearthlight */
+  --linen-dark: #131720;
+  --surface-dark: #1a202c;
+  --card-dark: #212838;
+  --ink-dark: #f2ece1;
+  --muted-dark: #a69d91;
+  --border-dark: #353f54;
+  --crimson-dark: #e05a5a;
+  --indigo-dark: #7aa7e0;
+  --ochre-dark: #e6a945;
+  --sage-dark: #5fc288;
+
+  /* Default fallback tokens */
+  --bg-linen: var(--linen-light);
+  --bg-surface: var(--surface-light);
+  --bg-card: var(--card-light);
+  --text-ink: var(--ink-light);
+  --text-muted: var(--muted-light);
+  --border-folk: var(--border-light);
+  --accent-crimson: var(--crimson-light);
+  --accent-indigo: var(--indigo-light);
+  --accent-ochre: var(--ochre-light);
+  --accent-sage: var(--sage-light);
+
+  color-scheme: light dark;
+  accent-color: var(--accent-crimson);
+  scrollbar-color: var(--border-folk) transparent;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg-linen: var(--linen-dark);
+    --bg-surface: var(--surface-dark);
+    --bg-card: var(--card-dark);
+    --text-ink: var(--ink-dark);
+    --text-muted: var(--muted-dark);
+    --border-folk: var(--border-dark);
+    --accent-crimson: var(--crimson-dark);
+    --accent-indigo: var(--indigo-dark);
+    --accent-ochre: var(--ochre-dark);
+    --accent-sage: var(--sage-dark);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-linen: var(--linen-dark);
+  --bg-surface: var(--surface-dark);
+  --bg-card: var(--card-dark);
+  --text-ink: var(--ink-dark);
+  --text-muted: var(--muted-dark);
+  --border-folk: var(--border-dark);
+  --accent-crimson: var(--crimson-dark);
+  --accent-indigo: var(--indigo-dark);
+  --accent-ochre: var(--ochre-dark);
+  --accent-sage: var(--sage-dark);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+@supports (color: light-dark(white, black)) {
+  :root {
+    --bg-linen: light-dark(var(--linen-light), var(--linen-dark));
+    --bg-surface: light-dark(var(--surface-light), var(--surface-dark));
+    --bg-card: light-dark(var(--card-light), var(--card-dark));
+    --text-ink: light-dark(var(--ink-light), var(--ink-dark));
+    --text-muted: light-dark(var(--muted-light), var(--muted-dark));
+    --border-folk: light-dark(var(--border-light), var(--border-dark));
+    --accent-crimson: light-dark(var(--crimson-light), var(--crimson-dark));
+    --accent-indigo: light-dark(var(--indigo-light), var(--indigo-dark));
+    --accent-ochre: light-dark(var(--ochre-light), var(--ochre-dark));
+    --accent-sage: light-dark(var(--sage-light), var(--sage-dark));
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background-color: var(--bg-linen);
+  color: var(--text-ink);
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+.font-pixel {
+  font-family: 'VCR OSD Mono', ui-monospace, monospace;
+}
+
+/* Eastern European vyshyvanka cross-stitch geometric accent ribbon */
+.rushnyk-ribbon {
+  height: 6px;
+  background-image: repeating-linear-gradient(
+      90deg,
+      var(--accent-crimson) 0 6px,
+      transparent 6px 8px,
+      var(--accent-indigo) 8px 14px,
+      transparent 14px 16px,
+      var(--accent-ochre) 16px 20px,
+      transparent 20px 24px
+    );
+  opacity: 0.9;
+}
+
+.rushnyk-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-folk);
+  box-shadow: 0 2px 0 var(--border-folk);
+}
+
+.pixel-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent-crimson);
+  outline-offset: 2px;
+}
+
+/* Mandatory dialog scroll containment from modern-web-guidance */
+dialog:modal {
+  overscroll-behavior: contain;
+  background-color: var(--bg-card);
+  color: var(--text-ink);
+  border: 2px solid var(--border-folk);
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgb(15 18 24 / 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-folk) transparent;
+}
