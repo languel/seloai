@@ -8,7 +8,11 @@ import type {
 } from '../engine/types';
 import { omniEngine } from './omniEngine';
 import { chatWithLocalApi } from './localApiClient';
-import { StreamingPcmPlayer, speakWebSpeechFallback } from './audioPipeline';
+import {
+  StreamingPcmPlayer,
+  speakWebSpeechFallback,
+  type SpatialMix,
+} from './audioPipeline';
 
 type WorkerEvent =
   | {
@@ -43,6 +47,7 @@ class BrainRouter {
   private telemetryListeners = new Set<(ev: TelemetryEvent) => void>();
   public telemetryLog: TelemetryEvent[] = [];
   private activePlayer: StreamingPcmPlayer | null = null;
+  private activeSpatialResolver: (() => SpatialMix) | null = null;
   public lastMetrics = {
     avgTokensPerSec: 0,
     lastTextLatencyMs: 0,
@@ -322,13 +327,35 @@ class BrainRouter {
     return `Spoke with a neighbor: ${snippet.slice(0, 72)}`;
   }
 
+  refreshActiveSpatialMix() {
+    if (!this.activePlayer || !this.activeSpatialResolver) return;
+    const mix = this.activeSpatialResolver();
+    this.activePlayer.setSpatial(mix.gain, mix.pan);
+  }
+
   /**
-   * Spoken voice reply using LFM3-Omni-2B (or Web Speech fallback).
+   * Spoken voice reply using LFM3-Omni-2B (or Web Speech fallback),
+   * optionally attenuated & stereo-panned by spatial proximity.
    */
-  async speakLine(text: string, villager: VillagerConfig, settings: ModelSettings): Promise<void> {
+  async speakLine(
+    text: string,
+    villager: VillagerConfig,
+    settings: ModelSettings,
+    spatialResolver?: () => SpatialMix,
+  ): Promise<void> {
+    const initialMix = spatialResolver?.() ?? { gain: 1, pan: 0, distance: 0, inRange: true };
+    if (!initialMix.inRange) return;
+
     this.stopSpeech();
+    this.activeSpatialResolver = spatialResolver ?? null;
+
     if (settings.enableOmniTts && omniEngine.isReady()) {
-      const player = new StreamingPcmPlayer(omniEngine.audioSampleRate);
+      const player = new StreamingPcmPlayer(omniEngine.audioSampleRate, () => {
+        if (this.activePlayer === player) {
+          this.activePlayer = null;
+          this.activeSpatialResolver = null;
+        }
+      }, initialMix);
       this.activePlayer = player;
       try {
         const res = await omniEngine.synthesizeSpeech(text, villager.voiceStyle, (pcm) => {
@@ -340,12 +367,13 @@ class BrainRouter {
           channel: 'lfm3-omni',
           level: 'success',
           title: `TTS (${villager.name})`,
-          detail: text,
+          detail: `${text} [vol ${Math.round(initialMix.gain * 100)}%, pan ${initialMix.pan.toFixed(2)}]`,
           durationMs: res.durationMs,
         });
         return;
       } catch (err: any) {
         player.stop();
+        this.activeSpatialResolver = null;
         this.log({
           channel: 'lfm3-omni',
           level: 'warn',
@@ -356,12 +384,12 @@ class BrainRouter {
     }
 
     if (settings.enableWebSpeechFallback) {
-      speakWebSpeechFallback(text);
+      speakWebSpeechFallback(text, initialMix.gain);
       this.log({
         channel: 'audio',
         level: 'info',
         title: `Web Speech Fallback (${villager.name})`,
-        detail: text,
+        detail: `${text} [vol ${Math.round(initialMix.gain * 100)}%]`,
       });
     }
   }
@@ -369,6 +397,7 @@ class BrainRouter {
   stopSpeech() {
     this.activePlayer?.stop();
     this.activePlayer = null;
+    this.activeSpatialResolver = null;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }

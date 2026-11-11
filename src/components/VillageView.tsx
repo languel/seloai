@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Bug,
   Compass,
+  Headphones,
   Mic,
   MicOff,
   Pause,
@@ -12,6 +13,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 import { MicRecorder } from '../ai/audioPipeline';
 import {
@@ -185,6 +187,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
       }
 
       drawAnimatedSprites(ctx, map, timeSec);
+
+      // Subtle spatial hearing radius ring around player when proximity audio is enabled
+      if (sim.modelSettings.proximityAudioEnabled) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(31, 181, 201, 0.28)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.arc(
+          (sim.player.x + 0.5) * map.tileDim,
+          (sim.player.y + 0.5) * map.tileDim,
+          sim.modelSettings.proximityRadiusTiles * map.tileDim,
+          0,
+          Math.PI * 2,
+        );
+        ctx.stroke();
+        ctx.restore();
+      }
 
       // Debug paths
       if (showPaths) {
@@ -452,6 +472,23 @@ export const VillageView: React.FC<VillageViewProps> = ({
           >
             <Compass className="h-3.5 w-3.5" />
             <span>Follow</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !settings.proximityAudioEnabled;
+              if (!next) {
+                brainRouter.stopSpeech();
+              }
+              onUpdateSettings({ proximityAudioEnabled: next });
+            }}
+            aria-pressed={settings.proximityAudioEnabled}
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
+              settings.proximityAudioEnabled ? 'bg-sage text-white' : 'hover:bg-surface'
+            }`}
+          >
+            <Headphones className="h-3.5 w-3.5" />
+            <span>Eavesdrop {settings.proximityAudioEnabled ? 'On' : 'Off'}</span>
           </button>
         </div>
 

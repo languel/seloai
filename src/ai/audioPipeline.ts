@@ -111,21 +111,71 @@ export class MicRecorder {
   }
 }
 
+export interface SpatialMix {
+  gain: number;
+  pan: number;
+  distance: number;
+  inRange: boolean;
+}
+
+export function computeSpatialMix(
+  speakerX: number,
+  speakerY: number,
+  listenerX: number,
+  listenerY: number,
+  radiusTiles = 9,
+): SpatialMix {
+  const dx = speakerX - listenerX;
+  const dy = speakerY - listenerY;
+  const distance = Math.hypot(dx, dy);
+  if (radiusTiles <= 0 || distance >= radiusTiles) {
+    return { gain: 0, pan: 0, distance, inRange: false };
+  }
+  const normalized = 1 - distance / radiusTiles;
+  const gain = Math.max(0, Math.min(1, Math.pow(normalized, 1.5)));
+  const pan = Math.max(-0.92, Math.min(0.92, dx / Math.max(1, radiusTiles * 0.65)));
+  return { gain, pan, distance, inRange: gain > 0.03 };
+}
+
 export class StreamingPcmPlayer {
   private output: GainNode;
+  private panner: StereoPannerNode | null = null;
   private playhead = 0;
   private sources = new Set<AudioBufferSourceNode>();
   private sampleRate: number;
   private onEnd?: () => void;
   private completed = false;
 
-  constructor(sampleRate = 24000, onEnd?: () => void) {
+  constructor(
+    sampleRate = 24000,
+    onEnd?: () => void,
+    spatial?: { gain: number; pan: number },
+  ) {
     const ctx = getAudioContext();
     this.sampleRate = sampleRate;
     this.onEnd = onEnd;
     this.output = ctx.createGain();
-    this.output.connect(ctx.destination);
+    this.output.gain.value = spatial ? Math.max(0, Math.min(1, spatial.gain)) : 1;
+
+    if (typeof ctx.createStereoPanner === 'function') {
+      this.panner = ctx.createStereoPanner();
+      this.panner.pan.value = spatial ? Math.max(-1, Math.min(1, spatial.pan)) : 0;
+      this.output.connect(this.panner);
+      this.panner.connect(ctx.destination);
+    } else {
+      this.output.connect(ctx.destination);
+    }
     this.playhead = ctx.currentTime + 0.08;
+  }
+
+  setSpatial(gain: number, pan: number) {
+    const ctx = getAudioContext();
+    const clampedGain = Math.max(0, Math.min(1, gain));
+    const clampedPan = Math.max(-1, Math.min(1, pan));
+    this.output.gain.setTargetAtTime(clampedGain, ctx.currentTime, 0.05);
+    if (this.panner) {
+      this.panner.pan.setTargetAtTime(clampedPan, ctx.currentTime, 0.05);
+    }
   }
 
   push(chunk: Float32Array) {
@@ -142,7 +192,7 @@ export class StreamingPcmPlayer {
     src.onended = () => {
       this.sources.delete(src);
       if (this.completed && this.sources.size === 0) {
-        this.output.disconnect();
+        this.disconnect();
         this.onEnd?.();
       }
     };
@@ -153,7 +203,7 @@ export class StreamingPcmPlayer {
   end() {
     this.completed = true;
     if (this.sources.size === 0) {
-      this.output.disconnect();
+      this.disconnect();
       this.onEnd?.();
     }
   }
@@ -167,17 +217,29 @@ export class StreamingPcmPlayer {
       }
     }
     this.sources.clear();
-    this.output.disconnect();
+    this.disconnect();
+  }
+
+  private disconnect() {
+    try {
+      this.output.disconnect();
+      this.panner?.disconnect();
+    } catch {
+      // ignore
+    }
   }
 }
 
-export function speakWebSpeechFallback(text: string): boolean {
+export function speakWebSpeechFallback(text: string, volume = 1): boolean {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
   try {
+    const clamped = Math.max(0, Math.min(1, volume));
+    if (clamped <= 0.02) return false;
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.98;
     utter.pitch = 1.0;
+    utter.volume = clamped;
     window.speechSynthesis.speak(utter);
     return true;
   } catch {

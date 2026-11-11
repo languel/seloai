@@ -4,6 +4,7 @@ import {
   DEFAULT_MODEL_SETTINGS,
   DEFAULT_VILLAGERS,
 } from '../../data/defaultData';
+import { computeSpatialMix } from '../../ai/audioPipeline';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
 import { VillageSimulation } from '../simulation';
 import { exportVillageJson, parseImportedVillageJson } from '../../storage/villageStore';
@@ -65,5 +66,21 @@ describe('SeloAI core engine', () => {
     expect(parsed.map?.height).toBe(48);
     expect(parsed.villagers?.length).toBe(DEFAULT_VILLAGERS.length);
     expect(parsed.modelSettings?.textModelId).toBe(DEFAULT_MODEL_SETTINGS.textModelId);
+  });
+
+  it('computes spatial volume attenuation and left/right stereo pan by proximity', () => {
+    const closeRight = computeSpatialMix(12, 10, 10, 10, 8);
+    expect(closeRight.inRange).toBe(true);
+    expect(closeRight.gain).toBeGreaterThan(0.5);
+    expect(closeRight.pan).toBeGreaterThan(0.2);
+
+    const farLeft = computeSpatialMix(4, 10, 10, 10, 8);
+    expect(farLeft.inRange).toBe(true);
+    expect(farLeft.gain).toBeLessThan(closeRight.gain);
+    expect(farLeft.pan).toBeLessThan(-0.5);
+
+    const outOfRange = computeSpatialMix(25, 25, 10, 10, 8);
+    expect(outOfRange.inRange).toBe(false);
+    expect(outOfRange.gain).toBe(0);
   });
 });

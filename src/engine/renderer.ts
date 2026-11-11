@@ -206,9 +206,14 @@ export function drawVillager(
 
 export function drawPlayer(ctx: CanvasRenderingContext2D, player: PlayerAvatar, tileDim: number) {
   const img = getCachedImage('/assets/player.png');
-  const isMoving = player.path.length > 0;
-  const seq = playerSpritesheet.animations?.[player.facing] ?? [player.facing];
-  const frameName = isMoving ? seq[Math.floor(player.animFrame) % seq.length] : seq[0];
+  const isMoving = player.isMoving || player.path.length > 0;
+  const flipHorizontal = player.facing === 'right';
+  const lookupDir: Direction = flipHorizontal ? 'left' : player.facing;
+  const rawSeq = playerSpritesheet.animations?.[lookupDir] ?? ['down', 'down2', 'down3'];
+  // 4-beat stride cycle using middle frame as neutral standing pose
+  const walkCycle = rawSeq.length >= 3 ? [rawSeq[0], rawSeq[1], rawSeq[2], rawSeq[1]] : rawSeq;
+  const idleFrame = rawSeq[1] ?? rawSeq[0];
+  const frameName = isMoving ? walkCycle[Math.floor(player.animFrame) % walkCycle.length] : idleFrame;
   const frame = playerSpritesheet.frames[frameName]?.frame;
   const px = player.x * tileDim;
   const py = player.y * tileDim;
@@ -220,7 +225,15 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, player: PlayerAvatar, 
   ctx.fill();
 
   if (img && frame) {
-    ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, px + 2, py - 2, tileDim - 4, tileDim - 2);
+    if (flipHorizontal) {
+      ctx.save();
+      ctx.translate(px + tileDim, py - 4);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, 0, 0, tileDim, tileDim);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, px, py - 4, tileDim, tileDim);
+    }
   }
 
   ctx.font = '600 10px Inter, system-ui, sans-serif';

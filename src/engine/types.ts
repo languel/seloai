@@ -147,6 +147,8 @@ export interface ModelSettings {
   localApiModel: string;
   enableOmniTts: boolean;
   enableWebSpeechFallback: boolean;
+  proximityAudioEnabled: boolean;
+  proximityRadiusTiles: number;
   ambientAudioEnabled: boolean;
   autoConverse: boolean;
 }

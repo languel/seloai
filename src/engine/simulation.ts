@@ -1,3 +1,4 @@
+import { computeSpatialMix } from '../ai/audioPipeline';
 import { brainRouter } from '../ai/brainRouter';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
 import type {
@@ -19,6 +20,8 @@ export interface PlayerAvatar {
   path: Array<{ x: number; y: number }>;
   animFrame: number;
   speed: number;
+  isMoving: boolean;
+  lastNudgeAt: number;
 }
 
 export interface SimulationSnapshot {
@@ -68,6 +71,8 @@ export class VillageSimulation {
       path: [],
       animFrame: 0,
       speed: 2.8,
+      isMoving: false,
+      lastNudgeAt: 0,
     };
     this.syncVillagers(villagers);
   }
@@ -158,6 +163,8 @@ export class VillageSimulation {
   nudgePlayer(dx: number, dy: number, dt: number) {
     if (dx === 0 && dy === 0) return;
     this.player.path = [];
+    this.player.isMoving = true;
+    this.player.lastNudgeAt = performance.now();
     const nx = this.player.x + dx * this.player.speed * dt;
     const ny = this.player.y + dy * this.player.speed * dt;
     if (isTileWalkable(this.map, Math.round(nx), Math.round(this.player.y))) {
@@ -177,6 +184,9 @@ export class VillageSimulation {
 
     // Player moves even if simulation is paused so inspection feels responsive
     this.advanceEntityPath(this.player, rawDt);
+    this.player.isMoving =
+      this.player.path.length > 0 || performance.now() - this.player.lastNudgeAt < 120;
+    brainRouter.refreshActiveSpatialMix();
 
     if (this.paused) return;
     const dt = Math.min(0.1, rawDt) * this.speedMultiplier;
@@ -377,6 +387,22 @@ export class VillageSimulation {
         });
         conv.updatedAt = Date.now();
         this.notify(true);
+
+        if (this.modelSettings.proximityAudioEnabled) {
+          const resolver = () =>
+            computeSpatialMix(
+              speakerRt.x,
+              speakerRt.y,
+              this.player.x,
+              this.player.y,
+              this.modelSettings.proximityRadiusTiles,
+            );
+          const mix = resolver();
+          if (mix.inRange) {
+            await brainRouter.speakLine(res.text, speakerCfg, this.modelSettings, resolver);
+          }
+        }
+
         await new Promise((r) => setTimeout(r, 950));
       }
 
@@ -505,7 +531,21 @@ export class VillageSimulation {
       this.notify(true);
 
       if (speakReply) {
-        await brainRouter.speakLine(res.text, cfg, this.modelSettings);
+        const resolver = () => {
+          const mix = computeSpatialMix(
+            rt.x,
+            rt.y,
+            this.player.x,
+            this.player.y,
+            this.modelSettings.proximityRadiusTiles,
+          );
+          return {
+            ...mix,
+            gain: Math.max(0.35, mix.gain),
+            inRange: true,
+          };
+        };
+        await brainRouter.speakLine(res.text, cfg, this.modelSettings, resolver);
       }
     } finally {
       rt.state = 'idle';

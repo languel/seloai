@@ -731,6 +731,29 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   />
                   <span>Autonomous villager-to-villager conversations</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.proximityAudioEnabled}
+                    onChange={(e) => onUpdateSettings({ proximityAudioEnabled: e.target.checked })}
+                  />
+                  <span>Hear nearby conversations (spatial pan &amp; distance mix)</span>
+                </label>
+                <div className="flex items-center gap-2 pt-1">
+                  <label htmlFor="proximity-radius" className="text-muted">
+                    Hearing radius: <span className="font-mono text-ink">{settings.proximityRadiusTiles} tiles</span>
+                  </label>
+                  <input
+                    id="proximity-radius"
+                    type="range"
+                    min={4}
+                    max={18}
+                    step={1}
+                    value={settings.proximityRadiusTiles}
+                    onChange={(e) => onUpdateSettings({ proximityRadiusTiles: Number(e.target.value) })}
+                    className="flex-1"
+                  />
+                </div>
               </div>
             </fieldset>
           </div>

@@ -53,6 +53,7 @@ export const data: SpritesheetData = {
   },
   animations: {
     left: ['left', 'left2', 'left3'],
+    right: ['left', 'left2', 'left3'],
     up: ['up', 'up2', 'up3'],
     down: ['down', 'down2', 'down3'],
   },
