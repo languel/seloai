@@ -148,6 +148,25 @@ class BrainRouter {
   private activeSpatialResolver: (() => SpatialMix) | null = null;
   private speechQueue: Promise<void> = Promise.resolve();
   private speechEpoch = 0;
+  public activeSpeechInfo: {
+    speakerId: string;
+    speakerName: string;
+    text: string;
+    engine: 'omni' | 'webspeech';
+    startedAt: number;
+  } | null = null;
+  private speechListeners = new Set<(info: BrainRouter['activeSpeechInfo']) => void>();
+
+  subscribeSpeechState(fn: (info: BrainRouter['activeSpeechInfo']) => void): () => void {
+    this.speechListeners.add(fn);
+    fn(this.activeSpeechInfo);
+    return () => this.speechListeners.delete(fn);
+  }
+
+  private setActiveSpeech(info: BrainRouter['activeSpeechInfo']) {
+    this.activeSpeechInfo = info;
+    for (const fn of this.speechListeners) fn(info);
+  }
   public lastMetrics = {
     avgTokensPerSec: 0,
     lastTextLatencyMs: 0,
@@ -1003,6 +1022,13 @@ class BrainRouter {
           voice,
         );
         this.activePlayer = player;
+        this.setActiveSpeech({
+          speakerId: villager.id,
+          speakerName: villager.name,
+          text: cleanSpeech,
+          engine: 'omni',
+          startedAt: Date.now(),
+        });
         try {
           const res = await omniEngine.synthesizeSpeech(
             cleanSpeech,
@@ -1025,6 +1051,9 @@ class BrainRouter {
             durationMs: res.durationMs,
           });
           await player.waitForEnd();
+          if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
+            this.setActiveSpeech(null);
+          }
           return;
         } catch (err: any) {
           player.stop();
@@ -1032,6 +1061,7 @@ class BrainRouter {
             this.activePlayer = null;
             this.activeSpatialResolver = null;
           }
+          this.setActiveSpeech(null);
           this.log({
             channel: 'lfm3-omni',
             level: 'warn',
@@ -1042,13 +1072,26 @@ class BrainRouter {
       }
 
       if (settings.enableWebSpeechFallback) {
+        this.setActiveSpeech({
+          speakerId: villager.id,
+          speakerName: villager.name,
+          text: cleanSpeech,
+          engine: 'webspeech',
+          startedAt: Date.now(),
+        });
         this.log({
           channel: 'audio',
           level: 'info',
           title: `Web Speech Fallback (${villager.name})`,
           detail: `${cleanSpeech} [vol ${Math.round(initialMix.gain * 100)}%]`,
         });
-        await speakWebSpeechAsync(cleanSpeech, initialMix.gain, voice);
+        try {
+          await speakWebSpeechAsync(cleanSpeech, initialMix.gain, voice);
+        } finally {
+          if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
+            this.setActiveSpeech(null);
+          }
+        }
       }
     });
   }
@@ -1096,6 +1139,7 @@ class BrainRouter {
     this.activePlayer?.stop();
     this.activePlayer = null;
     this.activeSpatialResolver = null;
+    this.setActiveSpeech(null);
     cancelActiveWebSpeech();
     this.log({
       channel: 'audio',

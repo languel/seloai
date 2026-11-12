@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bug,
+  ChevronDown,
+  ChevronRight,
   Compass,
   Headphones,
   LayoutList,
@@ -20,6 +22,7 @@ import {
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 import {
+  computeSpatialMix,
   EAVESDROP_SLIDER_MAX,
   EAVESDROP_WHOLE_MAP_RADIUS,
   isWholeMapEavesdrop,
@@ -123,8 +126,18 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [showPaths, setShowPaths] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [rosterView, setRosterView] = useState<'cards' | 'compact'>('cards');
+  const [rosterCollapsed, setRosterCollapsed] = useState(false);
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
+  const [scriptCollapsed, setScriptCollapsed] = useState(false);
   const [followSelected, setFollowSelected] = useState(false);
-  const [feedMode, setFeedMode] = useState<'focused' | 'village'>('focused');
+  const [feedMode, setFeedMode] = useState<'hearing' | 'focused' | 'village'>('hearing');
+  const [filterSpeech, setFilterSpeech] = useState(true);
+  const [filterScribe, setFilterScribe] = useState(true);
+  const [filterThoughts, setFilterThoughts] = useState(true);
+  const [filterHuman, setFilterHuman] = useState(true);
+  const [scriptActorFilter, setScriptActorFilter] = useState<string>('all');
+  const [scriptSearch, setScriptSearch] = useState('');
+  const [activeSpeech, setActiveSpeech] = useState(brainRouter.activeSpeechInfo);
   const [chatInput, setChatInput] = useState('');
   const [mentionMatch, setMentionMatch] = useState<{ trigger: '@' | '#'; start: number; query: string } | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
@@ -153,6 +166,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
     const unsub = sim.subscribe(() => setTick((t) => t + 1));
     return unsub;
   }, [sim]);
+
+  useEffect(() => {
+    return brainRouter.subscribeSpeechState(setActiveSpeech);
+  }, []);
 
   // Center camera initially
   useEffect(() => {
@@ -433,15 +450,69 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const isScribeSelected = selectedId === 'narrator';
   const selectedCfg = isScribeSelected ? undefined : villagers.find((v) => v.id === selectedId);
   const selectedRt = selectedCfg ? sim.runtimes.get(selectedCfg.id) : undefined;
-  const activeConversation =
-    feedMode === 'village'
-      ? sim.conversations[0]
-      : isScribeSelected
-        ? sim.conversations.find((c) => c.participantIds.includes('narrator')) ??
-          sim.conversations.find((c) => c.messages.some((m) => m.kind === 'narration'))
-        : selectedCfg
-          ? sim.conversations.find((c) => c.participantIds.includes(selectedCfg.id))
-          : undefined;
+  const activeConversation = isScribeSelected
+    ? sim.conversations.find((c) => c.participantIds.includes('narrator')) ??
+      sim.conversations.find((c) => c.messages.some((m) => m.kind === 'narration'))
+    : selectedCfg
+      ? sim.conversations.find((c) => c.participantIds.includes(selectedCfg.id))
+      : undefined;
+
+  const listenerPos = sim.getListenerPosition();
+  const isSpeakerAudible = (senderId: string, participantIds: string[]) => {
+    if (settings.proximityRadiusTiles <= 0) return false;
+    if (isWholeMapEavesdrop(settings.proximityRadiusTiles)) return true;
+    const rt =
+      sim.runtimes.get(senderId) ??
+      participantIds.map((id) => sim.runtimes.get(id)).find((r) => Boolean(r));
+    if (!rt) return true;
+    return computeSpatialMix(
+      rt.x,
+      rt.y,
+      listenerPos.x,
+      listenerPos.y,
+      settings.proximityRadiusTiles,
+    ).inRange;
+  };
+
+  const rawScriptMessages = (() => {
+    if (feedMode === 'focused') {
+      return activeConversation?.messages ?? [];
+    }
+    const merged = sim.conversations.flatMap((conv) =>
+      conv.messages.map((msg) => ({ msg, participantIds: conv.participantIds })),
+    );
+    merged.sort((a, b) => a.msg.timestamp - b.msg.timestamp);
+    const recent = merged.slice(-140);
+    if (feedMode === 'hearing') {
+      return recent
+        .filter(
+          ({ msg, participantIds }) =>
+            msg.senderId === sim.player.id ||
+            (activeSpeech && msg.senderId === activeSpeech.speakerId && msg.text.includes(activeSpeech.text.slice(0, 24))) ||
+            isSpeakerAudible(msg.senderId, participantIds),
+        )
+        .map((x) => x.msg);
+    }
+    return recent.map((x) => x.msg);
+  })();
+
+  const displayedMessages = rawScriptMessages.filter((msg) => {
+    const isHuman = msg.senderId === sim.player.id;
+    const isNarration = msg.kind === 'narration' || msg.senderId === 'narrator';
+    const isThought = msg.kind === 'thought';
+    if (isHuman && !filterHuman) return false;
+    if (isNarration && !filterScribe) return false;
+    if (isThought && !filterThoughts) return false;
+    if (!isHuman && !isNarration && !isThought && !filterSpeech) return false;
+    if (scriptActorFilter !== 'all' && msg.senderId !== scriptActorFilter) return false;
+    if (scriptSearch.trim()) {
+      const q = scriptSearch.trim().toLowerCase();
+      if (!`${msg.senderName} ${msg.text} ${msg.reasoning ?? ''}`.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   const mentionCandidates: MentionCandidate[] = [
     {
@@ -856,26 +927,43 @@ export const VillageView: React.FC<VillageViewProps> = ({
       <aside className="flex flex-col border-l border-borderFolk bg-surface overflow-hidden" aria-label="Villager Inspector">
         {/* Villager Quick Roster */}
         <div className="border-b border-borderFolk bg-card p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
-              Villagers ({villagers.length})
-            </h2>
+          <div className={`flex items-center justify-between gap-2 ${rosterCollapsed ? '' : 'mb-2'}`}>
+            <button
+              type="button"
+              onClick={() => setRosterCollapsed((c) => !c)}
+              aria-expanded={!rosterCollapsed}
+              className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted hover:text-ink"
+            >
+              {rosterCollapsed ? (
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span>Villagers ({villagers.length})</span>
+              {rosterCollapsed && (
+                <span className="ml-1 font-normal normal-case text-ink">
+                  · {isScribeSelected ? narratorName : selectedCfg?.name ?? ''}
+                </span>
+              )}
+            </button>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setRosterView((m) => (m === 'cards' ? 'compact' : 'cards'))}
-                aria-pressed={rosterView === 'compact'}
-                title={rosterView === 'cards' ? 'Switch to compact pills' : 'Switch to thumbnail cards'}
-                className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-ink"
-              >
-                <LayoutList className="h-3 w-3" aria-hidden="true" />
-                <span>{rosterView === 'cards' ? 'Compact' : 'Thumbnails'}</span>
-              </button>
+              {!rosterCollapsed && (
+                <button
+                  type="button"
+                  onClick={() => setRosterView((m) => (m === 'cards' ? 'compact' : 'cards'))}
+                  aria-pressed={rosterView === 'compact'}
+                  title={rosterView === 'cards' ? 'Switch to compact pills' : 'Switch to thumbnail cards'}
+                  className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-ink"
+                >
+                  <LayoutList className="h-3 w-3" aria-hidden="true" />
+                  <span>{rosterView === 'cards' ? 'Compact' : 'Thumbnails'}</span>
+                </button>
+              )}
               <span className="font-mono text-[11px] text-muted">{sim.fps} FPS</span>
             </div>
           </div>
 
-          {rosterView === 'cards' ? (
+          {!rosterCollapsed && (rosterView === 'cards' ? (
             <div className="max-h-44 overflow-y-auto thin-scroll space-y-1.5 pr-0.5">
               {villagers.map((v) => {
                 const rt = sim.runtimes.get(v.id);
@@ -979,7 +1067,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 <span>{narratorName}</span>
               </button>
             </div>
-          )}
+          ))}
         </div>
 
         {/* Selected Villager or Scribe Details + Shared Chat */}
@@ -987,217 +1075,364 @@ export const VillageView: React.FC<VillageViewProps> = ({
           <>
             {isScribeSelected ? (
               <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-base font-bold leading-tight">{narratorName}</h3>
-                    <p className="text-xs text-muted">Village Scribe · {settings.narratorStyle}</p>
-                  </div>
-                  <span className="rounded-full border border-ochre/40 bg-ochre/10 px-2 py-0.5 text-[11px] font-medium text-ink">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDetailCollapsed((c) => !c)}
+                    aria-expanded={!detailCollapsed}
+                    className="flex items-center gap-1.5 text-left min-w-0"
+                  >
+                    {detailCollapsed ? (
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
+                    )}
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold leading-tight truncate">{narratorName}</h3>
+                      <p className="text-[11px] text-muted truncate">Village Scribe · {settings.narratorStyle}</p>
+                    </div>
+                  </button>
+                  <span className="rounded-full border border-ochre/40 bg-ochre/10 px-2 py-0.5 text-[11px] font-medium text-ink shrink-0">
                     {settings.narratorEnabled ? 'Voiced' : 'Muted'}
                   </span>
                 </div>
-                <p className="text-xs leading-relaxed text-ink/90">
-                  Chronicler of Selo. Reads non-dialogue scene beats in turn, and answers directly
-                  when addressed with <code className="font-mono">@{narratorName}</code>.
-                </p>
+                {!detailCollapsed && (
+                  <p className="text-xs leading-relaxed text-ink/90">
+                    Chronicler of Selo. Reads non-dialogue scene beats in turn, and answers directly
+                    when addressed with <code className="font-mono">@{narratorName}</code>.
+                  </p>
+                )}
               </div>
             ) : (
               selectedCfg &&
               selectedRt && (
                 <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-base font-bold leading-tight">{selectedCfg.name}</h3>
-                      <p className="text-xs text-muted">{selectedCfg.role}</p>
-                    </div>
-                    <span className="rounded-full border border-borderFolk bg-surface px-2 py-0.5 text-[11px] font-medium capitalize">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDetailCollapsed((c) => !c)}
+                      aria-expanded={!detailCollapsed}
+                      className="flex items-center gap-1.5 text-left min-w-0"
+                    >
+                      {detailCollapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold leading-tight truncate">{selectedCfg.name}</h3>
+                        <p className="text-[11px] text-muted truncate">{selectedCfg.role}</p>
+                      </div>
+                    </button>
+                    <span className="rounded-full border border-borderFolk bg-surface px-2 py-0.5 text-[11px] font-medium capitalize shrink-0">
                       {selectedRt.state}
                     </span>
                   </div>
-                  <p className="text-xs leading-relaxed text-ink/90">{selectedCfg.identity}</p>
-                  <div className="rounded border border-borderFolk bg-surface/80 px-2.5 py-1.5 text-xs">
-                    <span className="font-semibold text-ochre">Motive:</span>{' '}
-                    {selectedRt.currentIntention || selectedCfg.plan}
-                  </div>
+                  {!detailCollapsed && (
+                    <>
+                      <p className="text-xs leading-relaxed text-ink/90">{selectedCfg.identity}</p>
+                      <div className="rounded border border-borderFolk bg-surface/80 px-2.5 py-1.5 text-xs">
+                        <span className="font-semibold text-ochre">Motive:</span>{' '}
+                        {selectedRt.currentIntention || selectedCfg.plan}
+                      </div>
 
-                  <div className="flex flex-col gap-1 text-xs">
-                    <details>
-                      <summary className="cursor-pointer font-medium text-indigoFolk hover:underline">
-                        Recent Memories ({selectedRt.memories.length})
-                      </summary>
-                      <ul className="mt-1.5 max-h-24 space-y-1 overflow-y-auto thin-scroll pr-1">
-                        {[...selectedRt.memories].reverse().slice(0, 8).map((m) => (
-                          <li key={m.id} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
-                            {m.summary}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                    {selectedRt.worldFeed && selectedRt.worldFeed.length > 0 && (
-                      <details>
-                        <summary className="cursor-pointer font-medium text-sage hover:underline">
-                          World Session Log ({selectedRt.worldFeed.length})
-                        </summary>
-                        <ul className="mt-1.5 max-h-24 space-y-1 overflow-y-auto thin-scroll pr-1">
-                          {[...selectedRt.worldFeed].reverse().slice(0, 8).map((item, idx) => (
-                            <li key={idx} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
-                              {item}
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
-                  </div>
+                      <div className="flex flex-col gap-1 text-xs">
+                        <details>
+                          <summary className="cursor-pointer font-medium text-indigoFolk hover:underline">
+                            Recent Memories ({selectedRt.memories.length})
+                          </summary>
+                          <ul className="mt-1.5 max-h-24 space-y-1 overflow-y-auto thin-scroll pr-1">
+                            {[...selectedRt.memories].reverse().slice(0, 8).map((m) => (
+                              <li key={m.id} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
+                                {m.summary}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                        {selectedRt.worldFeed && selectedRt.worldFeed.length > 0 && (
+                          <details>
+                            <summary className="cursor-pointer font-medium text-sage hover:underline">
+                              World Session Log ({selectedRt.worldFeed.length})
+                            </summary>
+                            <ul className="mt-1.5 max-h-24 space-y-1 overflow-y-auto thin-scroll pr-1">
+                              {[...selectedRt.worldFeed].reverse().slice(0, 8).map((item, idx) => (
+                                <li key={idx} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               )
             )}
 
-            {/* Active Conversation Stream */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-2.5 thin-scroll">
-              <div className="flex items-center justify-between gap-2 text-xs text-muted">
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setFeedMode('focused')}
-                    aria-pressed={feedMode === 'focused'}
-                    className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                      feedMode === 'focused' ? 'bg-indigoFolk text-white' : 'hover:bg-surface'
-                    }`}
-                  >
-                    Thread
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFeedMode('village')}
-                    aria-pressed={feedMode === 'village'}
-                    className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                      feedMode === 'village' ? 'bg-indigoFolk text-white' : 'hover:bg-surface'
-                    }`}
-                  >
-                    Latest Scene ({sim.conversations.length})
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => onUpdateSettings({ eavesdropSpeech: !settings.eavesdropSpeech })}
-                    aria-pressed={settings.eavesdropSpeech}
-                    title="Hear spoken villager dialogue within eavesdrop radius"
-                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
-                      settings.eavesdropSpeech
-                        ? 'border-sage bg-sage/15 text-ink'
-                        : 'border-borderFolk bg-card text-muted hover:text-ink'
-                    }`}
-                  >
-                    Speech {settings.eavesdropSpeech ? 'On' : 'Off'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onUpdateSettings({ eavesdropThoughts: !settings.eavesdropThoughts })}
-                    aria-pressed={settings.eavesdropThoughts}
-                    title="Eavesdrop on in-character villager thoughts within radius"
-                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
-                      settings.eavesdropThoughts
-                        ? 'border-indigoFolk bg-indigoFolk/15 text-ink'
-                        : 'border-borderFolk bg-card text-muted hover:text-ink'
-                    }`}
-                  >
-                    Thoughts {settings.eavesdropThoughts ? 'On' : 'Off'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onUpdateSettings({ showReasoning: !settings.showReasoning })}
-                    aria-pressed={settings.showReasoning}
-                    title="Toggle separate <think> reasoning mode (audio off by default)"
-                    className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
-                      settings.showReasoning
-                        ? 'border-ochre bg-ochre/15 text-ink'
-                        : 'border-borderFolk bg-card text-muted hover:text-ink'
-                    }`}
-                  >
-                    &lt;think&gt; {settings.showReasoning ? 'On' : 'Off'}
-                  </button>
-                  {settings.showReasoning && (
+            {/* Active Conversation / World Script Stream */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="border-b border-borderFolk bg-surface/80 px-3 py-2 space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs text-muted">
+                  <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => onUpdateSettings({ speakReasoning: !settings.speakReasoning })}
-                      aria-pressed={settings.speakReasoning}
-                      title="Read <think> reasoning aloud (off by default)"
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
-                        settings.speakReasoning
-                          ? 'border-crimson bg-crimson/15 text-ink'
+                      onClick={() => setScriptCollapsed((c) => !c)}
+                      aria-expanded={!scriptCollapsed}
+                      aria-label="Toggle world script panel"
+                      className="rounded p-0.5 hover:bg-card"
+                    >
+                      {scriptCollapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      )}
+                    </button>
+                    {(
+                      [
+                        ['hearing', 'Live Audio'],
+                        ['focused', 'Thread'],
+                        ['village', `World Script (${sim.conversations.length})`],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => {
+                          setFeedMode(id);
+                          setScriptCollapsed(false);
+                        }}
+                        aria-pressed={feedMode === id}
+                        className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                          feedMode === id ? 'bg-indigoFolk text-white' : 'hover:bg-card'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ eavesdropSpeech: !settings.eavesdropSpeech })}
+                      aria-pressed={settings.eavesdropSpeech}
+                      title="Hear spoken villager dialogue within eavesdrop radius"
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                        settings.eavesdropSpeech
+                          ? 'border-sage bg-sage/15 text-ink'
                           : 'border-borderFolk bg-card text-muted hover:text-ink'
                       }`}
                     >
-                      &lt;think&gt; Sound {settings.speakReasoning ? 'On' : 'Off'}
+                      Speech {settings.eavesdropSpeech ? 'On' : 'Off'}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !settings.enableOmniTts;
-                      if (!next) brainRouter.flushAudioQueue();
-                      onUpdateSettings({
-                        enableOmniTts: next,
-                      });
-                    }}
-                    aria-pressed={settings.enableOmniTts}
-                    className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface"
-                  >
-                    {settings.enableOmniTts ? (
-                      <Volume2 className="h-3 w-3 text-sage" />
-                    ) : (
-                      <VolumeX className="h-3 w-3 text-muted" />
-                    )}
-                    <span>Voice {settings.enableOmniTts ? 'On' : 'Off'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {!activeConversation || activeConversation.messages.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-borderFolk p-4 text-center text-xs text-muted">
-                  Type a message below or use <code className="font-mono">@Name</code>,{' '}
-                  <code className="font-mono">@all</code> / <code className="font-mono">@world</code>, or{' '}
-                  <code className="font-mono">@{narratorName}</code> to guide one or many characters.
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {activeConversation.messages.map((msg) => {
-                    const isHuman = msg.senderId === sim.player.id;
-                    const isNarration = msg.kind === 'narration' || msg.senderId === 'narrator';
-                    const isThought = msg.kind === 'thought';
-                    return (
-                      <li
-                        key={msg.id}
-                        className={`rounded-lg border px-3 py-2 text-xs ${
-                          isNarration
-                            ? 'border-ochre/40 bg-ochre/10 italic'
-                            : isThought
-                              ? 'mr-2 border-dashed border-sage/60 bg-sage/10 italic text-ink/90'
-                              : isHuman
-                                ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
-                                : 'mr-2 border-borderFolk bg-card'
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ eavesdropThoughts: !settings.eavesdropThoughts })}
+                      aria-pressed={settings.eavesdropThoughts}
+                      title="Eavesdrop on in-character villager thoughts within radius"
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                        settings.eavesdropThoughts
+                          ? 'border-indigoFolk bg-indigoFolk/15 text-ink'
+                          : 'border-borderFolk bg-card text-muted hover:text-ink'
+                      }`}
+                    >
+                      Thoughts {settings.eavesdropThoughts ? 'On' : 'Off'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ showReasoning: !settings.showReasoning })}
+                      aria-pressed={settings.showReasoning}
+                      title="Toggle separate <think> reasoning mode (audio off by default)"
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
+                        settings.showReasoning
+                          ? 'border-ochre bg-ochre/15 text-ink'
+                          : 'border-borderFolk bg-card text-muted hover:text-ink'
+                      }`}
+                    >
+                      &lt;think&gt; {settings.showReasoning ? 'On' : 'Off'}
+                    </button>
+                    {settings.showReasoning && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateSettings({ speakReasoning: !settings.speakReasoning })}
+                        aria-pressed={settings.speakReasoning}
+                        title="Read <think> reasoning aloud (off by default)"
+                        className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
+                          settings.speakReasoning
+                            ? 'border-crimson bg-crimson/15 text-ink'
+                            : 'border-borderFolk bg-card text-muted hover:text-ink'
                         }`}
                       >
-                        <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted not-italic">
-                          <span className="font-semibold text-ink">{msg.senderName}</span>
-                          <span className="rounded bg-surface px-1.5 py-0.5 font-mono uppercase">
-                            {isNarration ? 'scribe' : isThought ? 'thought' : msg.source}
+                        &lt;think&gt; Sound {settings.speakReasoning ? 'On' : 'Off'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !settings.enableOmniTts;
+                        if (!next) brainRouter.flushAudioQueue();
+                        onUpdateSettings({
+                          enableOmniTts: next,
+                        });
+                      }}
+                      aria-pressed={settings.enableOmniTts}
+                      className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface"
+                    >
+                      {settings.enableOmniTts ? (
+                        <Volume2 className="h-3 w-3 text-sage" />
+                      ) : (
+                        <VolumeX className="h-3 w-3 text-muted" />
+                      )}
+                      <span>Voice {settings.enableOmniTts ? 'On' : 'Off'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {!scriptCollapsed && (
+                  <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                    <span className="text-muted mr-0.5">Show:</span>
+                    {(
+                      [
+                        ['Speech', filterSpeech, setFilterSpeech],
+                        ['Scribe', filterScribe, setFilterScribe],
+                        ['Thoughts', filterThoughts, setFilterThoughts],
+                        ['You', filterHuman, setFilterHuman],
+                      ] as const
+                    ).map(([label, active, setter]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setter((v) => !v)}
+                        aria-pressed={active}
+                        className={`rounded-full border px-2 py-0.5 font-medium ${
+                          active
+                            ? 'border-indigoFolk/60 bg-indigoFolk/15 text-ink'
+                            : 'border-borderFolk bg-card text-muted line-through'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <select
+                      aria-label="Filter script by character"
+                      value={scriptActorFilter}
+                      onChange={(e) => setScriptActorFilter(e.target.value)}
+                      className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px]"
+                    >
+                      <option value="all">All Actors</option>
+                      {villagers.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name}
+                        </option>
+                      ))}
+                      <option value="narrator">{narratorName}</option>
+                      <option value={sim.player.id}>{sim.player.name}</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={scriptSearch}
+                      onChange={(e) => setScriptSearch(e.target.value)}
+                      placeholder="Filter text…"
+                      aria-label="Filter world script text"
+                      className="min-w-[88px] flex-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[10px]"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {!scriptCollapsed && (
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 thin-scroll">
+                  {activeSpeech && (
+                    <div className="rounded-lg border border-sage/60 bg-sage/10 px-2.5 py-1.5 text-xs flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sage">
+                          <Volume2 className="h-3 w-3 animate-pulse" aria-hidden="true" />
+                          <span>
+                            Now Hearing · {activeSpeech.speakerName} ({activeSpeech.engine})
                           </span>
                         </div>
-                        <p className="leading-relaxed whitespace-pre-wrap">{msg.text || '…'}</p>
-                        {settings.showReasoning && msg.reasoning && (
-                          <aside
-                            aria-label="Model reasoning"
-                            className="mt-1.5 rounded border border-borderFolk/70 bg-surface/80 px-2 py-1 font-mono text-[10px] not-italic text-muted whitespace-pre-wrap"
+                        <p className="text-ink mt-0.5 line-clamp-2">{activeSpeech.text}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {sim.configs.has(activeSpeech.speakerId) && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedId(activeSpeech.speakerId)}
+                            className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] hover:border-indigoFolk"
                           >
-                            <span className="font-semibold text-ink/70">&lt;think&gt;</span> {msg.reasoning}
-                          </aside>
+                            Focus
+                          </button>
                         )}
-                      </li>
-                    );
-                  })}
-                </ul>
+                        <button
+                          type="button"
+                          onClick={() => brainRouter.flushAudioQueue()}
+                          className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] hover:text-crimson"
+                        >
+                          Flush
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {displayedMessages.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-borderFolk p-4 text-center text-xs text-muted">
+                      Type a message below or use <code className="font-mono">@Name</code>,{' '}
+                      <code className="font-mono">@all</code> / <code className="font-mono">@world</code>, or{' '}
+                      <code className="font-mono">@{narratorName}</code> to guide one or many characters.
+                    </div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {displayedMessages.map((msg) => {
+                        const isHuman = msg.senderId === sim.player.id;
+                        const isNarration = msg.kind === 'narration' || msg.senderId === 'narrator';
+                        const isThought = msg.kind === 'thought';
+                        const isNowSpeaking =
+                          Boolean(activeSpeech) &&
+                          activeSpeech!.speakerId === msg.senderId &&
+                          msg.text.includes(activeSpeech!.text.slice(0, 20));
+                        return (
+                          <li
+                            key={msg.id}
+                            className={`rounded-lg border px-3 py-2 text-xs ${
+                              isNowSpeaking
+                                ? 'border-sage bg-sage/15 ring-1 ring-sage/50'
+                                : isNarration
+                                  ? 'border-ochre/40 bg-ochre/10 italic'
+                                  : isThought
+                                    ? 'mr-2 border-dashed border-sage/60 bg-sage/10 italic text-ink/90'
+                                    : isHuman
+                                      ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
+                                      : 'mr-2 border-borderFolk bg-card'
+                            }`}
+                          >
+                            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted not-italic">
+                              <span className="font-semibold text-ink">
+                                {msg.senderName}
+                                {isNowSpeaking && (
+                                  <span className="ml-1.5 rounded bg-sage px-1 py-0.2 text-[9px] text-white uppercase">
+                                    Speaking
+                                  </span>
+                                )}
+                              </span>
+                              <span className="rounded bg-surface px-1.5 py-0.5 font-mono uppercase">
+                                {isNarration ? 'scribe' : isThought ? 'thought' : msg.source}
+                              </span>
+                            </div>
+                            <p className="leading-relaxed whitespace-pre-wrap">{msg.text || '…'}</p>
+                            {settings.showReasoning && msg.reasoning && (
+                              <aside
+                                aria-label="Model reasoning"
+                                className="mt-1.5 rounded border border-borderFolk/70 bg-surface/80 px-2 py-1 font-mono text-[10px] not-italic text-muted whitespace-pre-wrap"
+                              >
+                                <span className="font-semibold text-ink/70">&lt;think&gt;</span> {msg.reasoning}
+                              </aside>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
               )}
             </div>
 
