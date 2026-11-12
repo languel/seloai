@@ -885,6 +885,38 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   />
                   <span>Autonomous villager-to-villager conversations</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.eavesdropSpeech}
+                    onChange={(e) => onUpdateSettings({ eavesdropSpeech: e.target.checked })}
+                  />
+                  <span>Hear spoken dialogue within eavesdrop radius</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.eavesdropThoughts}
+                    onChange={(e) => onUpdateSettings({ eavesdropThoughts: e.target.checked })}
+                  />
+                  <span>Eavesdrop on villagers&apos; in-character inner thoughts</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.showReasoning}
+                    onChange={(e) => onUpdateSettings({ showReasoning: e.target.checked })}
+                  />
+                  <span>Separate &lt;think&gt; reasoning mode (display LLM meta-thoughts)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.speakReasoning}
+                    onChange={(e) => onUpdateSettings({ speakReasoning: e.target.checked })}
+                  />
+                  <span>Speak &lt;think&gt; reasoning aloud (off by default)</span>
+                </label>
                 <div className="space-y-1 pt-1">
                   <div className="flex items-center gap-2">
                     <label htmlFor="proximity-radius" className="text-muted">

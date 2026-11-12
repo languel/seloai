@@ -754,7 +754,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 className="h-2 w-2 rounded-full"
                 style={{ backgroundColor: isScribeSelected ? '#fff' : '#c98a3b' }}
               />
-              <span>@{narratorName}</span>
+              <span>{narratorName}</span>
             </button>
           </div>
         </div>
@@ -854,23 +854,79 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     Latest Scene ({sim.conversations.length})
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings({
-                      enableOmniTts: !settings.enableOmniTts,
-                    })
-                  }
-                  aria-pressed={settings.enableOmniTts}
-                  className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface"
-                >
-                  {settings.enableOmniTts ? (
-                    <Volume2 className="h-3 w-3 text-sage" />
-                  ) : (
-                    <VolumeX className="h-3 w-3 text-muted" />
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ eavesdropSpeech: !settings.eavesdropSpeech })}
+                    aria-pressed={settings.eavesdropSpeech}
+                    title="Hear spoken villager dialogue within eavesdrop radius"
+                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                      settings.eavesdropSpeech
+                        ? 'border-sage bg-sage/15 text-ink'
+                        : 'border-borderFolk bg-card text-muted hover:text-ink'
+                    }`}
+                  >
+                    Speech {settings.eavesdropSpeech ? 'On' : 'Off'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ eavesdropThoughts: !settings.eavesdropThoughts })}
+                    aria-pressed={settings.eavesdropThoughts}
+                    title="Eavesdrop on in-character villager thoughts within radius"
+                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                      settings.eavesdropThoughts
+                        ? 'border-indigoFolk bg-indigoFolk/15 text-ink'
+                        : 'border-borderFolk bg-card text-muted hover:text-ink'
+                    }`}
+                  >
+                    Thoughts {settings.eavesdropThoughts ? 'On' : 'Off'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ showReasoning: !settings.showReasoning })}
+                    aria-pressed={settings.showReasoning}
+                    title="Toggle separate <think> reasoning mode (audio off by default)"
+                    className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
+                      settings.showReasoning
+                        ? 'border-ochre bg-ochre/15 text-ink'
+                        : 'border-borderFolk bg-card text-muted hover:text-ink'
+                    }`}
+                  >
+                    &lt;think&gt; {settings.showReasoning ? 'On' : 'Off'}
+                  </button>
+                  {settings.showReasoning && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ speakReasoning: !settings.speakReasoning })}
+                      aria-pressed={settings.speakReasoning}
+                      title="Read <think> reasoning aloud (off by default)"
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
+                        settings.speakReasoning
+                          ? 'border-crimson bg-crimson/15 text-ink'
+                          : 'border-borderFolk bg-card text-muted hover:text-ink'
+                      }`}
+                    >
+                      &lt;think&gt; Sound {settings.speakReasoning ? 'On' : 'Off'}
+                    </button>
                   )}
-                  <span>Voice {settings.enableOmniTts ? 'On' : 'Off'}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateSettings({
+                        enableOmniTts: !settings.enableOmniTts,
+                      })
+                    }
+                    aria-pressed={settings.enableOmniTts}
+                    className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface"
+                  >
+                    {settings.enableOmniTts ? (
+                      <Volume2 className="h-3 w-3 text-sage" />
+                    ) : (
+                      <VolumeX className="h-3 w-3 text-muted" />
+                    )}
+                    <span>Voice {settings.enableOmniTts ? 'On' : 'Off'}</span>
+                  </button>
+                </div>
               </div>
 
               {!activeConversation || activeConversation.messages.length === 0 ? (
@@ -884,24 +940,35 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   {activeConversation.messages.map((msg) => {
                     const isHuman = msg.senderId === sim.player.id;
                     const isNarration = msg.kind === 'narration' || msg.senderId === 'narrator';
+                    const isThought = msg.kind === 'thought';
                     return (
                       <li
                         key={msg.id}
                         className={`rounded-lg border px-3 py-2 text-xs ${
                           isNarration
                             ? 'border-ochre/40 bg-ochre/10 italic'
-                            : isHuman
-                              ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
-                              : 'mr-2 border-borderFolk bg-card'
+                            : isThought
+                              ? 'mr-2 border-dashed border-sage/60 bg-sage/10 italic text-ink/90'
+                              : isHuman
+                                ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
+                                : 'mr-2 border-borderFolk bg-card'
                         }`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted not-italic">
                           <span className="font-semibold text-ink">{msg.senderName}</span>
                           <span className="rounded bg-surface px-1.5 py-0.5 font-mono uppercase">
-                            {isNarration ? 'scribe' : msg.source}
+                            {isNarration ? 'scribe' : isThought ? 'thought' : msg.source}
                           </span>
                         </div>
                         <p className="leading-relaxed whitespace-pre-wrap">{msg.text || '…'}</p>
+                        {settings.showReasoning && msg.reasoning && (
+                          <aside
+                            aria-label="Model reasoning"
+                            className="mt-1.5 rounded border border-borderFolk/70 bg-surface/80 px-2 py-1 font-mono text-[10px] not-italic text-muted whitespace-pre-wrap"
+                          >
+                            <span className="font-semibold text-ink/70">&lt;think&gt;</span> {msg.reasoning}
+                          </aside>
+                        )}
                       </li>
                     );
                   })}

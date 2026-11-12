@@ -711,6 +711,21 @@ export class VillageSimulation {
       rt.path = path;
       rt.state = 'walking';
       this.appendWorldEvent(rt, `Decided: ${decision.motive}`);
+      if (this.modelSettings.eavesdropThoughts && this.modelSettings.proximityRadiusTiles > 0) {
+        const thoughtResolver = () =>
+          computeSpatialMix(
+            rt.x,
+            rt.y,
+            this.player.x,
+            this.player.y,
+            this.modelSettings.proximityRadiusTiles,
+          );
+        const mix = thoughtResolver();
+        if (mix.inRange) {
+          rt.currentBubble = { text: `(${decision.motive})`, expiresAt: Date.now() + 3600 };
+          void brainRouter.speakThought(decision.motive, cfg, this.modelSettings, thoughtResolver);
+        }
+      }
     } else {
       // Avoid waiting full idle cooldown if pathfinding yielded empty
       rt.lastMoveAt = now - 2200;
@@ -865,6 +880,8 @@ export class VillageSimulation {
 
     try {
       const eavesdropEnabled = this.modelSettings.proximityRadiusTiles > 0;
+      const hearSpeech = eavesdropEnabled && this.modelSettings.eavesdropSpeech;
+      const hearThoughts = eavesdropEnabled && this.modelSettings.eavesdropThoughts;
       const landmarkName = this.getNearestLandmarkName((rtA.x + rtB.x) / 2, (rtA.y + rtB.y) / 2);
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
         const introBeat = await brainRouter.generateSceneBeat({
@@ -881,7 +898,7 @@ export class VillageSimulation {
         await this.emitNarrationTurn(
           conv,
           introBeat,
-          eavesdropEnabled,
+          hearSpeech,
           midpointResolver,
         );
       }
@@ -912,10 +929,29 @@ export class VillageSimulation {
           partnerName: partnerCfg.name,
           history: conv.messages,
           settings: this.modelSettings,
-          speakSpatialResolver: eavesdropEnabled ? resolver : undefined,
+          speakSpatialResolver: hearSpeech ? resolver : undefined,
         });
 
         const parsed = parseDialogueAndNarration(res.text, speakerCfg.name);
+
+        if (parsed.thoughts.length > 0 && this.modelSettings.eavesdropThoughts) {
+          for (const thought of parsed.thoughts) {
+            conv.messages.push({
+              id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              senderId: speakerCfg.id,
+              senderName: speakerCfg.name,
+              text: thought,
+              timestamp: Date.now(),
+              kind: 'thought',
+              source: res.source,
+            });
+            conv.updatedAt = Date.now();
+            this.notify(true);
+            if (hearThoughts) {
+              await brainRouter.speakThought(thought, speakerCfg, this.modelSettings, resolver);
+            }
+          }
+        }
 
         if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
           for (const beat of parsed.narration) {
@@ -923,7 +959,7 @@ export class VillageSimulation {
             await this.emitNarrationTurn(
               conv,
               actionText,
-              eavesdropEnabled && !res.audioHandled,
+              hearSpeech && !res.audioHandled,
               resolver,
             );
           }
@@ -941,6 +977,7 @@ export class VillageSimulation {
           senderId: speakerCfg.id,
           senderName: speakerCfg.name,
           text: spokenLine,
+          reasoning: parsed.reasoning.join('\n\n') || undefined,
           timestamp: Date.now(),
           kind: 'speech',
           source: res.source,
@@ -948,10 +985,16 @@ export class VillageSimulation {
         conv.updatedAt = Date.now();
         this.notify(true);
 
-        if (eavesdropEnabled && !res.audioHandled && parsed.spoken) {
+        if (hearSpeech && !res.audioHandled && parsed.spoken) {
           const mix = resolver();
           if (mix.inRange) {
             await brainRouter.speakLine(parsed.spoken, speakerCfg, this.modelSettings, resolver);
+          }
+        }
+        if (this.modelSettings.speakReasoning && parsed.reasoning.length > 0 && eavesdropEnabled) {
+          const mix = resolver();
+          if (mix.inRange) {
+            await brainRouter.speakLine(parsed.reasoning.join(' '), speakerCfg, this.modelSettings, resolver);
           }
         }
         speakerRt.state = 'conversing';
@@ -1004,7 +1047,7 @@ export class VillageSimulation {
         await this.emitNarrationTurn(
           conv,
           closing,
-          eavesdropEnabled,
+          hearSpeech,
           midpointResolver,
         );
       }
@@ -1051,17 +1094,43 @@ export class VillageSimulation {
     return conv;
   }
 
-  private buildSceneContext(): string {
-    const lines: string[] = [];
-    for (const cfg of this.configs.values()) {
-      const rt = this.runtimes.get(cfg.id);
-      if (!rt) continue;
+  private buildSceneContext(focus?: { x: number; y: number }): string {
+    const focal = focus ?? { x: this.player.x, y: this.player.y };
+    const focalLandmark = this.getNearestLandmarkName(focal.x, focal.y);
+    const lines: string[] = [`Focal location: ${focalLandmark}`];
+
+    const entries = [...this.configs.values()]
+      .map((cfg) => {
+        const rt = this.runtimes.get(cfg.id);
+        if (!rt) return null;
+        const dist = Math.hypot(rt.x - focal.x, rt.y - focal.y);
+        return { cfg, rt, dist };
+      })
+      .filter((x): x is { cfg: VillagerConfig; rt: VillagerRuntime; dist: number } => Boolean(x))
+      .sort((a, b) => a.dist - b.dist);
+
+    lines.push('Nearby characters:');
+    for (const { cfg, rt, dist } of entries.slice(0, 5)) {
       const near = this.getNearestLandmarkName(rt.x, rt.y);
       const lastEvent = rt.worldFeed?.slice(-1)[0];
+      const proximity = dist <= 12 ? 'right nearby' : `${Math.round(dist)}t away`;
       lines.push(
-        `- ${cfg.name} near ${near} (${rt.state}): ${rt.currentIntention || rt.activityLabel}${lastEvent ? ` | latest: ${lastEvent}` : ''}`,
+        `- ${cfg.name} (${proximity}, near ${near}, ${rt.state}): ${rt.currentIntention || rt.activityLabel}${lastEvent ? ` | latest: ${lastEvent}` : ''}`,
       );
     }
+
+    const recentFlow = this.conversations
+      .slice(0, 3)
+      .flatMap((c) => c.messages.slice(-2))
+      .filter((m) => m.text.trim().length > 0)
+      .slice(0, 4);
+    if (recentFlow.length > 0) {
+      lines.push('Recent nearby flow:');
+      for (const m of recentFlow) {
+        lines.push(`> ${m.senderName}: ${m.text.slice(0, 90)}`);
+      }
+    }
+
     return lines.join('\n');
   }
 
@@ -1218,27 +1287,53 @@ export class VillageSimulation {
         };
       };
 
+      const hearSpeech = speakReply && this.modelSettings.eavesdropSpeech;
+      const hearThoughts = speakReply && this.modelSettings.eavesdropThoughts;
+      let rawStream = '';
+
       const res = await brainRouter.generateVillagerReply({
         villager: cfg,
         runtime: rt,
         partnerName: this.player.name,
         history: conv.messages.slice(0, -1),
         settings: this.modelSettings,
-        speakSpatialResolver: speakReply ? resolver : undefined,
+        speakSpatialResolver: hearSpeech ? resolver : undefined,
         onChunk: (chunk) => {
-          streamingMsg.text += chunk;
-          rt.currentBubble = { text: streamingMsg.text, expiresAt: Date.now() + 8000 };
+          rawStream += chunk;
+          const liveParsed = parseDialogueAndNarration(rawStream, cfg.name);
+          streamingMsg.text = liveParsed.spoken || liveParsed.display;
+          streamingMsg.reasoning = liveParsed.reasoning.join('\n\n') || undefined;
+          if (streamingMsg.text) {
+            rt.currentBubble = { text: streamingMsg.text, expiresAt: Date.now() + 8000 };
+          }
           this.notify();
         },
       });
 
       const parsed = parseDialogueAndNarration(res.text, cfg.name);
+      if (parsed.thoughts.length > 0 && this.modelSettings.eavesdropThoughts) {
+        for (const thought of parsed.thoughts) {
+          conv.messages.push({
+            id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            senderId: cfg.id,
+            senderName: cfg.name,
+            text: thought,
+            timestamp: Date.now(),
+            kind: 'thought',
+            source: res.source,
+          });
+          if (hearThoughts) {
+            await brainRouter.speakThought(thought, cfg, this.modelSettings, resolver);
+          }
+        }
+      }
+
       if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
         for (const beat of parsed.narration) {
           await this.emitNarrationTurn(
             conv,
             `${cfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`,
-            speakReply && !res.audioHandled,
+            hearSpeech && !res.audioHandled,
             resolver,
           );
         }
@@ -1246,6 +1341,7 @@ export class VillageSimulation {
 
       const finalSpoken = parsed.spoken || parsed.display;
       streamingMsg.text = finalSpoken;
+      streamingMsg.reasoning = parsed.reasoning.join('\n\n') || undefined;
       streamingMsg.kind = 'speech';
       streamingMsg.source = res.source;
       rt.lastLatencyMs = res.durationMs;
@@ -1259,12 +1355,15 @@ export class VillageSimulation {
         summary,
       });
       this.appendWorldEvent(rt, `Replied to ${this.player.name}: "${finalSpoken.slice(0, 64)}"`);
-      rt.state = speakReply ? 'speaking' : 'idle';
+      rt.state = hearSpeech ? 'speaking' : 'idle';
       rt.activityLabel = rt.currentIntention || cfg.plan;
       this.notify(true);
 
-      if (speakReply && !res.audioHandled && finalSpoken) {
+      if (hearSpeech && !res.audioHandled && finalSpoken) {
         await brainRouter.speakLine(finalSpoken, cfg, this.modelSettings, resolver);
+      }
+      if (this.modelSettings.speakReasoning && parsed.reasoning.length > 0 && speakReply) {
+        await brainRouter.speakLine(parsed.reasoning.join(' '), cfg, this.modelSettings, resolver);
       }
     } finally {
       rt.state = rt.path.length > 0 ? 'walking' : 'idle';
@@ -1291,24 +1390,30 @@ export class VillageSimulation {
     conv.messages.push(streamingMsg);
     this.notify(true);
 
+    let rawNarStream = '';
     const res = await brainRouter.generateNarratorReply({
       prompt: userText,
       sceneContext: this.buildSceneContext(),
       history: conv.messages.slice(0, -1),
       settings: this.modelSettings,
       onChunk: (chunk) => {
-        streamingMsg.text += chunk;
+        rawNarStream += chunk;
+        const liveParsed = parseDialogueAndNarration(rawNarStream, narratorName);
+        streamingMsg.text = liveParsed.display;
+        streamingMsg.reasoning = liveParsed.reasoning.join('\n\n') || undefined;
         this.notify();
       },
     });
 
-    streamingMsg.text = res.text;
+    const parsedNar = parseDialogueAndNarration(res.text, narratorName);
+    streamingMsg.text = parsedNar.display;
+    streamingMsg.reasoning = parsedNar.reasoning.join('\n\n') || undefined;
     streamingMsg.source = res.source;
     conv.updatedAt = Date.now();
     this.notify(true);
 
-    if (speakReply && this.modelSettings.narratorEnabled && res.text.trim()) {
-      await brainRouter.speakNarration(res.text, this.modelSettings);
+    if (speakReply && this.modelSettings.narratorEnabled && streamingMsg.text.trim()) {
+      await brainRouter.speakNarration(streamingMsg.text, this.modelSettings);
     }
   }
 

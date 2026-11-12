@@ -239,7 +239,9 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
-  kind?: 'speech' | 'narration';
+  kind?: 'speech' | 'narration' | 'thought';
+  /** Raw LLM <think>...</think> reasoning trace, separated from story text */
+  reasoning?: string;
   source:
     | 'lfm3-1.7b'
     | 'lfm3-omni'
@@ -289,8 +291,16 @@ export interface ModelSettings {
   localApiModel: string;
   enableOmniTts: boolean;
   enableWebSpeechFallback: boolean;
-  /** Eavesdrop hearing radius in tiles (0 = off, 1–18 = mix nearby speech by distance & pan) */
+  /** Eavesdrop hearing radius in tiles (0 = off, 1–24 = local radius, >=90 = whole map) */
   proximityRadiusTiles: number;
+  /** Hear spoken villager dialogue within eavesdrop radius */
+  eavesdropSpeech: boolean;
+  /** Eavesdrop on villagers' in-character thoughts within eavesdrop radius */
+  eavesdropThoughts: boolean;
+  /** Separate mode to display raw <think>...</think> LLM reasoning blocks */
+  showReasoning: boolean;
+  /** Speak <think>...</think> reasoning aloud (off by default) */
+  speakReasoning: boolean;
   ambientAudioEnabled: boolean;
   autoConverse: boolean;
   narratorEnabled: boolean;

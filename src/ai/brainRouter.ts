@@ -21,6 +21,8 @@ import {
 export interface ParsedDialogue {
   spoken: string;
   narration: string[];
+  thoughts: string[];
+  reasoning: string[];
   display: string;
 }
 
@@ -29,16 +31,28 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Strips accidental self-name speaker prefixes ("Olena: Hello") and separates
- * inline stage actions (*looks out*, [waves]) so NPCs never utter their own
- * names and the Scribe/Narrator can read non-spoken beats in turn.
+ * Separates LLM meta <think>...</think> reasoning, optional <thought>...</thought>
+ * inner monologue, inline narrative actions (*looks out*, [waves]), and pure
+ * spoken dialogue without accidental self-name prefixes ("Olena: Hello").
  */
 export function parseDialogueAndNarration(
   rawText: string,
   speakerName?: string,
 ): ParsedDialogue {
+  const reasoning: string[] = [];
+  const thoughts: string[] = [];
+
   let cleaned = (rawText ?? '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>([\s\S]*?)(?:<\/think>|$)/gi, (_full, body) => {
+      const trace = String(body ?? '').trim();
+      if (trace) reasoning.push(trace);
+      return '';
+    })
+    .replace(/<thought>([\s\S]*?)(?:<\/thought>|$)/gi, (_full, body) => {
+      const inner = String(body ?? '').trim();
+      if (inner) thoughts.push(inner);
+      return '';
+    })
     .trim();
 
   const candidateNames = new Set<string>(['assistant', 'npc', 'villager']);
@@ -84,12 +98,16 @@ export function parseDialogueAndNarration(
     })
     .replace(/\s+([,.;!?])/g, '$1')
     .replace(/\s{2,}/g, ' ')
+    .trim()
+    .replace(prefixRegex, '')
     .trim();
 
   return {
     spoken,
     narration,
-    display: spoken || narration.join(' ') || cleaned,
+    thoughts,
+    reasoning,
+    display: spoken || narration.join(' ') || thoughts.join(' ') || cleaned,
   };
 }
 
@@ -665,11 +683,12 @@ class BrainRouter {
       {
         role: 'system',
         content: [
-          `You are ${narratorName}, the creative Dungeon Master and unseen chronicler shaping the living story of Selo.`,
-          `Write 1 to 3 evocative third-person sentences (under 60 words) in the voice of a ${toneHint}.`,
-          `Rules: NEVER parrot job titles or list coordinates like a status report. NEVER say generic filler like "they step close to speak". Introduce concrete sensory detail, a small complication, rumor, omen, or hidden motive that gives the villagers something rich to react to.`,
+          `You are ${narratorName}, the unseen storyteller weaving the nearby narrative text and local situation of Selo into a living story.`,
+          `Write 1 to 3 evocative third-person sentences (under 65 words) in the voice of a ${toneHint}.`,
+          `Default focus: stay grounded in the focal location, nearby characters, and the recent nearby narrative flow—unless the user explicitly instructs you to zoom out, look elsewhere, or shift scenes.`,
+          `Rules: NEVER output <think> tags or meta-commentary. NEVER parrot job titles, dump coordinates, or use filler like "they step close to speak". Weave sensory atmosphere, unspoken tension, or story momentum directly from what is unfolding nearby.`,
           `Never prefix your own name like "${narratorName}:" or break character. Always write strictly in English.`,
-          params.sceneContext ? `Living village pulse:\n${params.sceneContext}` : '',
+          params.sceneContext ? `Nearby context & narrative flow:\n${params.sceneContext}` : '',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -1034,6 +1053,27 @@ class BrainRouter {
   }
 
   /**
+   * Speaks an eavesdropped in-character inner thought softly in turn.
+   */
+  async speakThought(
+    text: string,
+    villager: VillagerConfig,
+    settings: ModelSettings,
+    spatialResolver?: () => SpatialMix,
+  ): Promise<void> {
+    if (!settings.eavesdropThoughts) return;
+    const clean = parseDialogueAndNarration(text, villager.name).display.trim();
+    if (!clean) return;
+    const softResolver = spatialResolver
+      ? () => {
+          const mix = spatialResolver();
+          return { ...mix, gain: mix.inRange ? Math.max(0.18, mix.gain * 0.65) : 0 };
+        }
+      : undefined;
+    await this.speakLine(clean, villager, settings, softResolver);
+  }
+
+  /**
    * Speaks non-conversation narration (scene beats, stage directions, memory
    * reflections) using the Scribe / Narrator voice strictly in turn.
    */
@@ -1266,32 +1306,47 @@ function synthesizeStorySimNarration(
 ): string {
   const cleanPrompt = prompt.replace(/@[\p{L}\p{N}_-]+/gu, '').trim();
   const lines = sceneContext.split('\n').filter(Boolean);
-  const sampleActor =
-    lines.length > 0 ? lines[dmNarrationCursor % lines.length].replace(/^- /, '').split(' near ')[0] : 'Someone';
+  const locationLine = lines.find((l) => l.startsWith('Focal location:'));
+  const focalPlace = locationLine ? locationLine.replace('Focal location:', '').trim() : 'Village Square';
+  const nearbyActors = lines
+    .filter((l) => l.startsWith('- '))
+    .map((l) => l.replace(/^- /, '').split(' (')[0].trim())
+    .filter(Boolean);
+  const flowLines = lines
+    .filter((l) => l.startsWith('> '))
+    .map((l) => l.replace(/^> /, '').trim())
+    .filter(Boolean);
+
+  const actorA = nearbyActors[dmNarrationCursor % Math.max(1, nearbyActors.length)] ?? 'Someone';
+  const actorB =
+    nearbyActors.length > 1
+      ? nearbyActors[(dmNarrationCursor + 1) % nearbyActors.length]
+      : undefined;
+  const recentEcho = flowLines[flowLines.length - 1];
   dmNarrationCursor += 1;
 
-  if (/secret|rumor|trouble|happen|what|describe|look|scene/i.test(cleanPrompt)) {
+  if (/secret|rumor|trouble|happen|what|describe|look|scene|where|who/i.test(cleanPrompt)) {
     const twists = [
-      `Under calm eaves, a loose shutter rattles without wind while ${sampleActor} lingers too long over an ordinary errand—as if waiting for a signal.`,
-      `Lantern oil smells sharp along the cobbles; behind polite small talk, an unspoken bargain hangs in the air like storm static.`,
-      `Fresh mud prints skirt the well without reaching any doorway, while ${sampleActor} tracks every footstep out of the corner of an eye.`,
+      `Around ${focalPlace}, a loose shutter rattles without wind while ${actorA} lingers over an ordinary errand${actorB ? `—watching ${actorB} out of the corner of an eye` : ''}.`,
+      `Lantern oil hangs sharp in the air near ${focalPlace}; ${recentEcho ? `after "${recentEcho.slice(0, 56)}", ` : ''}an unspoken bargain hums beneath polite small talk.`,
+      `Fresh mud prints skirt ${focalPlace} without reaching any doorway, and ${actorA} pauses as if counting footsteps.`,
     ];
     return twists[dmNarrationCursor % twists.length];
   }
 
   if (settings.narratorStyle === 'chronicler') {
     return cleanPrompt
-      ? `A sudden turn in the tale ripples past Selo's fences: "${cleanPrompt.slice(0, 72)}" sets watchful glances darting down the lane.`
-      : `Even quiet afternoons in Selo carry hidden tallies; two shadows cross paths just out of earshot of the hearth.`;
+      ? `Near ${focalPlace}, word of "${cleanPrompt.slice(0, 68)}" ripples past the fences, drawing sharp glances from ${actorA}${actorB ? ` toward ${actorB}` : ''}.`
+      : `Around ${focalPlace}, two shadows cross paths just out of earshot while ${actorA} keeps an unspoken tally.`;
   }
   if (settings.narratorStyle === 'storybook') {
     return cleanPrompt
-      ? `The wind turns at the prompt of "${cleanPrompt.slice(0, 68)}"—bells murmur in the rafters, nudging old truths to the surface.`
-      : `Twilight brushes copper across the roofs, and a faint whistle drifts up from the creek where no boat is moored.`;
+      ? `The wind turns across ${focalPlace} at "${cleanPrompt.slice(0, 64)}"—rafter bells murmur as ${actorA} catches the shift in the air.`
+      : `Twilight brushes copper across the roofs of ${focalPlace}, carrying a faint whistle where no boat is moored.`;
   }
   return cleanPrompt
-    ? `At those words—"${cleanPrompt.slice(0, 70)}"—the village air tightens with intrigue; loose floorboards creak and motives tilt in unexpected directions.`
-    : `A distant raven drops a tarnished coin onto the cobbles, daring someone nearby to claim it first.`;
+    ? `At those words near ${focalPlace}—"${cleanPrompt.slice(0, 64)}"—the air tightens with intrigue, and ${actorA}${actorB ? ` and ${actorB}` : ''} tilt toward an unspoken turn.`
+    : `Above ${focalPlace}, a tarnished coin clinks onto the cobbles beside ${actorA}, daring someone nearby to claim it first.`;
 }
 
 export const brainRouter = new BrainRouter();

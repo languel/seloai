@@ -540,4 +540,49 @@ describe('SeloAI core engine', () => {
       expect(rt.path.length).toBeGreaterThan(0);
     }
   });
+
+  it('separates <think> meta-reasoning from <thought> inner flow and spoken dialogue, with sound off by default', () => {
+    expect(DEFAULT_MODEL_SETTINGS.eavesdropSpeech).toBe(true);
+    expect(DEFAULT_MODEL_SETTINGS.eavesdropThoughts).toBe(false);
+    expect(DEFAULT_MODEL_SETTINGS.showReasoning).toBe(false);
+    expect(DEFAULT_MODEL_SETTINGS.speakReasoning).toBe(false);
+
+    const parsed = parseDialogueAndNarration(
+      '<think>I need to respond in character as Olena.</think><thought>Did Taras hide the brass key?</thought>*glances at the lantern* Olena: Who left the gate unlatched?',
+      'Olena',
+    );
+    expect(parsed.reasoning).toEqual(['I need to respond in character as Olena.']);
+    expect(parsed.thoughts).toEqual(['Did Taras hide the brass key?']);
+    expect(parsed.narration).toEqual(['Glances at the lantern']);
+    expect(parsed.spoken).toBe('Who left the gate unlatched?');
+    expect(parsed.display).not.toContain('I need to respond in character');
+
+    // Unclosed streaming <think> must never leak into story display
+    const streaming = parseDialogueAndNarration('<think>I need to stay in character', 'Olena');
+    expect(streaming.spoken).toBe('');
+    expect(streaming.display).toBe('');
+    expect(streaming.reasoning).toEqual(['I need to stay in character']);
+  });
+
+  it('keeps Scribe context- and location-aware around the focal landmark', async () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityRadiusTiles: 0,
+      enableWebSpeechFallback: false,
+      narratorEnabled: true,
+    });
+
+    // Move traveler to Windmill Meadow (35, 20) and ask @Scribe what is happening
+    sim.player.x = 35;
+    sim.player.y = 20;
+    await sim.sendUserAddressedMessage('narrator', '@Scribe describe what is happening here', false);
+
+    const narConv = sim.conversations.find((c) => c.participantIds.includes('narrator'));
+    expect(narConv).toBeDefined();
+    const reply = narConv!.messages.find((m) => m.senderId === 'narrator');
+    expect(reply?.senderName).toBe('Scribe');
+    expect(reply?.text).toContain('Windmill Meadow');
+  });
 });
