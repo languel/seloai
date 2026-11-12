@@ -1,0 +1,686 @@
+[
+  {
+    "name": "get_world_state",
+    "description": "Get the complete current SeloAI world snapshot: map metadata, POIs (#tags), spawn points, all villagers and runtime positions/states/motives, focal worldline POV, recent conversations, and redacted backend settings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "includeMessages": {
+          "type": "boolean",
+          "description": "Include recent conversation threads (default true)."
+        }
+      }
+    }
+  },
+  {
+    "name": "control_simulation",
+    "description": "Control simulation execution: pause/resume, change speed multiplier (1, 2, 4), scatter villagers across walkable tiles, start an encounter between two villagers, or switch UI tab.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "speedMultiplier": {
+          "type": "number",
+          "enum": [
+            1,
+            2,
+            4
+          ]
+        },
+        "scatter": {
+          "type": "boolean",
+          "description": "Unstick and scatter idle villagers across the map."
+        },
+        "startEncounterBetween": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Two villager names or IDs to immediately converse."
+        },
+        "tab": {
+          "type": "string",
+          "enum": [
+            "village",
+            "observatory",
+            "level",
+            "characters",
+            "monitor",
+            "guides"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "set_worldline_pov",
+    "description": "Switch the active Worldline POV (\"scribe\" or a villager name/ID) controlling spatial eavesdropping audio and Scribe narrative lens.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "\"scribe\" or villager name/ID."
+        }
+      }
+    }
+  },
+  {
+    "name": "create_world",
+    "description": "Create a new blank or customized world map with dimensions, optional tileset URL, spawn points, and Points of Interest (#POIs), optionally clearing the story DB.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 80
+        },
+        "height": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 64
+        },
+        "tileDim": {
+          "type": "number"
+        },
+        "tileSetUrl": {
+          "type": "string"
+        },
+        "clearDatabase": {
+          "type": "boolean"
+        },
+        "pois": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "x",
+              "y"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "edit_world_map",
+    "description": "Autonomously edit the active world level: paint ground/object tiles, set collision blockers, add or remove #POI landmarks, add spawn points, or resize/rename the map.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tileSetUrl": {
+          "type": "string"
+        },
+        "tileDim": {
+          "type": "number"
+        },
+        "tileOps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "layer",
+              "x",
+              "y"
+            ],
+            "properties": {
+              "layer": {
+                "type": "string",
+                "enum": [
+                  "bg0",
+                  "bg1",
+                  "obj0",
+                  "obj1",
+                  "collision"
+                ]
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "tileIndex": {
+                "type": "number"
+              },
+              "blocked": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "addPois": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "x",
+              "y"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "removePoiIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "addSpawnPoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "x",
+              "y"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "create_character",
+    "description": "Create a new villager (with automatic modular 128x128 pixel spritesheet and walkable spawn) or update an existing villager.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "role",
+        "identity",
+        "plan"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string"
+        },
+        "voiceStyle": {
+          "type": "string"
+        },
+        "accentColor": {
+          "type": "string"
+        },
+        "gender": {
+          "type": "string",
+          "enum": [
+            "female",
+            "male",
+            "neutral"
+          ]
+        },
+        "language": {
+          "type": "string"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "appearance": {
+          "type": "object"
+        },
+        "customSpriteDataUrl": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "batch_create_characters",
+    "description": "Automatically generate multiple distinct villagers with generic fantasy names, varied modular 128x128 pixel spritesheets, voices, and walkable spawn points.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "count"
+      ],
+      "properties": {
+        "count": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 24
+        },
+        "replaceExisting": {
+          "type": "boolean"
+        },
+        "seed": {
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "remove_character",
+    "description": "Remove a villager from the simulation roster by name or ID.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "run_scenario",
+    "description": "High-level autonomous scenario setup: optionally builds a new world, adds #POIs, creates/generates a cast, sets Worldline POV, sends an opening @directive, and starts an encounter.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "worldName": {
+          "type": "string"
+        },
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "clearDatabase": {
+          "type": "boolean"
+        },
+        "pois": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "villagers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "autoVillagerCount": {
+          "type": "number"
+        },
+        "openingDirective": {
+          "type": "string"
+        },
+        "focalWorldlineId": {
+          "type": "string"
+        },
+        "startEncounterBetween": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "instruct_world",
+    "description": "Send a message or director instruction into SeloAI supporting @Name, @all, @world, @Scribe, and #POI tags (e.g. \"@Mara go to #Plaza\" or \"@all gather by #Forge\").",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "recipientId": {
+          "type": "string",
+          "description": "Optional villager ID/name or \"narrator\" when not using @mentions."
+        }
+      }
+    }
+  },
+  {
+    "name": "move_actor",
+    "description": "Walk the player avatar (\"player\") or a villager to coordinates (x, y) or a #POI.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "actor"
+      ],
+      "properties": {
+        "actor": {
+          "type": "string",
+          "description": "\"player\" or villager name/ID."
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "poi": {
+          "type": "string",
+          "description": "Optional #POI tag or label to walk toward."
+        }
+      }
+    }
+  },
+  {
+    "name": "query_world_db",
+    "description": "Inspect raw interaction records, run a natural-language World DB query (e.g. \"who has Mara talked to in the past day and what do they think about the artifact?\"), and return the Psychophysical Graph.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Natural-language query against the World DB."
+        },
+        "actorId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "includeGraph": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "configure_backends",
+    "description": "Configure inference mode, Brain API provider (ollama, lmstudio, gemini, anthropic, openai, github, openrouter, custom), Voice TTS backend (openai, gemini, openrouter, elevenlabs, custom, local-omni-webspeech), Image Generation model (agent, openrouter, openai, gemini, local-sd, comfyui, custom), Scribe settings, and eavesdrop radius.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "inferenceMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "lfm3-omni-brain",
+            "strict-webgpu",
+            "local-api",
+            "story-sim"
+          ]
+        },
+        "localApiEnabled": {
+          "type": "boolean"
+        },
+        "localApiProvider": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "lmstudio",
+            "openai",
+            "anthropic",
+            "gemini",
+            "github",
+            "openrouter",
+            "custom"
+          ]
+        },
+        "localApiUrl": {
+          "type": "string"
+        },
+        "localApiKey": {
+          "type": "string"
+        },
+        "localApiModel": {
+          "type": "string"
+        },
+        "voiceApiEnabled": {
+          "type": "boolean"
+        },
+        "voiceProvider": {
+          "type": "string",
+          "enum": [
+            "local-omni-webspeech",
+            "openai",
+            "gemini",
+            "openrouter",
+            "elevenlabs",
+            "custom"
+          ]
+        },
+        "voiceApiUrl": {
+          "type": "string"
+        },
+        "voiceApiKey": {
+          "type": "string"
+        },
+        "voiceApiModel": {
+          "type": "string"
+        },
+        "imageGenEnabled": {
+          "type": "boolean"
+        },
+        "imageGenProvider": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "openrouter",
+            "openai",
+            "gemini",
+            "local-sd",
+            "comfyui",
+            "custom"
+          ]
+        },
+        "imageGenUrl": {
+          "type": "string"
+        },
+        "imageGenApiKey": {
+          "type": "string"
+        },
+        "imageGenModel": {
+          "type": "string"
+        },
+        "proximityRadiusTiles": {
+          "type": "number"
+        },
+        "autoConverse": {
+          "type": "boolean"
+        },
+        "narratorEnabled": {
+          "type": "boolean"
+        },
+        "narratorName": {
+          "type": "string"
+        },
+        "narratorStyle": {
+          "type": "string",
+          "enum": [
+            "dungeon-master",
+            "storybook",
+            "chronicler"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "probe_api_models",
+    "description": "Discover available models on the configured or specified external API backend.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "lmstudio",
+            "openai",
+            "anthropic",
+            "gemini",
+            "github",
+            "openrouter",
+            "custom"
+          ]
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "apiKey": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "generate_image",
+    "description": "Generate a visual asset (tileset, spritesheet, portrait, scene) via configured Image Gen backend or attach an agent-supplied dataUrl directly to a map tileset or villager spritesheet.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "prompt"
+      ],
+      "properties": {
+        "prompt": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "tileset",
+            "spritesheet",
+            "portrait",
+            "scene"
+          ]
+        },
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "agentProvidedDataUrl": {
+          "type": "string"
+        },
+        "applyToMapTileset": {
+          "type": "boolean"
+        },
+        "applyToVillager": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "export_bundle",
+    "description": "Export JSON for the whole project, level only, characters only, characters + portable histories (without world), or world database only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "project",
+            "level",
+            "characters",
+            "characters-history",
+            "database"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "import_bundle",
+    "description": "Import any SeloAI JSON payload (project, level, characters, characters-with-histories, or database).",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "json"
+      ],
+      "properties": {
+        "json": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "clear_database",
+    "description": "Start a fresh story by clearing all conversation transcripts and villager memories while preserving map and cast.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

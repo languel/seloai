@@ -3,6 +3,7 @@ import {
   Activity,
   Cpu,
   Download,
+  Image as ImageIcon,
   Mic,
   MicOff,
   Play,
@@ -14,13 +15,21 @@ import {
 } from 'lucide-react';
 import { bonsaiEngine } from '../ai/bonsaiEngine';
 import { brainRouter } from '../ai/brainRouter';
-import { chatWithLocalApi, probeLocalApiModels } from '../ai/localApiClient';
+import {
+  chatWithExternalApi,
+  generateImageViaApi,
+  probeApiModels,
+  synthesizeSpeechViaApi,
+} from '../ai/localApiClient';
 import { minicpmEngine } from '../ai/minicpmEngine';
 import { omniEngine } from '../ai/omniEngine';
 import { MicRecorder, StreamingPcmPlayer } from '../ai/audioPipeline';
 import {
+  API_BRAIN_PRESETS,
   DEFAULT_MODEL_SETTINGS,
+  IMAGE_GEN_PRESETS,
   OMNI_SPEECH_LANGUAGES,
+  VOICE_BACKEND_PRESETS,
   WEBGPU_BRAIN_PRESETS,
 } from '../data/defaultData';
 import type { VillageSimulation } from '../engine/simulation';
@@ -74,10 +83,14 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   const [studioError, setStudioError] = useState<string | null>(null);
   const recorderRef = useRef<MicRecorder | null>(null);
 
-  // Ollama / LM Studio fallback state
+  // External Brain / Voice / Image API state
   const [detectedLocalModels, setDetectedLocalModels] = useState<string[]>([]);
   const [localProbeStatus, setLocalProbeStatus] = useState<string>('');
   const [localTestOutput, setLocalTestOutput] = useState<string>('');
+  const [voiceTestStatus, setVoiceTestStatus] = useState<string>('');
+  const [imageTestPrompt, setImageTestPrompt] = useState('A glowing stone lantern beside a village mill at dusk, pixel art');
+  const [imageTestStatus, setImageTestStatus] = useState<string>('');
+  const [imageTestPreview, setImageTestPreview] = useState<string>('');
 
   useEffect(() => {
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
@@ -684,65 +697,62 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
           </div>
         </section>
 
-        {/* Ollama / LM Studio Local API Fallback */}
-        <section className="rushnyk-card rounded-sm p-2.5 space-y-3" aria-label="Ollama and LM Studio Fallback">
+        {/* External Brain, Voice & Image Backends */}
+        <section className="rushnyk-card rounded-sm p-2.5 space-y-2.5" aria-label="External Brain, Voice and Image Backends">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Server className="h-4 w-4 text-ochre" />
-              <h2 className="text-sm font-bold">Ollama / LM Studio Local Fallback</h2>
+              <h2 className="text-sm font-bold">External Brain Backends (Ollama · LM Studio · Gemini · Claude · ChatGPT · GitHub · OpenRouter)</h2>
             </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdateSettings({
-                    localApiProvider: 'ollama',
-                    localApiUrl: 'http://localhost:11434/v1',
-                  })
-                }
-                className={`rounded border px-2.5 py-1 text-xs font-medium ${
-                  settings.localApiProvider === 'ollama'
-                    ? 'border-ochre bg-ochre text-white'
-                    : 'border-borderFolk bg-surface'
-                }`}
-              >
-                Ollama (11434)
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdateSettings({
-                    localApiProvider: 'lmstudio',
-                    localApiUrl: 'http://localhost:1234/v1',
-                  })
-                }
-                className={`rounded border px-2.5 py-1 text-xs font-medium ${
-                  settings.localApiProvider === 'lmstudio'
-                    ? 'border-ochre bg-ochre text-white'
-                    : 'border-borderFolk bg-surface'
-                }`}
-              >
-                LM Studio (1234)
-              </button>
-            </div>
+            <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.localApiEnabled}
+                onChange={(e) => onUpdateSettings({ localApiEnabled: e.target.checked })}
+              />
+              <span>Enable in Auto Mode</span>
+            </label>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_240px] gap-2">
+          <div className="flex flex-wrap items-center gap-1">
+            {API_BRAIN_PRESETS.map((p) => (
+              <button
+                key={p.provider}
+                type="button"
+                onClick={() =>
+                  onUpdateSettings({
+                    localApiProvider: p.provider,
+                    localApiUrl: p.baseUrl,
+                    localApiModel: p.defaultModel,
+                  })
+                }
+                className={`rounded-sm border px-2 py-1 text-[11px] font-medium ${
+                  settings.localApiProvider === p.provider
+                    ? 'border-ochre bg-ochre text-white'
+                    : 'border-borderFolk bg-surface hover:border-ink/40'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div>
-              <label htmlFor="local-api-url" className="block text-[11px] font-medium text-muted mb-1">
-                OpenAI-Compatible Base URL
+              <label htmlFor="local-api-url" className="block text-[11px] font-medium text-muted mb-0.5">
+                API Base URL
               </label>
               <input
                 id="local-api-url"
                 type="url"
                 value={settings.localApiUrl}
                 onChange={(e) => onUpdateSettings({ localApiUrl: e.target.value })}
-                className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs font-mono"
+                className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
               />
             </div>
             <div>
-              <label htmlFor="local-api-model" className="block text-[11px] font-medium text-muted mb-1">
-                Model Name
+              <label htmlFor="local-api-model" className="block text-[11px] font-medium text-muted mb-0.5">
+                Model ID
               </label>
               <input
                 id="local-api-model"
@@ -750,7 +760,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                 list="detected-local-models"
                 value={settings.localApiModel}
                 onChange={(e) => onUpdateSettings({ localApiModel: e.target.value })}
-                className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs font-mono"
+                className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
               />
               <datalist id="detected-local-models">
                 {detectedLocalModels.map((m) => (
@@ -758,14 +768,31 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                 ))}
               </datalist>
             </div>
+            <div>
+              <label htmlFor="local-api-key" className="block text-[11px] font-medium text-muted mb-0.5">
+                API Key / Token (optional for local)
+              </label>
+              <input
+                id="local-api-key"
+                type="password"
+                value={settings.localApiKey ?? ''}
+                onChange={(e) => onUpdateSettings({ localApiKey: e.target.value })}
+                placeholder="sk-… / AIza… / ghp_…"
+                className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+              />
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={async () => {
                 setLocalProbeStatus('Probing…');
-                const res = await probeLocalApiModels(settings.localApiUrl);
+                const res = await probeApiModels(
+                  settings.localApiUrl,
+                  settings.localApiProvider,
+                  settings.localApiKey,
+                );
                 if (res.ok) {
                   setDetectedLocalModels(res.models);
                   if (res.models.length > 0 && !res.models.includes(settings.localApiModel)) {
@@ -773,14 +800,14 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   }
                   setLocalProbeStatus(
                     res.models.length > 0
-                      ? `Found ${res.models.length} model(s): ${res.models.slice(0, 4).join(', ')}`
-                      : 'Server reachable, no models loaded yet.',
+                      ? `Found ${res.models.length} model(s): ${res.models.slice(0, 5).join(', ')}`
+                      : 'Endpoint reachable, no models listed.',
                   );
                 } else {
-                  setLocalProbeStatus(res.error || 'Server unreachable');
+                  setLocalProbeStatus(res.error || 'Endpoint unreachable');
                 }
               }}
-              className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs font-medium hover:bg-card"
+              className="inline-flex items-center gap-1 rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-medium hover:bg-card"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               <span>Detect Models</span>
@@ -791,9 +818,11 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               onClick={async () => {
                 setLocalTestOutput('Testing…');
                 try {
-                  const res = await chatWithLocalApi({
+                  const res = await chatWithExternalApi({
+                    provider: settings.localApiProvider,
                     baseUrl: settings.localApiUrl,
                     model: settings.localApiModel,
+                    apiKey: settings.localApiKey,
                     messages: [{ role: 'user', content: 'Say hello from Selo village in one short sentence.' }],
                     maxTokens: 60,
                   });
@@ -802,28 +831,227 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   setLocalTestOutput(`Error: ${err?.message || String(err)}`);
                 }
               }}
-              className="inline-flex items-center gap-1 rounded bg-ochre px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
+              className="inline-flex items-center gap-1 rounded-sm bg-ochre px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
             >
               <Play className="h-3 w-3" />
-              <span>Test Reply</span>
+              <span>Test Brain Reply</span>
             </button>
-
-            <label className="ml-auto inline-flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.localApiEnabled}
-                onChange={(e) => onUpdateSettings({ localApiEnabled: e.target.checked })}
-              />
-              <span>Enable as Auto Fallback</span>
-            </label>
           </div>
 
           {(localProbeStatus || localTestOutput) && (
-            <div className="rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs space-y-1">
+            <div className="rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs space-y-1">
               {localProbeStatus && <div className="text-muted">{localProbeStatus}</div>}
               {localTestOutput && <div className="font-mono text-[11px]">{localTestOutput}</div>}
             </div>
           )}
+
+          {/* Voice (TTS) API Backend */}
+          <div className="border-t border-borderFolk pt-2.5 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <Volume2 className="h-3.5 w-3.5 text-indigoFolk" />
+                <span>External Voice (TTS) Backend</span>
+              </div>
+              <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.voiceApiEnabled)}
+                  onChange={(e) => onUpdateSettings({ voiceApiEnabled: e.target.checked })}
+                />
+                <span>Use External Voice API First</span>
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-1">
+              {VOICE_BACKEND_PRESETS.map((vp) => (
+                <button
+                  key={vp.provider}
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings({
+                      voiceProvider: vp.provider,
+                      voiceApiUrl: vp.baseUrl,
+                      voiceApiModel: vp.defaultModel,
+                      voiceApiEnabled: vp.provider !== 'local-omni-webspeech',
+                    })
+                  }
+                  className={`rounded-sm border px-2 py-0.5 text-[11px] font-medium ${
+                    (settings.voiceProvider ?? 'local-omni-webspeech') === vp.provider
+                      ? 'border-indigoFolk bg-indigoFolk text-white'
+                      : 'border-borderFolk bg-surface hover:border-ink/40'
+                  }`}
+                >
+                  {vp.label}
+                </button>
+              ))}
+            </div>
+            {(settings.voiceProvider ?? 'local-omni-webspeech') !== 'local-omni-webspeech' && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                <div>
+                  <label className="block text-[10px] font-medium text-muted mb-0.5">Voice API URL</label>
+                  <input
+                    type="url"
+                    value={settings.voiceApiUrl ?? ''}
+                    onChange={(e) => onUpdateSettings({ voiceApiUrl: e.target.value })}
+                    className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-muted mb-0.5">Voice Model</label>
+                  <input
+                    type="text"
+                    value={settings.voiceApiModel ?? ''}
+                    onChange={(e) => onUpdateSettings({ voiceApiModel: e.target.value })}
+                    className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-muted mb-0.5">Voice API Key</label>
+                  <input
+                    type="password"
+                    value={settings.voiceApiKey ?? ''}
+                    onChange={(e) => onUpdateSettings({ voiceApiKey: e.target.value })}
+                    placeholder="Optional / reuse key"
+                    className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setVoiceTestStatus('Synthesizing…');
+                    try {
+                      const res = await synthesizeSpeechViaApi({
+                        provider: settings.voiceProvider ?? 'openai',
+                        baseUrl: settings.voiceApiUrl ?? '',
+                        model: settings.voiceApiModel ?? 'tts-1',
+                        apiKey: settings.voiceApiKey || settings.localApiKey,
+                        text: 'Testing external voice backend.',
+                      });
+                      setVoiceTestStatus(`Audio ready (${res.mimeType}, ${res.audioBuffer.byteLength} bytes, ${res.durationMs}ms)`);
+                    } catch (err: any) {
+                      setVoiceTestStatus(`Error: ${err?.message || String(err)}`);
+                    }
+                  }}
+                  className="inline-flex h-7 items-center justify-center gap-1 rounded-sm border border-borderFolk bg-surface px-2 text-xs font-medium hover:bg-card"
+                >
+                  <Play className="h-3 w-3" />
+                  <span>Test Voice API</span>
+                </button>
+              </div>
+            )}
+            {voiceTestStatus && <div className="text-[11px] font-mono text-muted">{voiceTestStatus}</div>}
+          </div>
+
+          {/* Image Generation Models */}
+          <div className="border-t border-borderFolk pt-2.5 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <ImageIcon className="h-3.5 w-3.5 text-sage" />
+                <span>Image Generation Models (Agent · OpenRouter · OpenAI · Gemini · Local SD / ComfyUI)</span>
+              </div>
+              <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.imageGenEnabled)}
+                  onChange={(e) => onUpdateSettings({ imageGenEnabled: e.target.checked })}
+                />
+                <span>Enable Image Gen</span>
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-1">
+              {IMAGE_GEN_PRESETS.map((ip) => (
+                <button
+                  key={ip.provider}
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings({
+                      imageGenEnabled: true,
+                      imageGenProvider: ip.provider,
+                      imageGenUrl: ip.baseUrl,
+                      imageGenModel: ip.defaultModel,
+                    })
+                  }
+                  className={`rounded-sm border px-2 py-0.5 text-[11px] font-medium ${
+                    (settings.imageGenProvider ?? 'agent') === ip.provider
+                      ? 'border-sage bg-sage text-white'
+                      : 'border-borderFolk bg-surface hover:border-ink/40'
+                  }`}
+                >
+                  {ip.label}
+                </button>
+              ))}
+            </div>
+            {settings.imageGenEnabled && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-medium text-muted mb-0.5">Image API URL</label>
+                    <input
+                      type="url"
+                      value={settings.imageGenUrl ?? ''}
+                      onChange={(e) => onUpdateSettings({ imageGenUrl: e.target.value })}
+                      className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-muted mb-0.5">Image Model ID</label>
+                    <input
+                      type="text"
+                      value={settings.imageGenModel ?? ''}
+                      onChange={(e) => onUpdateSettings({ imageGenModel: e.target.value })}
+                      className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-muted mb-0.5">Image API Key</label>
+                    <input
+                      type="password"
+                      value={settings.imageGenApiKey ?? ''}
+                      onChange={(e) => onUpdateSettings({ imageGenApiKey: e.target.value })}
+                      placeholder="Optional for agent / local"
+                      className="w-full rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={imageTestPrompt}
+                    onChange={(e) => setImageTestPrompt(e.target.value)}
+                    placeholder="Prompt to test image generation…"
+                    className="flex-1 min-w-[200px] rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setImageTestStatus('Generating…');
+                      try {
+                        const res = await generateImageViaApi(
+                          { prompt: imageTestPrompt, kind: 'scene', width: 512, height: 512 },
+                          settings,
+                        );
+                        setImageTestPreview(res.dataUrl);
+                        setImageTestStatus(`Generated via ${res.provider} (${res.durationMs}ms)`);
+                      } catch (err: any) {
+                        setImageTestStatus(err?.message || String(err));
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-sm bg-sage px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
+                  >
+                    <ImageIcon className="h-3 w-3" />
+                    <span>Test Generate</span>
+                  </button>
+                </div>
+                {imageTestStatus && <div className="text-[11px] font-mono text-muted">{imageTestStatus}</div>}
+                {imageTestPreview && (
+                  <img
+                    src={imageTestPreview}
+                    alt="Generated asset preview"
+                    className="max-h-36 rounded-sm border border-borderFolk bg-surface"
+                  />
+                )}
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Inference Policy & Audio Routing */}

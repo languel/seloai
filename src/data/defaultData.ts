@@ -13,7 +13,9 @@ import gentlesplashAnim from './animations/gentlesplash.json';
 import gentlewaterfallAnim from './animations/gentlewaterfall.json';
 import windmillAnim from './animations/windmill.json';
 import type {
+  ApiBrainProvider,
   BrainEngineKind,
+  ImageGenProvider,
   ModelSettings,
   SpritesheetPreset,
   TextDtype,
@@ -21,6 +23,7 @@ import type {
   VillageMap,
   VillagerConfig,
   VillagerVoiceProfile,
+  VoiceBackendProvider,
 } from '../engine/types';
 
 export interface BrainPreset {
@@ -396,6 +399,54 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
   },
 ];
 
+export const API_BRAIN_PRESETS: Array<{
+  provider: ApiBrainProvider;
+  label: string;
+  baseUrl: string;
+  defaultModel: string;
+  requiresKey: boolean;
+}> = [
+  { provider: 'ollama', label: 'Ollama (Local)', baseUrl: 'http://localhost:11434/v1', defaultModel: 'lfm3', requiresKey: false },
+  { provider: 'lmstudio', label: 'LM Studio (Local)', baseUrl: 'http://localhost:1234/v1', defaultModel: 'local-model', requiresKey: false },
+  { provider: 'gemini', label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', defaultModel: 'gemini-2.5-flash', requiresKey: true },
+  { provider: 'anthropic', label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com/v1', defaultModel: 'claude-3-5-sonnet-latest', requiresKey: true },
+  { provider: 'openai', label: 'OpenAI / ChatGPT', baseUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', requiresKey: true },
+  { provider: 'github', label: 'GitHub Models', baseUrl: 'https://models.inference.ai.azure.com', defaultModel: 'gpt-4o-mini', requiresKey: true },
+  { provider: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'google/gemini-2.5-flash', requiresKey: true },
+  { provider: 'custom', label: 'Custom OpenAI Endpoint', baseUrl: 'http://localhost:8080/v1', defaultModel: 'default', requiresKey: false },
+];
+
+export const VOICE_BACKEND_PRESETS: Array<{
+  provider: VoiceBackendProvider;
+  label: string;
+  baseUrl: string;
+  defaultModel: string;
+  requiresKey: boolean;
+}> = [
+  { provider: 'local-omni-webspeech', label: 'Local Omni / Web Speech', baseUrl: '', defaultModel: 'lfm3-omni', requiresKey: false },
+  { provider: 'openai', label: 'OpenAI TTS (ChatGPT)', baseUrl: 'https://api.openai.com/v1', defaultModel: 'tts-1', requiresKey: true },
+  { provider: 'gemini', label: 'Gemini Audio / TTS', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', defaultModel: 'gemini-2.5-flash-preview-tts', requiresKey: true },
+  { provider: 'openrouter', label: 'OpenRouter Audio', baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-audio-mini', requiresKey: true },
+  { provider: 'elevenlabs', label: 'ElevenLabs TTS', baseUrl: 'https://api.elevenlabs.io/v1', defaultModel: 'eleven_flash_v2_5', requiresKey: true },
+  { provider: 'custom', label: 'Custom / Kokoro OpenAI TTS', baseUrl: 'http://localhost:8880/v1', defaultModel: 'kokoro', requiresKey: false },
+];
+
+export const IMAGE_GEN_PRESETS: Array<{
+  provider: ImageGenProvider;
+  label: string;
+  baseUrl: string;
+  defaultModel: string;
+  requiresKey: boolean;
+}> = [
+  { provider: 'agent', label: 'Agent / MCP Callback', baseUrl: '', defaultModel: 'agent-image-tool', requiresKey: false },
+  { provider: 'openrouter', label: 'OpenRouter Image', baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'google/gemini-2.5-flash-image-preview', requiresKey: true },
+  { provider: 'openai', label: 'OpenAI Image', baseUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-image-1', requiresKey: true },
+  { provider: 'gemini', label: 'Google Gemini / Imagen', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', defaultModel: 'gemini-2.0-flash-preview-image-generation', requiresKey: true },
+  { provider: 'local-sd', label: 'Local WebUI (A1111 / Forge)', baseUrl: 'http://127.0.0.1:7860', defaultModel: 'sd-local', requiresKey: false },
+  { provider: 'comfyui', label: 'Local ComfyUI API', baseUrl: 'http://127.0.0.1:8188', defaultModel: 'comfyui-workflow', requiresKey: false },
+  { provider: 'custom', label: 'Custom Images Endpoint', baseUrl: 'http://localhost:8080/v1', defaultModel: 'flux', requiresKey: false },
+];
+
 export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   brainEngine: 'transformers-onnx',
   textModelId: 'onnx-community/LFM3-1.7B-ONNX',
@@ -406,7 +457,18 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   localApiEnabled: true,
   localApiProvider: 'ollama',
   localApiUrl: 'http://localhost:11434/v1',
+  localApiKey: '',
   localApiModel: 'lfm3',
+  voiceApiEnabled: false,
+  voiceProvider: 'local-omni-webspeech',
+  voiceApiUrl: '',
+  voiceApiKey: '',
+  voiceApiModel: 'lfm3-omni',
+  imageGenEnabled: false,
+  imageGenProvider: 'agent',
+  imageGenUrl: '',
+  imageGenApiKey: '',
+  imageGenModel: 'agent-image-tool',
   enableOmniTts: true,
   enableWebSpeechFallback: true,
   proximityRadiusTiles: 9,

@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { brainRouter } from './ai/brainRouter';
 import { omniEngine } from './ai/omniEngine';
+import { seloToolHost, type WorkspaceTabId } from './api/seloToolRegistry';
+import { installSeloWebMcpAndApi } from './api/webMcpBridge';
 import { AssetGuideView } from './components/AssetGuideView';
 import { CharacterEditorView } from './components/CharacterEditorView';
 import { LevelEditorView } from './components/LevelEditorView';
@@ -52,6 +54,13 @@ export function App() {
   const simRef = useRef<VillageSimulation | null>(null);
   const resetDialogRef = useRef<HTMLDialogElement | null>(null);
   const dataDialogRef = useRef<HTMLDialogElement | null>(null);
+  const latestRef = useRef<{
+    tab: WorkspaceTabId;
+    map: VillageMap | null;
+    villagers: VillagerConfig[];
+    settings: ModelSettings | null;
+  }>({ tab, map, villagers, settings });
+  latestRef.current = { tab, map, villagers, settings };
 
   useEffect(() => {
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
@@ -89,6 +98,12 @@ export function App() {
       setMap(persisted.map);
       setVillagers(persisted.villagers);
       setSettings(persisted.modelSettings);
+      latestRef.current = {
+        tab: latestRef.current.tab,
+        map: persisted.map,
+        villagers: persisted.villagers,
+        settings: persisted.modelSettings,
+      };
       setReady(true);
     });
     return () => {
@@ -113,9 +128,12 @@ export function App() {
   };
 
   const handleApplyMap = (nextMap: VillageMap) => {
+    latestRef.current.map = nextMap;
     setMap(nextMap);
     simRef.current?.updateMap(nextMap);
-    if (settings) persistAll(nextMap, villagers, settings);
+    const curVillagers = latestRef.current.villagers;
+    const curSettings = latestRef.current.settings;
+    if (curSettings) persistAll(nextMap, curVillagers, curSettings);
     brainRouter.log({
       channel: 'storage',
       level: 'info',
@@ -125,9 +143,12 @@ export function App() {
   };
 
   const handleApplyVillagers = (nextVillagers: VillagerConfig[]) => {
+    latestRef.current.villagers = nextVillagers;
     setVillagers(nextVillagers);
     simRef.current?.syncVillagers(nextVillagers);
-    if (map && settings) persistAll(map, nextVillagers, settings);
+    const curMap = latestRef.current.map;
+    const curSettings = latestRef.current.settings;
+    if (curMap && curSettings) persistAll(curMap, nextVillagers, curSettings);
     brainRouter.log({
       channel: 'storage',
       level: 'info',
@@ -137,12 +158,43 @@ export function App() {
   };
 
   const handleUpdateSettings = (patch: Partial<ModelSettings>) => {
-    if (!settings || !map) return;
-    const next = { ...settings, ...patch };
+    const curSettings = latestRef.current.settings;
+    const curMap = latestRef.current.map;
+    if (!curSettings || !curMap) return;
+    const next = { ...curSettings, ...patch };
+    latestRef.current.settings = next;
     setSettings(next);
     simRef.current?.updateSettings(next);
-    persistAll(map, villagers, next);
+    persistAll(curMap, latestRef.current.villagers, next);
   };
+
+  useEffect(() => {
+    if (!ready) return;
+    seloToolHost.setHooks({
+      getSimulation: () => simRef.current!,
+      getMap: () => latestRef.current.map!,
+      getVillagers: () => latestRef.current.villagers,
+      getSettings: () => latestRef.current.settings!,
+      getTab: () => latestRef.current.tab,
+      setTab: (nextTab) => {
+        latestRef.current.tab = nextTab;
+        setTab(nextTab);
+      },
+      applyMap: handleApplyMap,
+      applyVillagers: handleApplyVillagers,
+      updateSettings: handleUpdateSettings,
+      persistAll: () => {
+        if (latestRef.current.map && latestRef.current.settings) {
+          persistAll(
+            latestRef.current.map,
+            latestRef.current.villagers,
+            latestRef.current.settings,
+          );
+        }
+      },
+    });
+    return installSeloWebMcpAndApi();
+  }, [ready]);
 
   const downloadJson = (filename: string, raw: string) => {
     const blob = new Blob([raw], { type: 'application/json' });

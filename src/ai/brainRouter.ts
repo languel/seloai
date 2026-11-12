@@ -11,7 +11,7 @@ import type {
 import { bonsaiEngine } from './bonsaiEngine';
 import { omniEngine } from './omniEngine';
 import { minicpmEngine } from './minicpmEngine';
-import { chatWithLocalApi } from './localApiClient';
+import { chatWithExternalApi, synthesizeSpeechViaApi } from './localApiClient';
 import {
   StreamingPcmPlayer,
   cancelActiveWebSpeech,
@@ -221,7 +221,7 @@ class BrainRouter {
     speakerId: string;
     speakerName: string;
     text: string;
-    engine: 'omni' | 'webspeech';
+    engine: 'omni' | 'api-tts' | 'webspeech';
     startedAt: number;
   } | null = null;
   private speechListeners = new Set<(info: BrainRouter['activeSpeechInfo']) => void>();
@@ -752,18 +752,30 @@ class BrainRouter {
       (settings.inferenceMode === 'auto' && settings.localApiEnabled && Boolean(settings.localApiUrl.trim()));
 
     if (useLocalApi && settings.localApiModel.trim()) {
+      const provider = settings.localApiProvider ?? 'ollama';
       try {
-        const res = await chatWithLocalApi({
+        const res = await chatWithExternalApi({
+          provider,
           baseUrl: settings.localApiUrl,
           model: settings.localApiModel.trim(),
+          apiKey: settings.localApiKey,
           messages,
           maxTokens: opts.maxTokens,
           temperature: opts.temperature,
           onChunk: opts.onChunk,
         });
         const cleanText = parseDialogueAndNarration(res.text, opts.sanitizeName).display;
-        const src: ChatMessage['source'] =
-          settings.localApiProvider === 'lmstudio' ? 'lmstudio' : 'ollama';
+        const sourceMap: Record<string, ChatMessage['source']> = {
+          ollama: 'ollama',
+          lmstudio: 'lmstudio',
+          openai: 'openai',
+          anthropic: 'anthropic',
+          gemini: 'gemini',
+          github: 'github',
+          openrouter: 'openrouter',
+          custom: 'custom-api',
+        };
+        const src: ChatMessage['source'] = sourceMap[provider] ?? 'custom-api';
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
         if (opts.logLabel) {
@@ -780,7 +792,7 @@ class BrainRouter {
         this.log({
           channel: 'local-api',
           level: 'warn',
-          title: 'Ollama / LM Studio unavailable',
+          title: `${provider.toUpperCase()} API unavailable`,
           detail: err?.message || String(err),
         });
         if (settings.inferenceMode === 'local-api') throw err;
@@ -1147,6 +1159,71 @@ class BrainRouter {
 
       this.activeSpatialResolver = spatialResolver ?? null;
       const voice = getEffectiveVoice(villager);
+
+      if (
+        settings.voiceApiEnabled &&
+        settings.voiceProvider &&
+        settings.voiceProvider !== 'local-omni-webspeech' &&
+        settings.voiceApiUrl?.trim()
+      ) {
+        this.setActiveSpeech({
+          speakerId: villager.id,
+          speakerName: villager.name,
+          text: cleanSpeech,
+          engine: 'api-tts',
+          startedAt: Date.now(),
+        });
+        try {
+          const synth = await synthesizeSpeechViaApi({
+            provider: settings.voiceProvider,
+            baseUrl: settings.voiceApiUrl,
+            model: settings.voiceApiModel || 'tts-1',
+            apiKey: settings.voiceApiKey,
+            text: cleanSpeech,
+            gender: voice.gender,
+          });
+          if (typeof AudioContext !== 'undefined') {
+            const ctx = new AudioContext();
+            try {
+              const decoded = await ctx.decodeAudioData(synth.audioBuffer.slice(0));
+              const src = ctx.createBufferSource();
+              src.buffer = decoded;
+              const gainNode = ctx.createGain();
+              gainNode.gain.value = initialMix.gain;
+              const panner = ctx.createStereoPanner();
+              panner.pan.value = initialMix.pan;
+              src.connect(gainNode);
+              gainNode.connect(panner);
+              panner.connect(ctx.destination);
+              await new Promise<void>((resolve) => {
+                src.onended = () => resolve();
+                src.start();
+              });
+            } finally {
+              await ctx.close().catch(() => undefined);
+            }
+          }
+          this.log({
+            channel: 'voice-api',
+            level: 'success',
+            title: `Voice API (${settings.voiceProvider} · ${villager.name})`,
+            detail: cleanSpeech,
+            durationMs: synth.durationMs,
+          });
+          if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
+            this.setActiveSpeech(null);
+          }
+          return;
+        } catch (err: any) {
+          this.setActiveSpeech(null);
+          this.log({
+            channel: 'voice-api',
+            level: 'warn',
+            title: `Voice API fallback (${settings.voiceProvider})`,
+            detail: err?.message || String(err),
+          });
+        }
+      }
 
       if (settings.enableOmniTts && omniEngine.isReady()) {
         const player = new StreamingPcmPlayer(

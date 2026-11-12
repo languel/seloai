@@ -275,6 +275,12 @@ export interface ChatMessage {
     | 'webgpu-onnx'
     | 'ollama'
     | 'lmstudio'
+    | 'openai'
+    | 'anthropic'
+    | 'gemini'
+    | 'github'
+    | 'openrouter'
+    | 'custom-api'
     | 'human-text'
     | 'human-voice'
     | 'story-sim';
@@ -303,6 +309,33 @@ export type InferenceMode =
   | 'local-api'
   | 'story-sim';
 
+export type ApiBrainProvider =
+  | 'ollama'
+  | 'lmstudio'
+  | 'openai'
+  | 'anthropic'
+  | 'gemini'
+  | 'github'
+  | 'openrouter'
+  | 'custom';
+
+export type VoiceBackendProvider =
+  | 'local-omni-webspeech'
+  | 'openai'
+  | 'gemini'
+  | 'openrouter'
+  | 'elevenlabs'
+  | 'custom';
+
+export type ImageGenProvider =
+  | 'agent'
+  | 'openrouter'
+  | 'openai'
+  | 'gemini'
+  | 'local-sd'
+  | 'comfyui'
+  | 'custom';
+
 export interface ModelSettings {
   brainEngine: BrainEngineKind;
   textModelId: string;
@@ -311,9 +344,20 @@ export interface ModelSettings {
   omniMmproj: string;
   inferenceMode: InferenceMode;
   localApiEnabled: boolean;
-  localApiProvider: 'ollama' | 'lmstudio' | 'custom';
+  localApiProvider: ApiBrainProvider;
   localApiUrl: string;
+  localApiKey?: string;
   localApiModel: string;
+  voiceApiEnabled?: boolean;
+  voiceProvider?: VoiceBackendProvider;
+  voiceApiUrl?: string;
+  voiceApiKey?: string;
+  voiceApiModel?: string;
+  imageGenEnabled?: boolean;
+  imageGenProvider?: ImageGenProvider;
+  imageGenUrl?: string;
+  imageGenApiKey?: string;
+  imageGenModel?: string;
   enableOmniTts: boolean;
   enableWebSpeechFallback: boolean;
   /** Eavesdrop hearing radius in tiles (0 = off, 1–24 = local radius, >=90 = whole map) */
@@ -349,7 +393,7 @@ export interface ModelProgress {
 export interface TelemetryEvent {
   id: string;
   timestamp: number;
-  channel: 'lfm3-1.7b' | 'lfm3-omni' | 'local-api' | 'sim' | 'audio' | 'storage';
+  channel: 'lfm3-1.7b' | 'lfm3-omni' | 'local-api' | 'voice-api' | 'image-gen' | 'mcp' | 'sim' | 'audio' | 'storage';
   level: 'info' | 'success' | 'warn' | 'error';
   title: string;
   detail: string;

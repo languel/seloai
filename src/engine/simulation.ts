@@ -179,7 +179,7 @@ export class VillageSimulation {
     return () => this.listeners.delete(fn);
   }
 
-  private notify(force = false) {
+  public notify(force = false) {
     const now = performance.now();
     if (!force && now - this.lastNotifyAt < 120) return;
     this.lastNotifyAt = now;
