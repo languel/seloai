@@ -1,5 +1,5 @@
 import { computeSpatialMix, type SpatialMix } from '../ai/audioPipeline';
-import { brainRouter, parseDialogueAndNarration } from '../ai/brainRouter';
+import { brainRouter, isTextTooSimilar, parseDialogueAndNarration } from '../ai/brainRouter';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
 import { ensureVillagerAppearanceSprite } from './spriteGenerator';
 import type {
@@ -827,7 +827,8 @@ export class VillageSimulation {
           );
         };
         const mix = thoughtResolver();
-        if (mix.inRange) {
+        if (mix.inRange && !isTextTooSimilar(decision.motive, rt.recentUtterances ?? [], 0.52)) {
+          rt.recentUtterances = [...(rt.recentUtterances ?? []), decision.motive].slice(-6);
           rt.currentBubble = { text: `(${decision.motive})`, expiresAt: Date.now() + 3600 };
           void brainRouter.speakThought(decision.motive, cfg, this.modelSettings, thoughtResolver);
         }

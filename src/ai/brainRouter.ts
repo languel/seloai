@@ -31,6 +31,75 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function normalizeTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+}
+
+/**
+ * Detects whether a candidate motive, narration beat, or spoken line is a near-duplicate
+ * of recent text so LLM/story-sim characters cannot get stuck repeating the same phrase.
+ */
+export function isTextTooSimilar(
+  candidate: string,
+  recentList: string[],
+  threshold = 0.55,
+): boolean {
+  const cleanCand = candidate.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!cleanCand) return false;
+  const candTokens = normalizeTokens(cleanCand);
+  const candSet = new Set(candTokens);
+
+  for (const prevRaw of recentList) {
+    const prev = prevRaw?.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!prev) continue;
+    if (cleanCand === prev) return true;
+    if (cleanCand.length >= 16 && prev.length >= 16 && (prev.includes(cleanCand) || cleanCand.includes(prev))) {
+      return true;
+    }
+    const prevTokens = normalizeTokens(prev);
+    if (candTokens.length === 0 || prevTokens.length === 0) continue;
+    const prevSet = new Set(prevTokens);
+    let intersection = 0;
+    for (const t of candSet) {
+      if (prevSet.has(t)) intersection++;
+    }
+    const union = candSet.size + prevSet.size - intersection;
+    if (union > 0 && intersection / union >= threshold) {
+      return true;
+    }
+    // Catch repeated 3+ word lead-in stems like "chase the brass key..."
+    if (
+      candTokens.length >= 4 &&
+      prevTokens.length >= 4 &&
+      candTokens.slice(0, 3).join(' ') === prevTokens.slice(0, 3).join(' ')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pushRing(arr: string[] | undefined, value: string, max = 6): string[] {
+  const clean = value.trim();
+  if (!clean) return arr ?? [];
+  const next = [...(arr ?? []), clean];
+  return next.slice(-max);
+}
+
+function pickFreshCandidate(candidates: string[], avoid: string[], cursorSeed = 0): string {
+  if (candidates.length === 0) return '';
+  const start = Math.abs(cursorSeed) % candidates.length;
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[(start + i) % candidates.length]!;
+    if (!isTextTooSimilar(c, avoid, 0.52)) return c;
+  }
+  return candidates[start]!;
+}
+
 /**
  * Separates LLM meta <think>...</think> reasoning, optional <thought>...</thought>
  * inner monologue, inline narrative actions (*looks out*, [waves]), and pure
@@ -316,6 +385,10 @@ class BrainRouter {
 
     const spokenHistory = history.filter((m) => m.kind !== 'narration');
     const latestNarration = [...history].reverse().find((m) => m.kind === 'narration')?.text;
+    const recentSelfLines = [
+      ...spokenHistory.filter((m) => m.senderId === villager.id).map((m) => m.text),
+      ...(runtime.recentUtterances ?? []),
+    ].slice(-6);
     const turnIdx = spokenHistory.length;
     const sceneTactic =
       turnIdx === 0
@@ -330,6 +403,9 @@ class BrainRouter {
       `Current drive: ${runtime.currentIntention || villager.plan}`,
       memories ? `Personal memories:\n${memories}` : '',
       worldEvents ? `Recent world events & rumors:\n${worldEvents}` : '',
+      recentSelfLines.length
+        ? `Already said recently (NEVER repeat, rephrase, or harp on these lines/objects again):\n${recentSelfLines.slice(-3).map((l) => `- ${l}`).join('\n')}`
+        : '',
       latestNarration ? `Just unfolded right here: ${latestNarration}` : '',
       `Dramatic direction: ${sceneTactic}`,
       `Respond to ${partnerName} in 1 to 2 crisp, vivid spoken sentences (under 45 words). Vary rhythm and tone—be playful, guarded, superstitious, blunt, or curious as the moment demands.`,
@@ -460,29 +536,62 @@ class BrainRouter {
         const omniResult = wantVoice
           ? await this.enqueueSpeechTurn(() => runOmniBrainTurn())
           : await runOmniBrainTurn();
-        if (omniResult) return omniResult;
+        if (omniResult) {
+          if (isTextTooSimilar(omniResult.text, recentSelfLines, 0.58)) {
+            const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines);
+            runtime.recentUtterances = pushRing(runtime.recentUtterances, fresh);
+            return { ...omniResult, text: fresh };
+          }
+          runtime.recentUtterances = pushRing(runtime.recentUtterances, omniResult.text);
+          return omniResult;
+        }
       } else if (settings.inferenceMode === 'lfm3-omni-brain') {
         throw new Error('LFM3-Omni Brain mode selected, but LFM3-Omni-2B is not loaded yet.');
       }
     }
 
     // Shared fallback chain across WebGPU GGUF/ONNX and local Ollama/LM Studio
-    const routed = await this.runTextBrain(chatMessages, settings, {
+    let routed = await this.runTextBrain(chatMessages, settings, {
       maxTokens: 125,
-      temperature: 0.74,
+      temperature: 0.78,
       onChunk: params.onChunk,
       logLabel: `${villager.name} → ${partnerName}`,
       sanitizeName: villager.name,
       allowOmniFallback: false,
     });
     if (routed) {
+      if (isTextTooSimilar(routed.text, recentSelfLines, 0.58)) {
+        const retryMessages = [
+          ...chatMessages,
+          {
+            role: 'user' as const,
+            content: `STOP repeating yourself. You already said "${routed.text}". Pivot immediately to a completely new observation, question, or next step with ${partnerName} in under 35 words.`,
+          },
+        ];
+        const retry = await this.runTextBrain(retryMessages, settings, {
+          maxTokens: 125,
+          temperature: 0.92,
+          logLabel: `${villager.name} → ${partnerName} (Pivot)`,
+          sanitizeName: villager.name,
+          allowOmniFallback: false,
+        }).catch(() => null);
+        if (retry && !isTextTooSimilar(retry.text, recentSelfLines, 0.58)) {
+          routed = retry;
+        } else {
+          const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines);
+          runtime.recentUtterances = pushRing(runtime.recentUtterances, fresh);
+          return { ...routed, text: fresh };
+        }
+      }
+      runtime.recentUtterances = pushRing(runtime.recentUtterances, routed.text);
       return routed;
     }
 
     // Story-Sim deterministic persona fallback (instant, zero VRAM)
     const started = performance.now();
     await new Promise((r) => setTimeout(r, 180));
-    const reply = synthesizeStorySimReply(villager, partnerName, history);
+    const reply = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines);
+    runtime.recentUtterances = pushRing(runtime.recentUtterances, reply);
     const durationMs = Math.round(performance.now() - started);
     this.log({
       channel: 'sim',
@@ -779,10 +888,15 @@ class BrainRouter {
         .slice(-2)
         .map((m) => `${m.senderName}: "${m.text}"`)
         .join(' ');
+      const recentAvoidNote = recentDmBeats.length
+        ? `Recent scene hooks already used (DO NOT repeat these props or motifs): ${recentDmBeats.slice(-4).join(' | ')}`
+        : '';
+
       const contextNotes = [
         `Setting: near ${params.landmarkName} in Selo`,
         `${params.villagerA.name}'s current drive: ${params.runtimeA.currentIntention || params.villagerA.plan}`,
         `${params.villagerB.name}'s current drive: ${params.runtimeB.currentIntention || params.villagerB.plan}`,
+        recentAvoidNote,
         snippet ? `What just passed between them: ${snippet}` : '',
       ]
         .filter(Boolean)
@@ -790,7 +904,7 @@ class BrainRouter {
 
       const taskInstruction =
         params.phase === 'opening'
-          ? `Set a compelling 1-to-2 sentence Dungeon Master opening beat as ${params.villagerA.name} and ${params.villagerB.name} encounter one another. Give them a sensory omen, strange object, tension, or rumor to react to right now.`
+          ? `Set a compelling 1-to-2 sentence Dungeon Master opening beat as ${params.villagerA.name} and ${params.villagerB.name} encounter one another. Give them a fresh sensory detail, changing weather, overheard remark, or unresolved tension—NEVER recycle previous props like a brass key if already used.`
           : `Deliver a 1-sentence Dungeon Master consequence or lingering cliffhanger after that exchange—hinting at what changed or stirs next.`;
 
       try {
@@ -801,21 +915,28 @@ class BrainRouter {
               content: [
                 `You are ${narratorName}, creative Dungeon Master of Selo (${params.settings.narratorStyle} style).`,
                 `Write crisp third-person English prose under 40 words.`,
-                `FORBIDDEN clichés: NEVER list job titles like "the tapestry weaver", NEVER say "steps close to speak", and NEVER say "part ways, carrying their thoughts".`,
+                `FORBIDDEN clichés: NEVER list job titles like "the tapestry weaver", NEVER say "steps close to speak", NEVER say "part ways, carrying their thoughts", and NEVER repeat a recently used omen/prop.`,
               ].join('\n'),
             },
             { role: 'user', content: `${contextNotes}\n\n${taskInstruction}` },
           ],
           params.settings,
-          { maxTokens: 80, temperature: 0.8, sanitizeName: narratorName, allowOmniFallback: true },
+          { maxTokens: 80, temperature: 0.88, sanitizeName: narratorName, allowOmniFallback: true },
         );
-        if (routed?.text) return routed.text;
+        if (routed?.text && !isTextTooSimilar(routed.text, recentDmBeats, 0.5)) {
+          recentDmBeats.push(routed.text);
+          if (recentDmBeats.length > 8) recentDmBeats.shift();
+          return routed.text;
+        }
       } catch {
         // Fall through to expressive DM story-sim synthesizer
       }
     }
 
-    return synthesizeDungeonMasterBeat(params);
+    const beat = synthesizeDungeonMasterBeat(params);
+    recentDmBeats.push(beat);
+    if (recentDmBeats.length > 8) recentDmBeats.shift();
+    return beat;
   }
 
   async reflectMemory(params: {
@@ -858,6 +979,11 @@ class BrainRouter {
     settings: ModelSettings;
   }): Promise<{ action: 'talk' | 'visit' | 'explore'; targetName?: string; motive: string }> {
     const { villager, runtime, otherNames, landmarkNames, settings } = params;
+    const avoidMotives = [
+      ...(runtime.recentMotives ?? []),
+      ...(runtime.worldFeed ?? []).slice(-4),
+      runtime.currentIntention ?? '',
+    ].filter(Boolean);
     const hasActiveWebGpu =
       omniEngine.isReady() ||
       minicpmEngine.isReady() ||
@@ -871,12 +997,11 @@ class BrainRouter {
       const worldContext = [
         `Neighbors in Selo: ${otherNames.join(', ') || 'none'}`,
         `Landmarks: ${landmarkNames.join(', ') || 'Village Square'}`,
-        `Current plan: ${runtime.currentIntention || villager.plan}`,
+        avoidMotives.length
+          ? `Already pursued recently (DO NOT repeat, rephrase, or continue chasing the exact same object—advance to a new thread or resolution):\n${avoidMotives.slice(-4).map((m) => `- ${m}`).join('\n')}`
+          : `Opening plan: ${villager.plan}`,
         runtime.memories.length
           ? `Latest memory: ${runtime.memories[runtime.memories.length - 1].summary}`
-          : '',
-        runtime.worldFeed?.length
-          ? `Recent world updates:\n${runtime.worldFeed.slice(-3).map((x) => `- ${x}`).join('\n')}`
           : '',
       ]
         .filter(Boolean)
@@ -889,7 +1014,7 @@ class BrainRouter {
               role: 'system',
               content: [
                 `You are the inner restlessness of ${villager.name}. Keep your role implicit.`,
-                `Pick a surprising or story-worthy next move driven by curiosity, a hunch, rivalry, unfinished business, or a recent rumor—avoid dull routine chore wording.`,
+                `Pick a genuinely NEW next move—pivot topics, test a different neighbor, settle a matter, or explore a new corner. NEVER repeat any motive listed under "Already pursued recently".`,
                 `Reply in ONE line using this exact format:`,
                 `ACTION: talk:<NeighborName> OR visit:<LandmarkName> | MOTIVE: <6 to 12 word dramatic motive>`,
               ].join('\n'),
@@ -897,7 +1022,7 @@ class BrainRouter {
             { role: 'user', content: worldContext },
           ],
           settings,
-          { maxTokens: 48, temperature: 0.78, allowOmniFallback: true },
+          { maxTokens: 52, temperature: 0.88, allowOmniFallback: true },
         );
 
         if (routed?.text) {
@@ -905,65 +1030,79 @@ class BrainRouter {
           const talkMatch = line.match(/talk\s*:\s*([^|\n]+)/i);
           const visitMatch = line.match(/visit\s*:\s*([^|\n]+)/i);
           const motiveMatch = line.match(/motive\s*:\s*(.+)$/i);
-          const motive =
-            (motiveMatch?.[1] ?? villager.plan).replace(/^["']|["']$/g, '').trim().slice(0, 90);
+          const candidateMotive =
+            (motiveMatch?.[1] ?? '').replace(/^["']|["']$/g, '').trim().slice(0, 90);
+          const motiveIsFresh =
+            Boolean(candidateMotive) && !isTextTooSimilar(candidateMotive, avoidMotives, 0.5);
+
           if (talkMatch?.[1]) {
             const name = otherNames.find((n) =>
               talkMatch[1].toLowerCase().includes(n.toLowerCase()),
             );
-            if (name) return { action: 'talk', targetName: name, motive };
+            if (name && motiveIsFresh) {
+              runtime.recentMotives = pushRing(runtime.recentMotives, candidateMotive);
+              return { action: 'talk', targetName: name, motive: candidateMotive };
+            }
           }
           if (visitMatch?.[1]) {
             const lm = landmarkNames.find((l) =>
               visitMatch[1].toLowerCase().includes(l.toLowerCase()),
             );
-            if (lm) return { action: 'visit', targetName: lm, motive };
+            if (lm && motiveIsFresh) {
+              runtime.recentMotives = pushRing(runtime.recentMotives, candidateMotive);
+              return { action: 'visit', targetName: lm, motive: candidateMotive };
+            }
           }
-          if (motive) return { action: 'explore', motive };
+          if (motiveIsFresh) {
+            runtime.recentMotives = pushRing(runtime.recentMotives, candidateMotive);
+            return { action: 'explore', motive: candidateMotive };
+          }
         }
       } catch {
         // Fall through to deterministic story motivation
       }
     }
 
-    // Emergent story-driven fallback motives (curiosity, hunches, rumors)
+    // Emergent story-driven fallback motives (curiosity, hunches, rumors), filtered against recent loops
+    const seed = Date.now() + villager.name.charCodeAt(0) + (runtime.recentMotives?.length ?? 0);
     if (otherNames.length > 0 && Math.random() < 0.65) {
       const targetName = otherNames[Math.floor(Math.random() * otherNames.length)];
       const socialMotives = [
-        `Testing a strange rumor with ${targetName} before dusk`,
-        `Asking ${targetName} who left the unmarked parcel by the square`,
-        `Settling an old wager with ${targetName}`,
-        `Catching ${targetName} alone to swap news nobody else heard`,
+        `Testing a new theory with ${targetName} before dusk`,
+        `Asking ${targetName} what shifted near the outer gate`,
+        `Settling an unspoken disagreement with ${targetName}`,
+        `Comparing notes with ${targetName} after the latest tremor`,
+        `Checking whether ${targetName} noticed someone slipping past early`,
+        `Proposing a quiet pact to ${targetName} near the square`,
       ];
-      return {
-        action: 'talk',
-        targetName,
-        motive: socialMotives[Math.floor(Math.random() * socialMotives.length)],
-      };
+      const motive = pickFreshCandidate(socialMotives, avoidMotives, seed);
+      runtime.recentMotives = pushRing(runtime.recentMotives, motive);
+      return { action: 'talk', targetName, motive };
     }
     if (landmarkNames.length > 0 && Math.random() < 0.68) {
       const targetName = landmarkNames[Math.floor(Math.random() * landmarkNames.length)];
       const placeMotives = [
         `Checking odd lantern reflections around ${targetName}`,
-        `Following fresh footprints along ${targetName}`,
-        `Listening for rumors drifting past ${targetName}`,
-        `Searching ${targetName} for what vanished earlier`,
+        `Following fresh footprints leading past ${targetName}`,
+        `Listening for rumors drifting through ${targetName}`,
+        `Inspecting the stone markers around ${targetName}`,
+        `Watching who approaches ${targetName} from the far ridge`,
+        `Leaving a counter-sign beside ${targetName}`,
       ];
-      return {
-        action: 'visit',
-        targetName,
-        motive: placeMotives[Math.floor(Math.random() * placeMotives.length)],
-      };
+      const motive = pickFreshCandidate(placeMotives, avoidMotives, seed);
+      runtime.recentMotives = pushRing(runtime.recentMotives, motive);
+      return { action: 'visit', targetName, motive };
     }
     const wanderMotives = [
       `Watching the wind shift over Selo rooftops`,
-      `Tracing a hunch nobody else seems to notice`,
-      `Loitering near the lane to see who slips past next`,
+      `Tracing a fresh hunch nobody else has voiced yet`,
+      `Loitering along the side lane to gauge who hurries by`,
+      `Counting lit shutters before the mist settles in`,
+      `Taking the long loop around the perimeter wall`,
     ];
-    return {
-      action: 'explore',
-      motive: wanderMotives[Math.floor(Math.random() * wanderMotives.length)],
-    };
+    const motive = pickFreshCandidate(wanderMotives, avoidMotives, seed);
+    runtime.recentMotives = pushRing(runtime.recentMotives, motive);
+    return { action: 'explore', motive };
   }
 
   refreshActiveSpatialMix() {
@@ -1244,11 +1383,10 @@ class BrainRouter {
   }
 }
 
-let dmBeatCursor = 0;
+const recentDmBeats: string[] = [];
+let dmBeatCursor = Math.floor(Math.random() * 6);
 
 const DM_ENCOUNTER_OPENINGS = [
-  (a: string, b: string, place: string) =>
-    `A brass key tumbles from a roof eaves gutter near ${place}, chiming sharply between ${a} and ${b} as both stop short.`,
   (a: string, b: string, place: string) =>
     `Woodsmoke curls sideways across ${place}, carrying the sting of cedar pitch; ${a} spots something folded inside ${b}'s sleeve.`,
   (a: string, b: string, place: string) =>
@@ -1259,6 +1397,12 @@ const DM_ENCOUNTER_OPENINGS = [
     `A stray gust scatters dried marigold petals past ${place}, catching ${a} mid-stride while ${b} tries to hide a half-sealed note.`,
   (a: string, b: string, place: string) =>
     `Frogs along the creek bank fall dead silent near ${place}, drawing a sharp glance between ${a} and ${b} before either speaks.`,
+  (a: string, b: string, place: string) =>
+    `A brass key tumbles from a roof eaves gutter near ${place}, chiming sharply between ${a} and ${b} as both stop short.`,
+  (a: string, b: string, place: string) =>
+    `A bell rope sways once without a breeze above ${place}; ${a} halts beside ${b} as cool mist drifts across the cobbles.`,
+  (a: string, b: string, place: string) =>
+    `Muddy bootprints lead right up to the steps of ${place} and vanish—${a} catches ${b} measuring the stride length.`,
 ];
 
 const DM_ENCOUNTER_CLOSINGS = [
@@ -1282,73 +1426,72 @@ function synthesizeDungeonMasterBeat(params: {
 }): string {
   const { phase, villagerA, villagerB, landmarkName } = params;
   const idx = dmBeatCursor++;
-  if (phase === 'opening') {
-    return DM_ENCOUNTER_OPENINGS[idx % DM_ENCOUNTER_OPENINGS.length](
-      villagerA.name,
-      villagerB.name,
-      landmarkName,
-    );
-  }
-  return DM_ENCOUNTER_CLOSINGS[idx % DM_ENCOUNTER_CLOSINGS.length](
-    villagerA.name,
-    villagerB.name,
-    landmarkName,
-  );
+  const pool = phase === 'opening' ? DM_ENCOUNTER_OPENINGS : DM_ENCOUNTER_CLOSINGS;
+  const rendered = pool.map((fn) => fn(villagerA.name, villagerB.name, landmarkName));
+  return pickFreshCandidate(rendered, recentDmBeats, idx);
 }
 
 function synthesizeStorySimReply(
   villager: VillagerConfig,
   partnerName: string,
   history: ChatMessage[],
+  avoidLines: string[] = [],
 ): string {
   const spokenHistory = history.filter((m) => m.kind !== 'narration');
   const dmBeat = [...history].reverse().find((m) => m.kind === 'narration')?.text.toLowerCase() ?? '';
   const last = spokenHistory[spokenHistory.length - 1];
   const turn = spokenHistory.length;
+  const seed = turn + villager.name.charCodeAt(0) + avoidLines.length;
 
-  // React directly to concrete DM scene hooks when opening
+  // React directly to concrete DM scene hooks when opening (unless we've already used that reaction)
   if (!last) {
+    const openers: string[] = [];
     if (dmBeat.includes('key')) {
-      return `Hold on, ${partnerName}—did that brass key just drop out of nowhere, or did somebody leave it on purpose?`;
+      openers.push(`Hold on, ${partnerName}—did that brass key just drop out of nowhere, or did somebody leave it on purpose?`);
     }
     if (dmBeat.includes('tally') || dmBeat.includes('chalk')) {
-      return `Tell me honestly, ${partnerName}: did you draw that mark on the stone, or is someone keeping score on us?`;
+      openers.push(`Tell me honestly, ${partnerName}: did you draw that mark on the stone, or is someone keeping score on us?`);
     }
     if (dmBeat.includes('note') || dmBeat.includes('sleeve')) {
-      return `Don't tuck that folded paper away on my account, ${partnerName}. Who sent word without signing it?`;
+      openers.push(`Don't tuck that folded paper away on my account, ${partnerName}. Who sent word without signing it?`);
     }
     if (dmBeat.includes('millwheel') || dmBeat.includes('hush') || dmBeat.includes('silent')) {
-      return `Did you hear everything go dead quiet just now, ${partnerName}? Even the birds stopped mid-note.`;
+      openers.push(`Did you hear everything go dead quiet just now, ${partnerName}? Even the birds stopped mid-note.`);
     }
     if (dmBeat.includes('pitch') || dmBeat.includes('smoke')) {
-      return `That's juniper smoke, not ordinary hearth pine—someone down the lane is burning something they shouldn't be, ${partnerName}.`;
+      openers.push(`That's juniper smoke, not ordinary hearth pine—someone down the lane is burning something they shouldn't be, ${partnerName}.`);
     }
-    return `You look like you've been dodging half the village since morning, ${partnerName}. What are you actually up to?`;
+    openers.push(
+      `You look like you've been dodging half the village since morning, ${partnerName}. What are you actually up to?`,
+      `Never mind the weather, ${partnerName}—have you noticed how quiet the far gate gets after midday?`,
+      `Good timing, ${partnerName}. Let's settle this before half the square tries to guess what we're arguing about.`,
+    );
+    return pickFreshCandidate(openers, avoidLines, seed);
   }
 
   const lower = last.text.toLowerCase();
+  const candidates: string[] = [];
   if (lower.includes('key') || lower.includes('lock') || lower.includes('box')) {
-    return `If it fits the old cellar latch by the mill, we're not telling a soul until nightfall—agreed, ${partnerName}?`;
+    candidates.push(`If it fits the old cellar latch by the mill, we're not telling a soul until nightfall—agreed, ${partnerName}?`);
   }
   if (lower.includes('mark') || lower.includes('rumor') || lower.includes('note') || lower.includes('secret')) {
-    return `Keep your voice down, ${partnerName}. Half of Selo pretends not to watch the lanes, yet every door has ears.`;
+    candidates.push(`Keep your voice down, ${partnerName}. Half of Selo pretends not to watch the lanes, yet every door has ears.`);
   }
   if (lower.includes('?')) {
-    const reactions = [
+    candidates.push(
       `I wouldn't bet coin on the harmless answer, ${partnerName}—look closely at who's been hanging near the square since dawn.`,
       `Maybe, though I swear somebody shifted the lantern posts last night when the fog rolled in.`,
       `Ask me again after sunset, ${partnerName}. Right now I'd rather see what turns up first.`,
-    ];
-    return reactions[(turn + villager.name.length) % reactions.length];
+    );
   }
-
-  const dynamicMoves = [
+  candidates.push(
     `Wait—say that last part again, ${partnerName}. Because if that's true, someone lied at the fire last night.`,
     `You don't fool me for a second, ${partnerName}, though I'll play along if you watch my back near the river.`,
     `Make me a wager then: by dusk we'll know who stirred up that dust behind the windmill.`,
     `Fair enough, ${partnerName}. Meet me past the hearth before everyone else wakes up—I want a straight answer next time.`,
-  ];
-  return dynamicMoves[(turn + villager.name.charCodeAt(0)) % dynamicMoves.length];
+    `Let's drop the guesswork, ${partnerName}—walk with me past the creek and see for yourself.`,
+  );
+  return pickFreshCandidate(candidates, avoidLines, seed);
 }
 
 let dmNarrationCursor = 0;

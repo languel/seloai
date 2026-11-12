@@ -249,6 +249,8 @@ export interface VillagerRuntime {
   memories: MemoryEntry[];
   worldFeed?: string[];
   currentIntention?: string;
+  recentMotives?: string[];
+  recentUtterances?: string[];
   blockedTicks?: number;
   lastThinkAt: number;
   lastMoveAt: number;

@@ -8,7 +8,7 @@ import {
   WEBGPU_BRAIN_PRESETS,
 } from '../../data/defaultData';
 import { computeSpatialMix, EAVESDROP_WHOLE_MAP_RADIUS } from '../../ai/audioPipeline';
-import { parseDialogueAndNarration } from '../../ai/brainRouter';
+import { brainRouter, isTextTooSimilar, parseDialogueAndNarration } from '../../ai/brainRouter';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
 import {
   createAutomatedVillagerBatch,
@@ -814,5 +814,53 @@ describe('SeloAI core engine', () => {
     expect(blank.width).toBe(24);
     expect(blank.height).toBe(20);
     expect(blank.pointsOfInterest?.length).toBe(1);
+  });
+
+  it('prevents villagers from looping on repeated motives or dialogue lines', async () => {
+    expect(
+      isTextTooSimilar(
+        'chase the brass key past the gate',
+        ['chase the brass key before dusk'],
+      ),
+    ).toBe(true);
+    expect(
+      isTextTooSimilar(
+        'Inspecting the stone markers around #Plaza',
+        ['chase the brass key before dusk'],
+      ),
+    ).toBe(false);
+
+    const map = createDefaultMap();
+    const villagers = structuredClone(DEFAULT_VILLAGERS.slice(0, 2));
+    const sim = new VillageSimulation(map, villagers, [], DEFAULT_MODEL_SETTINGS);
+    const v0 = villagers[0]!;
+    const v1 = villagers[1]!;
+    const rt0 = sim.runtimes.get(v0.id)!;
+
+    const motives: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const dec = await brainRouter.decideVillagerNextAction({
+        villager: v0,
+        runtime: rt0,
+        otherNames: [v1.name],
+        landmarkNames: ['#Plaza', '#River'],
+        settings: DEFAULT_MODEL_SETTINGS,
+      });
+      motives.push(dec.motive);
+    }
+    expect(new Set(motives).size).toBeGreaterThanOrEqual(3);
+
+    const replies: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await brainRouter.generateVillagerReply({
+        villager: v0,
+        runtime: rt0,
+        partnerName: v1.name,
+        history: [],
+        settings: DEFAULT_MODEL_SETTINGS,
+      });
+      replies.push(res.text);
+    }
+    expect(new Set(replies).size).toBe(3);
   });
 });
