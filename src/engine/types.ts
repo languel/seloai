@@ -289,7 +289,7 @@ export interface ModelSettings {
   localApiModel: string;
   enableOmniTts: boolean;
   enableWebSpeechFallback: boolean;
-  proximityAudioEnabled: boolean;
+  /** Eavesdrop hearing radius in tiles (0 = off, 1–18 = mix nearby speech by distance & pan) */
   proximityRadiusTiles: number;
   ambientAudioEnabled: boolean;
   autoConverse: boolean;

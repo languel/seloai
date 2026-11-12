@@ -885,28 +885,36 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   />
                   <span>Autonomous villager-to-villager conversations</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.proximityAudioEnabled}
-                    onChange={(e) => onUpdateSettings({ proximityAudioEnabled: e.target.checked })}
-                  />
-                  <span>Hear nearby conversations (spatial pan &amp; distance mix)</span>
-                </label>
-                <div className="flex items-center gap-2 pt-1">
-                  <label htmlFor="proximity-radius" className="text-muted">
-                    Hearing radius: <span className="font-mono text-ink">{settings.proximityRadiusTiles} tiles</span>
-                  </label>
-                  <input
-                    id="proximity-radius"
-                    type="range"
-                    min={4}
-                    max={18}
-                    step={1}
-                    value={settings.proximityRadiusTiles}
-                    onChange={(e) => onUpdateSettings({ proximityRadiusTiles: Number(e.target.value) })}
-                    className="flex-1"
-                  />
+                <div className="space-y-1 pt-1">
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="proximity-radius" className="text-muted">
+                      Eavesdrop radius:{' '}
+                      <span className="font-mono text-ink">
+                        {settings.proximityRadiusTiles > 0
+                          ? `${settings.proximityRadiusTiles} tiles`
+                          : 'Off (0 tiles)'}
+                      </span>
+                    </label>
+                    <input
+                      id="proximity-radius"
+                      type="range"
+                      min={0}
+                      max={18}
+                      step={1}
+                      value={settings.proximityRadiusTiles}
+                      onChange={(e) => {
+                        const nextRadius = Number(e.target.value);
+                        if (nextRadius <= 0) {
+                          brainRouter.stopSpeech();
+                        }
+                        onUpdateSettings({ proximityRadiusTiles: nextRadius });
+                      }}
+                      className="flex-1"
+                    />
+                  </div>
+                  <p className="text-[11px] text-muted">
+                    Mixes nearby villager voices by distance &amp; stereo pan (set to 0 to turn eavesdropping off).
+                  </p>
                 </div>
               </div>
             </fieldset>

@@ -211,8 +211,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
       drawAnimatedSprites(ctx, map, timeSec);
 
-      // Subtle spatial hearing radius ring around player when proximity audio is enabled
-      if (sim.modelSettings.proximityAudioEnabled) {
+      // Subtle spatial hearing radius ring around player when eavesdrop radius > 0
+      if (sim.modelSettings.proximityRadiusTiles > 0) {
         ctx.save();
         ctx.strokeStyle = 'rgba(31, 181, 201, 0.28)';
         ctx.lineWidth = 1.5;
@@ -580,23 +580,41 @@ export const VillageView: React.FC<VillageViewProps> = ({
             <Compass className="h-3.5 w-3.5" />
             <span>Follow</span>
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !settings.proximityAudioEnabled;
-              if (!next) {
-                brainRouter.stopSpeech();
-              }
-              onUpdateSettings({ proximityAudioEnabled: next });
-            }}
-            aria-pressed={settings.proximityAudioEnabled}
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
-              settings.proximityAudioEnabled ? 'bg-sage text-white' : 'hover:bg-surface'
+          <div
+            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition ${
+              settings.proximityRadiusTiles > 0 ? 'bg-sage/15 text-ink' : 'text-muted'
             }`}
           >
-            <Headphones className="h-3.5 w-3.5" />
-            <span>Eavesdrop {settings.proximityAudioEnabled ? 'On' : 'Off'}</span>
-          </button>
+            <Headphones
+              className={`h-3.5 w-3.5 shrink-0 ${
+                settings.proximityRadiusTiles > 0 ? 'text-sage' : 'text-muted'
+              }`}
+              aria-hidden="true"
+            />
+            <label htmlFor="village-eavesdrop-radius" className="whitespace-nowrap font-medium">
+              Eavesdrop
+            </label>
+            <input
+              id="village-eavesdrop-radius"
+              type="range"
+              min={0}
+              max={18}
+              step={1}
+              value={settings.proximityRadiusTiles}
+              onChange={(e) => {
+                const nextRadius = Number(e.target.value);
+                if (nextRadius <= 0) {
+                  brainRouter.stopSpeech();
+                }
+                onUpdateSettings({ proximityRadiusTiles: nextRadius });
+              }}
+              className="w-20 cursor-pointer accent-sage"
+              title="Eavesdrop hearing radius in tiles (0 = Off)"
+            />
+            <span className="w-7 text-right font-mono text-[11px]">
+              {settings.proximityRadiusTiles > 0 ? `${settings.proximityRadiusTiles}t` : 'Off'}
+            </span>
+          </div>
         </div>
 
         {/* Bottom-left quick controls hint */}

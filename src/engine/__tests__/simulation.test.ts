@@ -98,6 +98,10 @@ describe('SeloAI core engine', () => {
     const outOfRange = computeSpatialMix(25, 25, 10, 10, 8);
     expect(outOfRange.inRange).toBe(false);
     expect(outOfRange.gain).toBe(0);
+
+    const radiusZeroOff = computeSpatialMix(10, 10, 10, 10, 0);
+    expect(radiusZeroOff.inRange).toBe(false);
+    expect(radiusZeroOff.gain).toBe(0);
   });
 
   it('provides effective Omni voice profiles and documented speech locales', () => {
@@ -153,7 +157,7 @@ describe('SeloAI core engine', () => {
     const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
       ...DEFAULT_MODEL_SETTINGS,
       inferenceMode: 'story-sim',
-      proximityAudioEnabled: false,
+      proximityRadiusTiles: 0,
       enableWebSpeechFallback: false,
       narratorEnabled: true,
       narrateEvents: true,
@@ -184,7 +188,7 @@ describe('SeloAI core engine', () => {
     const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
       ...DEFAULT_MODEL_SETTINGS,
       inferenceMode: 'story-sim',
-      proximityAudioEnabled: false,
+      proximityRadiusTiles: 0,
       enableWebSpeechFallback: false,
     });
 
@@ -240,7 +244,7 @@ describe('SeloAI core engine', () => {
     const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
       ...DEFAULT_MODEL_SETTINGS,
       inferenceMode: 'story-sim',
-      proximityAudioEnabled: false,
+      proximityRadiusTiles: 0,
       enableWebSpeechFallback: false,
       narratorEnabled: true,
     });

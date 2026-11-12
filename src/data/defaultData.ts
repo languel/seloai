@@ -402,7 +402,6 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   localApiModel: 'lfm3',
   enableOmniTts: true,
   enableWebSpeechFallback: true,
-  proximityAudioEnabled: true,
   proximityRadiusTiles: 9,
   ambientAudioEnabled: false,
   autoConverse: true,

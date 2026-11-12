@@ -62,12 +62,22 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
   try {
     const stored = await idbGet<Partial<PersistedVillageState>>('village_v1');
     if (stored && stored.map && Array.isArray(stored.villagers) && stored.villagers.length > 0) {
+      const rawSettings = (stored.modelSettings ?? {}) as Partial<ModelSettings> & {
+        proximityAudioEnabled?: boolean;
+      };
+      const radius =
+        typeof rawSettings.proximityRadiusTiles === 'number'
+          ? rawSettings.proximityAudioEnabled === false
+            ? 0
+            : rawSettings.proximityRadiusTiles
+          : DEFAULT_MODEL_SETTINGS.proximityRadiusTiles;
       return {
         map: stored.map,
         villagers: stored.villagers.map(ensureVillagerAppearanceSprite),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
-          ...(stored.modelSettings ?? {}),
+          ...rawSettings,
+          proximityRadiusTiles: Math.max(0, Math.min(18, radius)),
           narratorVoice: {
             ...DEFAULT_MODEL_SETTINGS.narratorVoice,
             ...(stored.modelSettings?.narratorVoice ?? {}),

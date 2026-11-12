@@ -688,11 +688,12 @@ export class VillageSimulation {
       );
 
     try {
+      const eavesdropEnabled = this.modelSettings.proximityRadiusTiles > 0;
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
         await this.emitNarrationTurn(
           conv,
           this.buildSceneIntro(cfgA, cfgB),
-          this.modelSettings.proximityAudioEnabled,
+          eavesdropEnabled,
           midpointResolver,
         );
       }
@@ -723,7 +724,7 @@ export class VillageSimulation {
           partnerName: partnerCfg.name,
           history: conv.messages,
           settings: this.modelSettings,
-          speakSpatialResolver: this.modelSettings.proximityAudioEnabled ? resolver : undefined,
+          speakSpatialResolver: eavesdropEnabled ? resolver : undefined,
         });
 
         const parsed = parseDialogueAndNarration(res.text, speakerCfg.name);
@@ -734,7 +735,7 @@ export class VillageSimulation {
             await this.emitNarrationTurn(
               conv,
               actionText,
-              this.modelSettings.proximityAudioEnabled && !res.audioHandled,
+              eavesdropEnabled && !res.audioHandled,
               resolver,
             );
           }
@@ -759,7 +760,7 @@ export class VillageSimulation {
         conv.updatedAt = Date.now();
         this.notify(true);
 
-        if (this.modelSettings.proximityAudioEnabled && !res.audioHandled && parsed.spoken) {
+        if (eavesdropEnabled && !res.audioHandled && parsed.spoken) {
           const mix = resolver();
           if (mix.inRange) {
             await brainRouter.speakLine(parsed.spoken, speakerCfg, this.modelSettings, resolver);
@@ -804,7 +805,7 @@ export class VillageSimulation {
         await this.emitNarrationTurn(
           conv,
           closing,
-          this.modelSettings.proximityAudioEnabled,
+          eavesdropEnabled,
           midpointResolver,
         );
       }
@@ -942,7 +943,7 @@ export class VillageSimulation {
           rt.y,
           this.player.x,
           this.player.y,
-          this.modelSettings.proximityRadiusTiles,
+          Math.max(9, this.modelSettings.proximityRadiusTiles),
         );
         return {
           ...mix,
