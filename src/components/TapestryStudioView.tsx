@@ -47,6 +47,9 @@ interface AutoSliceItem {
   selected: boolean;
 }
 
+type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+type CropHoverAction = ResizeHandle | 'move' | null;
+
 interface TapestryStudioViewProps {
   map: VillageMap;
   onApplyMap: (nextMap: VillageMap) => void;
@@ -84,7 +87,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const [pickingColor, setPickingColor] = useState(false);
   const [wandMode, setWandMode] = useState(false);
   const [bgVersion, setBgVersion] = useState(0);
-  const [hoveringCrop, setHoveringCrop] = useState(false);
+  const [hoverAction, setHoverAction] = useState<CropHoverAction>(null);
 
   // Auto-Slicer state
   const [autoSlices, setAutoSlices] = useState<AutoSliceItem[]>([]);
@@ -114,9 +117,13 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const undoStackRef = useRef<ImageData[]>([]);
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
   const isDraggingRef = useRef(false);
-  const dragModeRef = useRef<'none' | 'pan' | 'select' | 'move'>('none');
+  const dragModeRef = useRef<'none' | 'pan' | 'select' | 'move' | 'resize'>('none');
   const dragStartRef = useRef({ x: 0, y: 0 });
   const moveOffsetRef = useRef({ dx: 0, dy: 0, w: 0, h: 0 });
+  const resizeStartRef = useRef<{ handle: ResizeHandle; orig: CropSelection }>({
+    handle: 'se',
+    orig: { x: 0, y: 0, w: 32, h: 32 },
+  });
   const panStartRef = useRef({ x: 0, y: 0 });
 
   // Keep canvas backing buffer dimensions synced 1:1 with its rendered CSS viewport
@@ -506,6 +513,27 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         ctx.lineTo(crop.x + crop.w, sy);
       }
       ctx.stroke();
+
+      // 8 resize handles (4 corners + 4 edge midpoints)
+      const hs = Math.max(4, 7 / zoom);
+      const half = hs / 2;
+      const handles: Array<[number, number]> = [
+        [crop.x, crop.y],
+        [crop.x + crop.w / 2, crop.y],
+        [crop.x + crop.w, crop.y],
+        [crop.x + crop.w, crop.y + crop.h / 2],
+        [crop.x + crop.w, crop.y + crop.h],
+        [crop.x + crop.w / 2, crop.y + crop.h],
+        [crop.x, crop.y + crop.h],
+        [crop.x, crop.y + crop.h / 2],
+      ];
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#be1e2d';
+      ctx.lineWidth = 1.5 / zoom;
+      for (const [hx, hy] of handles) {
+        ctx.fillRect(hx - half, hy - half, hs, hs);
+        ctx.strokeRect(hx - half, hy - half, hs, hs);
+      }
     }
 
     ctx.restore();
@@ -528,6 +556,35 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       x: Math.max(0, Math.min(imgWidth - 1, Math.floor(ox))),
       y: Math.max(0, Math.min(imgHeight - 1, Math.floor(oy))),
     };
+  };
+
+  const hitTestCropAction = (x: number, y: number): CropHoverAction => {
+    if (crop.w <= 0 || crop.h <= 0) return null;
+    const tol = Math.max(5, Math.round(7 / zoom));
+    const left = crop.x;
+    const right = crop.x + crop.w;
+    const top = crop.y;
+    const bottom = crop.y + crop.h;
+
+    if (x < left - tol || x > right + tol || y < top - tol || y > bottom + tol) {
+      return null;
+    }
+
+    const nearLeft = Math.abs(x - left) <= tol;
+    const nearRight = Math.abs(x - right) <= tol;
+    const nearTop = Math.abs(y - top) <= tol;
+    const nearBottom = Math.abs(y - bottom) <= tol;
+
+    if (nearTop && nearLeft) return 'nw';
+    if (nearTop && nearRight) return 'ne';
+    if (nearBottom && nearLeft) return 'sw';
+    if (nearBottom && nearRight) return 'se';
+    if (nearTop) return 'n';
+    if (nearBottom) return 's';
+    if (nearLeft) return 'w';
+    if (nearRight) return 'e';
+    if (x >= left && x < right && y >= top && y < bottom) return 'move';
+    return null;
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -570,17 +627,17 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       return;
     }
 
-    // Move existing crop box off-grid if clicking inside it
-    if (
-      !e.metaKey &&
-      !e.ctrlKey &&
-      crop.w > 0 &&
-      crop.h > 0 &&
-      x >= crop.x &&
-      x < crop.x + crop.w &&
-      y >= crop.y &&
-      y < crop.y + crop.h
-    ) {
+    // Check resize handles or move inside existing crop box (unless Ctrl/Cmd forces a new selection)
+    const hitAction = !e.metaKey && !e.ctrlKey ? hitTestCropAction(x, y) : null;
+    if (hitAction && hitAction !== 'move') {
+      isDraggingRef.current = true;
+      dragModeRef.current = 'resize';
+      resizeStartRef.current = { handle: hitAction, orig: { ...crop } };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    if (hitAction === 'move') {
       isDraggingRef.current = true;
       dragModeRef.current = 'move';
       moveOffsetRef.current = {
@@ -617,15 +674,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     const { x, y } = canvasToImageCoords(e);
 
     if (!isDraggingRef.current) {
-      const inside =
-        crop.w > 0 &&
-        crop.h > 0 &&
-        x >= crop.x &&
-        x < crop.x + crop.w &&
-        y >= crop.y &&
-        y < crop.y + crop.h;
-      if (inside !== hoveringCrop) {
-        setHoveringCrop(inside);
+      const nextHover = hitTestCropAction(x, y);
+      if (nextHover !== hoverAction) {
+        setHoverAction(nextHover);
       }
       return;
     }
@@ -634,6 +685,39 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       setPan({
         x: e.clientX - panStartRef.current.x,
         y: e.clientY - panStartRef.current.y,
+      });
+      return;
+    }
+
+    if (dragModeRef.current === 'resize') {
+      const { handle, orig } = resizeStartRef.current;
+      const minSize = 8;
+      let left = orig.x;
+      let top = orig.y;
+      let right = orig.x + orig.w;
+      let bottom = orig.y + orig.h;
+
+      const snapVal = (v: number) =>
+        e.shiftKey && snapGrid > 0 ? Math.round(v / snapGrid) * snapGrid : v;
+
+      if (handle.includes('w')) {
+        left = Math.max(0, Math.min(right - minSize, snapVal(x)));
+      }
+      if (handle.includes('e')) {
+        right = Math.min(imgWidth, Math.max(left + minSize, snapVal(x + 1)));
+      }
+      if (handle.includes('n')) {
+        top = Math.max(0, Math.min(bottom - minSize, snapVal(y)));
+      }
+      if (handle.includes('s')) {
+        bottom = Math.min(imgHeight, Math.max(top + minSize, snapVal(y + 1)));
+      }
+
+      setCrop({
+        x: left,
+        y: top,
+        w: Math.max(minSize, right - left),
+        h: Math.max(minSize, bottom - top),
       });
       return;
     }
@@ -1103,9 +1187,17 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                 ? 'cursor-grab active:cursor-grabbing'
                 : pickingColor || wandMode
                   ? 'cursor-crosshair'
-                  : hoveringCrop
-                    ? 'cursor-move'
-                    : 'cursor-crosshair'
+                  : hoverAction === 'nw' || hoverAction === 'se'
+                    ? 'cursor-nwse-resize'
+                    : hoverAction === 'ne' || hoverAction === 'sw'
+                      ? 'cursor-nesw-resize'
+                      : hoverAction === 'n' || hoverAction === 's'
+                        ? 'cursor-ns-resize'
+                        : hoverAction === 'e' || hoverAction === 'w'
+                          ? 'cursor-ew-resize'
+                          : hoverAction === 'move'
+                            ? 'cursor-move'
+                            : 'cursor-crosshair'
             }`}
           >
             <canvas
