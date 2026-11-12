@@ -7,6 +7,7 @@ import {
   Map as MapIcon,
   Moon,
   Network,
+  Palette,
   RotateCcw,
   Sun,
   Upload,
@@ -22,6 +23,7 @@ import { CharacterEditorView } from './components/CharacterEditorView';
 import { LevelEditorView } from './components/LevelEditorView';
 import { MonitorView } from './components/MonitorView';
 import { ObservatoryView } from './components/ObservatoryView';
+import { TapestryStudioView } from './components/TapestryStudioView';
 import { VillageView } from './components/VillageView';
 import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
@@ -39,7 +41,7 @@ import {
   savePersistedState,
 } from './storage/villageStore';
 
-type TabId = 'village' | 'observatory' | 'level' | 'characters' | 'monitor' | 'guides';
+type TabId = 'village' | 'observatory' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
 
 export function App() {
   const [tab, setTab] = useState<TabId>('village');
@@ -374,6 +376,7 @@ export function App() {
               ['village', 'Village', Trees],
               ['observatory', 'Control Room', Network],
               ['level', 'Level Editor', MapIcon],
+              ['tapestry', 'Tapestry Studio', Palette],
               ['characters', 'Characters', Users],
               ['monitor', 'AI & Voice Monitor', Activity],
               ['guides', 'Guides & Templates', BookOpen],
@@ -511,7 +514,20 @@ export function App() {
             }}
           />
         )}
-        {tab === 'level' && <LevelEditorView map={map} onApplyMap={handleApplyMap} />}
+        {tab === 'level' && (
+          <LevelEditorView
+            map={map}
+            onApplyMap={handleApplyMap}
+            onOpenTapestryStudio={() => setTab('tapestry')}
+          />
+        )}
+        {tab === 'tapestry' && (
+          <TapestryStudioView
+            map={map}
+            onApplyMap={handleApplyMap}
+            onOpenLevelEditor={() => setTab('level')}
+          />
+        )}
         {tab === 'characters' && (
           <CharacterEditorView
             villagers={villagers}

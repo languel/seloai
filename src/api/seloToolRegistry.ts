@@ -31,7 +31,7 @@ import {
   parseImportedVillageJson,
 } from '../storage/villageStore';
 
-export type WorkspaceTabId = 'village' | 'observatory' | 'level' | 'characters' | 'monitor' | 'guides';
+export type WorkspaceTabId = 'village' | 'observatory' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
 
 export interface SeloHostHooks {
   getSimulation: () => VillageSimulation;

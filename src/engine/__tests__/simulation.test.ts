@@ -42,9 +42,11 @@ import {
 import {
   appendTilesToTileset,
   createMacroStampFromIndices,
+  detectMotifRegions,
   floodFillTransparent,
   getOpaqueBounds,
   processTilePixels,
+  quantizeAndRebuildPixelGrid,
   removeEdgeBackground,
   sliceSelectionToTiles,
 } from '../tapestrySampler';
@@ -1265,5 +1267,43 @@ describe('SeloAI core engine', () => {
     floodFillTransparent(imgData, [{ x: 2, y: 2 }], 15);
     expect(imgData.data[(2 * w + 2) * 4 + 3]).toBe(0);
     expect(imgData.data[(1 * w + 1) * 4 + 3]).toBe(255);
+  });
+
+  it('auto-slices disconnected motifs and rebuilds crisp quantized pixel art with procedural Canvas2D code', () => {
+    // Build a 32x16 transparent canvas with two 8x8 motifs:
+    // Motif 1 (crimson) at x=2..9, y=2..9; Motif 2 (emerald) at x=20..27, y=4..11
+    const w = 32;
+    const h = 16;
+    const buf = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (x >= 2 && x <= 9 && y >= 2 && y <= 9) {
+          buf[i] = 190;
+          buf[i + 1] = 30;
+          buf[i + 2] = 45;
+          buf[i + 3] = 255;
+        } else if (x >= 20 && x <= 27 && y >= 4 && y <= 11) {
+          buf[i] = 34;
+          buf[i + 1] = 139;
+          buf[i + 2] = 74;
+          buf[i + 3] = 255;
+        }
+      }
+    }
+    const imgData = { width: w, height: h, data: buf } as ImageData;
+
+    const regions = detectMotifRegions(imgData, { minSize: 6, mergeGap: 2 });
+    expect(regions).toEqual([
+      { x: 2, y: 2, w: 8, h: 8 },
+      { x: 20, y: 4, w: 8, h: 8 },
+    ]);
+
+    const rebuilt = quantizeAndRebuildPixelGrid(imgData, 16, 8, 4, 'ShevitsaPair');
+    expect(rebuilt.gridWidth).toBe(16);
+    expect(rebuilt.gridHeight).toBe(8);
+    expect(rebuilt.palette.length).toBe(2);
+    expect(rebuilt.proceduralCode).toContain('export function drawShevitsaPair(');
+    expect(rebuilt.proceduralCode).toContain('ctx.fillRect(');
   });
 });
