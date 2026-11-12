@@ -17,6 +17,7 @@ export interface ChromaKeyFilter {
 export interface SliceOptions {
   chromaKey?: ChromaKeyFilter | null;
   pixelate?: boolean;
+  trimAndFit?: boolean;
 }
 
 export interface SlicedTileResult {
@@ -65,6 +66,166 @@ export function processTilePixels(
 }
 
 /**
+ * Flood-fills connected pixels (4-way) matching the seed color within tolerance,
+ * setting their alpha channel to 0 (transparent).
+ */
+export function floodFillTransparent(
+  imgData: ImageData,
+  startPoints: Array<{ x: number; y: number }>,
+  tolerance: number = 20,
+  targetColor?: { r: number; g: number; b: number },
+): ImageData {
+  const { width, height, data } = imgData;
+  if (width <= 0 || height <= 0 || startPoints.length === 0) return imgData;
+
+  const total = width * height;
+  const visited = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  const maxDist = (tolerance / 100) * 360;
+
+  for (const pt of startPoints) {
+    const sx = Math.floor(pt.x);
+    const sy = Math.floor(pt.y);
+    if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
+
+    const startIdx = sy * width + sx;
+    if (visited[startIdx]) continue;
+
+    const p0 = startIdx * 4;
+    if (data[p0 + 3] === 0) continue;
+
+    const sr = targetColor ? targetColor.r : data[p0];
+    const sg = targetColor ? targetColor.g : data[p0 + 1];
+    const sb = targetColor ? targetColor.b : data[p0 + 2];
+
+    if (Math.hypot(data[p0] - sr, data[p0 + 1] - sg, data[p0 + 2] - sb) > maxDist) {
+      continue;
+    }
+
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = startIdx;
+    visited[startIdx] = 1;
+
+    while (head < tail) {
+      const idx = queue[head++];
+      const pi = idx * 4;
+      data[pi + 3] = 0;
+
+      const x = idx % width;
+      const y = (idx - x) / width;
+
+      // 4-connected neighbors
+      const neighbors: number[] = [];
+      if (x > 0) neighbors.push(idx - 1);
+      if (x + 1 < width) neighbors.push(idx + 1);
+      if (y > 0) neighbors.push(idx - width);
+      if (y + 1 < height) neighbors.push(idx + width);
+
+      for (const nIdx of neighbors) {
+        if (visited[nIdx]) continue;
+        visited[nIdx] = 1;
+        const np = nIdx * 4;
+        if (data[np + 3] === 0) continue;
+        const dist = Math.hypot(data[np] - sr, data[np + 1] - sg, data[np + 2] - sb);
+        if (dist <= maxDist) {
+          queue[tail++] = nIdx;
+        }
+      }
+    }
+  }
+
+  return imgData;
+}
+
+/**
+ * Automatically detects the dominant opaque color along the image borders
+ * and flood-fills inward from all matching border pixels to remove the background
+ * while preserving enclosed interior details.
+ */
+export function removeEdgeBackground(
+  imgData: ImageData,
+  tolerance: number = 20,
+): ImageData {
+  const { width, height, data } = imgData;
+  if (width <= 0 || height <= 0) return imgData;
+
+  const borderCoords: Array<{ x: number; y: number }> = [];
+  for (let x = 0; x < width; x++) {
+    borderCoords.push({ x, y: 0 });
+    if (height > 1) borderCoords.push({ x, y: height - 1 });
+  }
+  for (let y = 1; y < height - 1; y++) {
+    borderCoords.push({ x: 0, y });
+    if (width > 1) borderCoords.push({ x: width - 1, y });
+  }
+
+  // Bucket border colors (5-bit per channel) to find dominant background color
+  const buckets = new Map<number, { count: number; rSum: number; gSum: number; bSum: number }>();
+  for (const pt of borderCoords) {
+    const p = (pt.y * width + pt.x) * 4;
+    if (data[p + 3] === 0) continue;
+    const key = ((data[p] >> 3) << 10) | ((data[p + 1] >> 3) << 5) | (data[p + 2] >> 3);
+    const entry = buckets.get(key);
+    if (entry) {
+      entry.count++;
+      entry.rSum += data[p];
+      entry.gSum += data[p + 1];
+      entry.bSum += data[p + 2];
+    } else {
+      buckets.set(key, { count: 1, rSum: data[p], gSum: data[p + 1], bSum: data[p + 2] });
+    }
+  }
+
+  let best: { count: number; rSum: number; gSum: number; bSum: number } | null = null;
+  for (const entry of buckets.values()) {
+    if (!best || entry.count > best.count) {
+      best = entry;
+    }
+  }
+  if (!best || best.count === 0) return imgData;
+
+  const targetColor = {
+    r: Math.round(best.rSum / best.count),
+    g: Math.round(best.gSum / best.count),
+    b: Math.round(best.bSum / best.count),
+  };
+
+  return floodFillTransparent(imgData, borderCoords, tolerance, targetColor);
+}
+
+/**
+ * Returns the tightest bounding box of non-transparent (alpha > 0) pixels
+ * within an ImageData buffer, or null if the entire buffer is transparent.
+ */
+export function getOpaqueBounds(imgData: ImageData): CropSelection | null {
+  const { width, height, data } = imgData;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] > 0) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return {
+    x: minX,
+    y: minY,
+    w: maxX - minX + 1,
+    h: maxY - minY + 1,
+  };
+}
+
+/**
  * Slices a selected rectangular crop from an image/canvas into 32x32 (or custom tileDim)
  * tile canvases, ready to be added to a tileset.
  */
@@ -92,6 +253,11 @@ export function sliceSelectionToTiles(
   const targetW = cols * tileDim;
   const targetH = rows * tileDim;
 
+  const sx = Math.max(0, Math.floor(crop.x));
+  const sy = Math.max(0, Math.floor(crop.y));
+  const sw = Math.max(1, Math.min(Math.round(crop.w), sourceW - sx));
+  const sh = Math.max(1, Math.min(Math.round(crop.h), sourceH - sy));
+
   // 1. Draw the resampled crop onto an intermediate canvas
   const cropCanvas = document.createElement('canvas');
   cropCanvas.width = targetW;
@@ -101,24 +267,45 @@ export function sliceSelectionToTiles(
     throw new Error('Canvas 2D context not available');
   }
 
-  cropCtx.imageSmoothingEnabled = !options.pixelate;
-  cropCtx.drawImage(
-    source,
-    Math.max(0, crop.x),
-    Math.max(0, crop.y),
-    Math.min(crop.w, sourceW - crop.x),
-    Math.min(crop.h, sourceH - crop.y),
-    0,
-    0,
-    targetW,
-    targetH,
-  );
+  if (options.trimAndFit) {
+    const rawCanvas = document.createElement('canvas');
+    rawCanvas.width = sw;
+    rawCanvas.height = sh;
+    const rawCtx = rawCanvas.getContext('2d');
+    if (rawCtx) {
+      rawCtx.imageSmoothingEnabled = false;
+      rawCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      if (options.chromaKey) {
+        const rawData = rawCtx.getImageData(0, 0, sw, sh);
+        processTilePixels(rawData, options);
+        rawCtx.putImageData(rawData, 0, 0);
+      }
+      const rawData = rawCtx.getImageData(0, 0, sw, sh);
+      const bounds = getOpaqueBounds(rawData);
+      const bx = bounds ? bounds.x : 0;
+      const by = bounds ? bounds.y : 0;
+      const bw = bounds ? bounds.w : sw;
+      const bh = bounds ? bounds.h : sh;
 
-  // Apply chroma-key filter across the crop
-  if (options.chromaKey) {
-    const fullData = cropCtx.getImageData(0, 0, targetW, targetH);
-    processTilePixels(fullData, options);
-    cropCtx.putImageData(fullData, 0, 0);
+      const scale = Math.min(targetW / bw, targetH / bh);
+      const drawW = Math.max(1, Math.round(bw * scale));
+      const drawH = Math.max(1, Math.round(bh * scale));
+      const dx = Math.floor((targetW - drawW) / 2);
+      const dy = Math.floor((targetH - drawH) / 2);
+
+      cropCtx.imageSmoothingEnabled = !options.pixelate;
+      cropCtx.drawImage(rawCanvas, bx, by, bw, bh, dx, dy, drawW, drawH);
+    }
+  } else {
+    cropCtx.imageSmoothingEnabled = !options.pixelate;
+    cropCtx.drawImage(source, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+    // Apply chroma-key filter across the crop
+    if (options.chromaKey) {
+      const fullData = cropCtx.getImageData(0, 0, targetW, targetH);
+      processTilePixels(fullData, options);
+      cropCtx.putImageData(fullData, 0, 0);
+    }
   }
 
   // 2. Slice the crop canvas into individual tileDim x tileDim canvases
@@ -246,7 +433,7 @@ export function createMacroStampFromIndices(
  * and sets up bg0, spawn points, and walkable boundaries.
  */
 export async function convertTapestryToMap(
-  image: HTMLImageElement,
+  image: HTMLImageElement | HTMLCanvasElement,
   tileDim: number = 32,
   mapName: string = 'Embroidered Tapestry World',
   maxW: number = 64,
@@ -254,14 +441,16 @@ export async function convertTapestryToMap(
 ): Promise<{
   map: VillageMap;
 }> {
-  const cols = Math.min(maxW, Math.max(12, Math.round(image.naturalWidth / tileDim)));
-  const rows = Math.min(maxH, Math.max(12, Math.round(image.naturalHeight / tileDim)));
+  const srcW = image instanceof HTMLImageElement ? image.naturalWidth : image.width;
+  const srcH = image instanceof HTMLImageElement ? image.naturalHeight : image.height;
+  const cols = Math.min(maxW, Math.max(12, Math.round(srcW / tileDim)));
+  const rows = Math.min(maxH, Math.max(12, Math.round(srcH / tileDim)));
 
   const sliced = sliceSelectionToTiles(
     image,
-    image.naturalWidth,
-    image.naturalHeight,
-    { x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight },
+    srcW,
+    srcH,
+    { x: 0, y: 0, w: srcW, h: srcH },
     tileDim,
   );
 

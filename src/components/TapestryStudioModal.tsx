@@ -1,14 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   Check,
+  Eraser,
   Grid,
   Hand,
   Maximize2,
   Palette,
   Pipette,
   Plus,
+  RotateCcw,
   Sparkles,
+  Undo2,
   Upload,
+  Wand2,
   X,
   ZoomIn,
   ZoomOut,
@@ -17,6 +25,9 @@ import {
   appendTilesToTileset,
   convertTapestryToMap,
   createMacroStampFromIndices,
+  floodFillTransparent,
+  processTilePixels,
+  removeEdgeBackground,
   sliceSelectionToTiles,
   type ChromaKeyFilter,
   type CropSelection,
@@ -55,7 +66,7 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
   onAddTilesAndStamp,
   onApplyWholeMap,
 }) => {
-  const [sourceImg, setSourceImg] = useState<HTMLImageElement | null>(null);
+  const [sourceImg, setSourceImg] = useState<HTMLCanvasElement | null>(null);
   const [imgSrcUrl, setImgSrcUrl] = useState<string>('');
   const [imgWidth, setImgWidth] = useState(0);
   const [imgHeight, setImgHeight] = useState(0);
@@ -70,12 +81,16 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
   // Crop selection on source image
   const [crop, setCrop] = useState<CropSelection>({ x: 0, y: 0, w: tileDim * 2, h: tileDim * 2 });
 
-  // Pixel Art Processing
+  // Pixel Art & Background Remover Processing
   const [pixelate, setPixelate] = useState(true);
+  const [trimAndFit, setTrimAndFit] = useState(true);
   const [enableChroma, setEnableChroma] = useState(false);
   const [chromaHex, setChromaHex] = useState('#ffffff');
   const [chromaTolerance, setChromaTolerance] = useState(20);
   const [pickingColor, setPickingColor] = useState(false);
+  const [wandMode, setWandMode] = useState(false);
+  const [bgVersion, setBgVersion] = useState(0);
+  const [hoveringCrop, setHoveringCrop] = useState(false);
 
   // Target Stamp Config
   const [stampName, setStampName] = useState('Tapestry Motif');
@@ -88,9 +103,33 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const originalImgRef = useRef<HTMLImageElement | null>(null);
+  const undoStackRef = useRef<ImageData[]>([]);
+  const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
   const isDraggingRef = useRef(false);
+  const dragModeRef = useRef<'none' | 'pan' | 'select' | 'move'>('none');
   const dragStartRef = useRef({ x: 0, y: 0 });
+  const moveOffsetRef = useRef({ dx: 0, dy: 0, w: 0, h: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
+
+  // Keep canvas backing buffer dimensions synced 1:1 with its rendered CSS viewport
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      const w = Math.max(1, Math.floor(el.clientWidth));
+      const h = Math.max(1, Math.floor(el.clientHeight));
+      setCanvasSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isOpen]);
 
   // Load sample on mount if none loaded
   useEffect(() => {
@@ -105,7 +144,17 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      setSourceImg(img);
+      const workCanvas = document.createElement('canvas');
+      workCanvas.width = img.naturalWidth;
+      workCanvas.height = img.naturalHeight;
+      const wCtx = workCanvas.getContext('2d');
+      if (wCtx) {
+        wCtx.drawImage(img, 0, 0);
+      }
+      originalImgRef.current = img;
+      undoStackRef.current = [];
+      setSourceImg(workCanvas);
+      setBgVersion((v) => v + 1);
       setImgSrcUrl(url);
       setImgWidth(img.naturalWidth);
       setImgHeight(img.naturalHeight);
@@ -125,6 +174,103 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
     };
     img.src = resolvePublicUrl(url);
   };
+
+  const pushUndoSnapshot = () => {
+    if (!sourceImg) return;
+    const ctx = sourceImg.getContext('2d');
+    if (!ctx) return;
+    const snap = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+    undoStackRef.current = [...undoStackRef.current.slice(-11), snap];
+  };
+
+  const handleAutoRemoveBg = () => {
+    if (!sourceImg) return;
+    const ctx = sourceImg.getContext('2d');
+    if (!ctx) return;
+    pushUndoSnapshot();
+    const imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+    removeEdgeBackground(imgData, chromaTolerance);
+    ctx.putImageData(imgData, 0, 0);
+    setBgVersion((v) => v + 1);
+    setStatusMsg('Auto-removed edge background');
+  };
+
+  const handleApplyColorKeyToImage = () => {
+    if (!sourceImg) return;
+    const ctx = sourceImg.getContext('2d');
+    if (!ctx) return;
+    pushUndoSnapshot();
+    const hex = chromaHex.replace('#', '');
+    const num = parseInt(hex, 16);
+    const imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+    processTilePixels(imgData, {
+      chromaKey: {
+        r: (num >> 16) & 255,
+        g: (num >> 8) & 255,
+        b: num & 255,
+        tolerance: chromaTolerance,
+      },
+    });
+    ctx.putImageData(imgData, 0, 0);
+    setBgVersion((v) => v + 1);
+    setStatusMsg(`Removed ${chromaHex} across image`);
+  };
+
+  const handleUndoBg = () => {
+    if (!sourceImg || undoStackRef.current.length === 0) return;
+    const ctx = sourceImg.getContext('2d');
+    if (!ctx) return;
+    const last = undoStackRef.current.pop();
+    if (last) {
+      ctx.putImageData(last, 0, 0);
+      setBgVersion((v) => v + 1);
+      setStatusMsg('Undid background edit');
+    }
+  };
+
+  const handleResetImage = () => {
+    if (!sourceImg || !originalImgRef.current) return;
+    const ctx = sourceImg.getContext('2d');
+    if (!ctx) return;
+    pushUndoSnapshot();
+    ctx.clearRect(0, 0, sourceImg.width, sourceImg.height);
+    ctx.drawImage(originalImgRef.current, 0, 0);
+    setBgVersion((v) => v + 1);
+    setStatusMsg('Reset image to original');
+  };
+
+  const nudgeCrop = (dx: number, dy: number) => {
+    setCrop((prev) => ({
+      ...prev,
+      x: Math.max(0, Math.min(Math.max(0, imgWidth - prev.w), prev.x + dx)),
+      y: Math.max(0, Math.min(Math.max(0, imgHeight - prev.h), prev.y + dy)),
+    }));
+  };
+
+  // Arrow keys nudge selection off-grid (Shift+Arrow nudges 8px)
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const step = e.shiftKey ? 8 : 1;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        nudgeCrop(-step, 0);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nudgeCrop(step, 0);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        nudgeCrop(0, -step);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        nudgeCrop(0, step);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, imgWidth, imgHeight]);
 
   const loadSampleTapestry = () => {
     loadImageUrl('/assets/shevitsa-sample.jpg');
@@ -187,6 +333,7 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
         tileDim,
         {
           pixelate,
+          trimAndFit,
           chromaKey: getChromaFilter(),
         },
       );
@@ -194,7 +341,7 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
     } catch {
       // ignore
     }
-  }, [sourceImg, crop, pixelate, enableChroma, chromaHex, chromaTolerance, tileDim, imgWidth, imgHeight]);
+  }, [sourceImg, bgVersion, crop, pixelate, trimAndFit, enableChroma, chromaHex, chromaTolerance, tileDim, imgWidth, imgHeight]);
 
   // Render the image viewport canvas
   useEffect(() => {
@@ -210,6 +357,24 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
     ctx.translate(canvas.width / 2 + pan.x, canvas.height / 2 + pan.y);
     ctx.scale(zoom, zoom);
     ctx.translate(-imgWidth / 2, -imgHeight / 2);
+
+    // Draw subtle transparency checkerboard behind the image
+    const checkSize = Math.max(8, Math.round(16 / Math.max(1, zoom)));
+    ctx.fillStyle = '#2a2a2e';
+    ctx.fillRect(0, 0, imgWidth, imgHeight);
+    ctx.fillStyle = '#3a3a40';
+    for (let cy = 0; cy < imgHeight; cy += checkSize) {
+      for (let cx = 0; cx < imgWidth; cx += checkSize) {
+        if (((Math.floor(cx / checkSize) + Math.floor(cy / checkSize)) & 1) === 0) {
+          ctx.fillRect(
+            cx,
+            cy,
+            Math.min(checkSize, imgWidth - cx),
+            Math.min(checkSize, imgHeight - cy),
+          );
+        }
+      }
+    }
 
     // Draw source image
     ctx.drawImage(sourceImg, 0, 0, imgWidth, imgHeight);
@@ -274,22 +439,24 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
     }
 
     ctx.restore();
-  }, [sourceImg, imgWidth, imgHeight, zoom, pan, showGrid, snapGrid, crop, tileDim]);
+  }, [sourceImg, bgVersion, imgWidth, imgHeight, zoom, pan, showGrid, snapGrid, crop, tileDim, canvasSize]);
 
   // Convert canvas pointer coordinates to image pixel coordinates
   const canvasToImageCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || imgWidth <= 0 || imgHeight <= 0) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
+    const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
 
     const ox = (cx - (canvas.width / 2 + pan.x)) / zoom + imgWidth / 2;
     const oy = (cy - (canvas.height / 2 + pan.y)) / zoom + imgHeight / 2;
 
     return {
-      x: Math.max(0, Math.min(imgWidth, Math.round(ox))),
-      y: Math.max(0, Math.min(imgHeight, Math.round(oy))),
+      x: Math.max(0, Math.min(imgWidth - 1, Math.floor(ox))),
+      y: Math.max(0, Math.min(imgHeight - 1, Math.floor(oy))),
     };
   };
 
@@ -297,6 +464,7 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
     if (e.button === 1 || panMode || e.altKey) {
       // Pan viewport
       isDraggingRef.current = true;
+      dragModeRef.current = 'pan';
       panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
       e.currentTarget.setPointerCapture(e.pointerId);
       return;
@@ -321,20 +489,81 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
       return;
     }
 
-    // Start box selection
+    if (wandMode && sourceImg) {
+      const ctx = sourceImg.getContext('2d');
+      if (ctx) {
+        pushUndoSnapshot();
+        const imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+        floodFillTransparent(imgData, [{ x, y }], chromaTolerance);
+        ctx.putImageData(imgData, 0, 0);
+        setBgVersion((v) => v + 1);
+        setStatusMsg(`Removed background region at (${x}, ${y})`);
+      }
+      return;
+    }
+
+    // If clicking inside existing crop box (and not holding Ctrl/Cmd to force a new box),
+    // move the selection freely off-grid while keeping its tile size fixed!
+    if (
+      !e.metaKey &&
+      !e.ctrlKey &&
+      crop.w > 0 &&
+      crop.h > 0 &&
+      x >= crop.x &&
+      x < crop.x + crop.w &&
+      y >= crop.y &&
+      y < crop.y + crop.h
+    ) {
+      isDraggingRef.current = true;
+      dragModeRef.current = 'move';
+      moveOffsetRef.current = {
+        dx: x - crop.x,
+        dy: y - crop.y,
+        w: crop.w,
+        h: crop.h,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Start new box selection anchored by grid cell
     isDraggingRef.current = true;
+    dragModeRef.current = 'select';
     const snap = snapGrid > 0 ? snapGrid : 1;
-    const startX = Math.floor(x / snap) * snap;
-    const startY = Math.floor(y / snap) * snap;
-    dragStartRef.current = { x: startX, y: startY };
-    setCrop({ x: startX, y: startY, w: snap, h: snap });
+    const maxCellX = Math.max(0, Math.floor((imgWidth - 1) / snap));
+    const maxCellY = Math.max(0, Math.floor((imgHeight - 1) / snap));
+    const cellX = Math.min(maxCellX, Math.max(0, Math.floor(x / snap)));
+    const cellY = Math.min(maxCellY, Math.max(0, Math.floor(y / snap)));
+    dragStartRef.current = { x: cellX, y: cellY };
+    const startPx = cellX * snap;
+    const startPy = cellY * snap;
+    setCrop({
+      x: startPx,
+      y: startPy,
+      w: Math.max(1, Math.min(snap, imgWidth - startPx)),
+      h: Math.max(1, Math.min(snap, imgHeight - startPy)),
+    });
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDraggingRef.current) return;
+    const { x, y } = canvasToImageCoords(e);
 
-    if (panMode || e.buttons === 4 || e.altKey) {
+    if (!isDraggingRef.current) {
+      const inside =
+        crop.w > 0 &&
+        crop.h > 0 &&
+        x >= crop.x &&
+        x < crop.x + crop.w &&
+        y >= crop.y &&
+        y < crop.y + crop.h;
+      if (inside !== hoveringCrop) {
+        setHoveringCrop(inside);
+      }
+      return;
+    }
+
+    if (dragModeRef.current === 'pan' || panMode || e.buttons === 4 || e.altKey) {
       setPan({
         x: e.clientX - panStartRef.current.x,
         y: e.clientY - panStartRef.current.y,
@@ -342,25 +571,46 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
       return;
     }
 
-    const { x, y } = canvasToImageCoords(e);
+    if (dragModeRef.current === 'move') {
+      let nextX = x - moveOffsetRef.current.dx;
+      let nextY = y - moveOffsetRef.current.dy;
+      if (e.shiftKey && snapGrid > 0) {
+        nextX = Math.round(nextX / snapGrid) * snapGrid;
+        nextY = Math.round(nextY / snapGrid) * snapGrid;
+      }
+      const clampedX = Math.max(0, Math.min(Math.max(0, imgWidth - moveOffsetRef.current.w), nextX));
+      const clampedY = Math.max(0, Math.min(Math.max(0, imgHeight - moveOffsetRef.current.h), nextY));
+      setCrop((prev) => ({ ...prev, x: clampedX, y: clampedY }));
+      return;
+    }
+
     const snap = snapGrid > 0 ? snapGrid : 1;
+    const maxCellX = Math.max(0, Math.floor((imgWidth - 1) / snap));
+    const maxCellY = Math.max(0, Math.floor((imgHeight - 1) / snap));
+    const curCellX = Math.min(maxCellX, Math.max(0, Math.floor(x / snap)));
+    const curCellY = Math.min(maxCellY, Math.max(0, Math.floor(y / snap)));
 
-    const curX = Math.round(x / snap) * snap;
-    const curY = Math.round(y / snap) * snap;
+    const minCellX = Math.min(dragStartRef.current.x, curCellX);
+    const minCellY = Math.min(dragStartRef.current.y, curCellY);
+    const maxSelCellX = Math.max(dragStartRef.current.x, curCellX);
+    const maxSelCellY = Math.max(dragStartRef.current.y, curCellY);
 
-    const minX = Math.max(0, Math.min(dragStartRef.current.x, curX));
-    const minY = Math.max(0, Math.min(dragStartRef.current.y, curY));
-    const maxX = Math.min(imgWidth, Math.max(dragStartRef.current.x, curX));
-    const maxY = Math.min(imgHeight, Math.max(dragStartRef.current.y, curY));
+    const minX = minCellX * snap;
+    const minY = minCellY * snap;
+    const maxX = Math.min(imgWidth, (maxSelCellX + 1) * snap);
+    const maxY = Math.min(imgHeight, (maxSelCellY + 1) * snap);
 
-    const w = Math.max(snap, maxX - minX);
-    const h = Math.max(snap, maxY - minY);
-
-    setCrop({ x: minX, y: minY, w, h });
+    setCrop({
+      x: minX,
+      y: minY,
+      w: Math.max(1, maxX - minX),
+      h: Math.max(1, maxY - minY),
+    });
   };
 
   const handlePointerUp = () => {
     isDraggingRef.current = false;
+    dragModeRef.current = 'none';
   };
 
   const colsInCrop = Math.max(1, Math.round(crop.w / tileDim));
@@ -393,6 +643,7 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
         tileDim,
         {
           pixelate,
+          trimAndFit,
           chromaKey: getChromaFilter(),
         },
       );
@@ -539,16 +790,34 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
                 </button>
               </div>
 
-              {/* Viewport Tools: Pan, Zoom, Grid */}
+              {/* Viewport Tools: Pan, Magic Wand, Zoom, Grid */}
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => setPanMode((p) => !p)}
+                  onClick={() => {
+                    setPanMode((p) => !p);
+                    setWandMode(false);
+                    setPickingColor(false);
+                  }}
                   aria-pressed={panMode}
                   title="Hand Tool / Pan Viewport (or hold Alt / Middle Click)"
                   className={`rounded p-1 ${panMode ? 'bg-indigo-600 text-white' : 'hover:bg-white/10 text-white/70'}`}
                 >
                   <Hand className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWandMode((w) => !w);
+                    setPanMode(false);
+                    setPickingColor(false);
+                  }}
+                  aria-pressed={wandMode}
+                  title="Magic Wand: Click a background region to make it transparent"
+                  className={`rounded p-1 ${wandMode ? 'bg-crimson text-white' : 'hover:bg-white/10 text-white/70'}`}
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
                 </button>
 
                 <button
@@ -612,14 +881,21 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
 
             {/* Interactive Image Canvas */}
             <div
+              ref={viewportRef}
               className={`relative flex-1 overflow-hidden select-none ${
-                panMode ? 'cursor-grab active:cursor-grabbing' : pickingColor ? 'cursor-crosshair' : 'cursor-crosshair'
+                panMode
+                  ? 'cursor-grab active:cursor-grabbing'
+                  : pickingColor || wandMode
+                    ? 'cursor-crosshair'
+                    : hoveringCrop
+                      ? 'cursor-move'
+                      : 'cursor-crosshair'
               }`}
             >
               <canvas
                 ref={canvasRef}
-                width={800}
-                height={600}
+                width={canvasSize.w}
+                height={canvasSize.h}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
@@ -636,7 +912,11 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
               {/* Helper badge */}
               <div className="absolute top-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white/70 backdrop-blur-sm pointer-events-none">
                 {imgWidth > 0
-                  ? `${imgWidth}×${imgHeight} px · Drag to select motif`
+                  ? wandMode
+                    ? 'Magic Wand: Click any background area to erase'
+                    : pickingColor
+                      ? 'Eyedropper: Click a color to key out'
+                      : `${imgWidth}×${imgHeight} px · Drag inside box to shift off-grid · Arrows nudge`
                   : 'Import an image to start'}
               </div>
             </div>
@@ -658,6 +938,45 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
               <div className="grid grid-cols-2 gap-1 text-[11px] font-mono text-muted">
                 <div>Pos: ({crop.x}, {crop.y})</div>
                 <div>Size: {crop.w}×{crop.h} px</div>
+              </div>
+
+              {/* Off-grid Fine Nudge Controls */}
+              <div className="flex items-center justify-between gap-1 rounded border border-borderFolk bg-surface px-2 py-1">
+                <span className="text-[10px] text-muted">Shift Off-Grid:</span>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => nudgeCrop(-1, 0)}
+                    title="Nudge Left 1px (ArrowLeft)"
+                    className="rounded border border-borderFolk bg-card p-0.5 hover:bg-surface"
+                  >
+                    <ArrowLeft className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => nudgeCrop(0, -1)}
+                    title="Nudge Up 1px (ArrowUp)"
+                    className="rounded border border-borderFolk bg-card p-0.5 hover:bg-surface"
+                  >
+                    <ArrowUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => nudgeCrop(0, 1)}
+                    title="Nudge Down 1px (ArrowDown)"
+                    className="rounded border border-borderFolk bg-card p-0.5 hover:bg-surface"
+                  >
+                    <ArrowDown className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => nudgeCrop(1, 0)}
+                    title="Nudge Right 1px (ArrowRight)"
+                    className="rounded border border-borderFolk bg-card p-0.5 hover:bg-surface"
+                  >
+                    <ArrowRight className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
 
               {/* Quick Tile Dimensions */}
@@ -708,7 +1027,7 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
                 )}
               </div>
 
-              {/* Pixel Art Filters */}
+              {/* Pixel Art & Trim Filters */}
               <div className="space-y-1.5 pt-1 text-xs">
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input
@@ -719,59 +1038,137 @@ export const TapestryStudioModal: React.FC<TapestryStudioModalProps> = ({
                   <span>Pixelate to {tileDim}px Grid (Retro Pixel Art)</span>
                 </label>
 
-                {/* Chroma-key transparency */}
-                <div className="space-y-1 rounded border border-borderFolk bg-surface p-2">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={trimAndFit}
+                    onChange={(e) => setTrimAndFit(e.target.checked)}
+                  />
+                  <span>Trim Transparent Edges &amp; Fit to Tiles</span>
+                </label>
+
+                {/* Background Remover */}
+                <div className="space-y-2 rounded border border-borderFolk bg-surface p-2">
                   <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-1.5 cursor-pointer font-medium text-[11px]">
-                      <input
-                        type="checkbox"
-                        checked={enableChroma}
-                        onChange={(e) => setEnableChroma(e.target.checked)}
-                      />
-                      <span>Remove Background</span>
-                    </label>
+                    <span className="font-semibold text-[11px]">Background Remover</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleUndoBg}
+                        disabled={undoStackRef.current.length === 0}
+                        title="Undo last background removal"
+                        className="inline-flex items-center gap-0.5 rounded border border-borderFolk px-1.5 py-0.5 text-[10px] hover:bg-card disabled:opacity-40"
+                      >
+                        <Undo2 className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetImage}
+                        title="Reset image to original"
+                        className="inline-flex items-center gap-0.5 rounded border border-borderFolk px-1.5 py-0.5 text-[10px] hover:bg-card"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1">
                     <button
                       type="button"
-                      onClick={() => setPickingColor((p) => !p)}
-                      title="Pick color with eyedropper from image"
-                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] border ${
-                        pickingColor
+                      onClick={handleAutoRemoveBg}
+                      title="Flood-fill remove background from image borders while keeping interior details"
+                      className="inline-flex items-center justify-center gap-1 rounded bg-crimson/90 px-2 py-1 text-[10px] font-medium text-white hover:bg-crimson"
+                    >
+                      <Eraser className="h-3 w-3" />
+                      <span>Auto Remove BG</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWandMode((w) => !w);
+                        setPickingColor(false);
+                        setPanMode(false);
+                      }}
+                      title="Click any background pocket on the image to erase it"
+                      className={`inline-flex items-center justify-center gap-1 rounded border px-2 py-1 text-[10px] font-medium ${
+                        wandMode
                           ? 'border-indigoFolk bg-indigoFolk text-white'
-                          : 'border-borderFolk hover:bg-card'
+                          : 'border-borderFolk bg-card hover:bg-surface'
                       }`}
                     >
-                      <Pipette className="h-3 w-3" />
-                      <span>{pickingColor ? 'Click Image' : 'Pick'}</span>
+                      <Wand2 className="h-3 w-3" />
+                      <span>{wandMode ? 'Wand Active' : 'Magic Wand'}</span>
                     </button>
                   </div>
 
-                  {enableChroma && (
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={chromaHex}
-                          onChange={(e) => setChromaHex(e.target.value)}
-                          className="h-6 w-8 cursor-pointer rounded border border-borderFolk p-0"
-                        />
-                        <span className="font-mono text-[10px]">{chromaHex}</span>
-                      </div>
-                      <div>
-                        <div className="flex justify-between text-[10px] text-muted">
-                          <span>Tolerance</span>
-                          <span className="font-mono">{chromaTolerance}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={50}
-                          value={chromaTolerance}
-                          onChange={(e) => setChromaTolerance(Number(e.target.value))}
-                          className="w-full"
-                        />
-                      </div>
+                  <div>
+                    <div className="flex justify-between text-[10px] text-muted">
+                      <span>Tolerance</span>
+                      <span className="font-mono">{chromaTolerance}%</span>
                     </div>
-                  )}
+                    <input
+                      type="range"
+                      min={0}
+                      max={50}
+                      value={chromaTolerance}
+                      onChange={(e) => setChromaTolerance(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  </div>
+
+                  {/* Optional global color key */}
+                  <div className="border-t border-borderFolk/60 pt-1.5 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={enableChroma}
+                          onChange={(e) => setEnableChroma(e.target.checked)}
+                        />
+                        <span>Global Color Key</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPickingColor((p) => !p);
+                          setWandMode(false);
+                          setPanMode(false);
+                        }}
+                        title="Pick color with eyedropper from image"
+                        className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] border ${
+                          pickingColor
+                            ? 'border-indigoFolk bg-indigoFolk text-white'
+                            : 'border-borderFolk hover:bg-card'
+                        }`}
+                      >
+                        <Pipette className="h-3 w-3" />
+                        <span>{pickingColor ? 'Click Image' : 'Pick'}</span>
+                      </button>
+                    </div>
+
+                    {enableChroma && (
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={chromaHex}
+                            onChange={(e) => setChromaHex(e.target.value)}
+                            className="h-5 w-7 cursor-pointer rounded border border-borderFolk p-0"
+                          />
+                          <span className="font-mono text-[10px]">{chromaHex}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleApplyColorKeyToImage}
+                          className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] hover:bg-surface"
+                          title="Bake this color removal directly onto the source image"
+                        >
+                          Apply to Image
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

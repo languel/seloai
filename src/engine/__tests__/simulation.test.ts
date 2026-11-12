@@ -42,7 +42,10 @@ import {
 import {
   appendTilesToTileset,
   createMacroStampFromIndices,
+  floodFillTransparent,
+  getOpaqueBounds,
   processTilePixels,
+  removeEdgeBackground,
   sliceSelectionToTiles,
 } from '../tapestrySampler';
 import {
@@ -1219,5 +1222,48 @@ describe('SeloAI core engine', () => {
     expect(stamp.tiles.length).toBe(6);
     expect(stamp.layer).toBe('obj0');
     expect(stamp.blocksMovement).toBe(true);
+  });
+
+  it('removes edge background while preserving enclosed interior details and computes tight opaque bounds', () => {
+    // 5x5 image: white border, 3x3 crimson ring at [1..3, 1..3], white center pixel at (2,2)
+    const w = 5;
+    const h = 5;
+    const buf = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const isRing =
+          x >= 1 && x <= 3 && y >= 1 && y <= 3 && !(x === 2 && y === 2);
+        if (isRing) {
+          buf[i] = 190;
+          buf[i + 1] = 30;
+          buf[i + 2] = 45;
+          buf[i + 3] = 255;
+        } else {
+          buf[i] = 255;
+          buf[i + 1] = 255;
+          buf[i + 2] = 255;
+          buf[i + 3] = 255;
+        }
+      }
+    }
+    const imgData = { width: w, height: h, data: buf } as ImageData;
+
+    removeEdgeBackground(imgData, 15);
+
+    // Outer border (0,0) should be transparent
+    expect(imgData.data[3]).toBe(0);
+    // Ring pixel (1,1) should stay opaque
+    expect(imgData.data[(1 * w + 1) * 4 + 3]).toBe(255);
+    // Enclosed white center (2,2) should stay opaque
+    expect(imgData.data[(2 * w + 2) * 4 + 3]).toBe(255);
+
+    // Tight opaque bounds should be { x: 1, y: 1, w: 3, h: 3 }
+    expect(getOpaqueBounds(imgData)).toEqual({ x: 1, y: 1, w: 3, h: 3 });
+
+    // Magic wand click on center (2,2) removes just the enclosed center
+    floodFillTransparent(imgData, [{ x: 2, y: 2 }], 15);
+    expect(imgData.data[(2 * w + 2) * 4 + 3]).toBe(0);
+    expect(imgData.data[(1 * w + 1) * 4 + 3]).toBe(255);
   });
 });
