@@ -30,26 +30,39 @@ export function parseMentionTargets(
   settings: ModelSettings,
 ): MentionTarget[] {
   const narratorName = settings.narratorName.trim() || 'Scribe';
-  const catalog: Array<{ token: string; target: MentionTarget }> = [];
+  const catalog: Array<{ token: string; targets: MentionTarget[] }> = [];
+  const allVillagerTargets: MentionTarget[] = villagers.map((v) => ({
+    kind: 'villager',
+    id: v.id,
+    name: v.name,
+  }));
+
+  for (const broadcastAlias of ['world', 'all', 'everyone', 'village']) {
+    catalog.push({
+      token: broadcastAlias,
+      targets: allVillagerTargets,
+    });
+  }
 
   for (const alias of [narratorName, 'Scribe', 'Narrator']) {
     if (alias.trim()) {
       catalog.push({
         token: alias.trim().toLowerCase(),
-        target: { kind: 'narrator', id: 'narrator', name: narratorName },
+        targets: [{ kind: 'narrator', id: 'narrator', name: narratorName }],
       });
     }
   }
   for (const v of villagers) {
+    const target: MentionTarget = { kind: 'villager', id: v.id, name: v.name };
     catalog.push({
       token: v.name.trim().toLowerCase(),
-      target: { kind: 'villager', id: v.id, name: v.name },
+      targets: [target],
     });
     const first = v.name.trim().split(/\s+/)[0];
     if (first && first.toLowerCase() !== v.name.trim().toLowerCase()) {
       catalog.push({
         token: first.toLowerCase(),
-        target: { kind: 'villager', id: v.id, name: v.name },
+        targets: [target],
       });
     }
   }
@@ -76,9 +89,11 @@ export function parseMentionTargets(
       return !afterChar || !/[\p{L}\p{N}_]/u.test(afterChar);
     });
     if (match) {
-      if (!seen.has(match.target.id)) {
-        seen.add(match.target.id);
-        ordered.push({ index: atPos, target: match.target });
+      for (const target of match.targets) {
+        if (!seen.has(target.id)) {
+          seen.add(target.id);
+          ordered.push({ index: atPos, target });
+        }
       }
       cursor = atPos + 1 + match.token.length;
     } else {
@@ -418,19 +433,57 @@ export class VillageSimulation {
       return { progressed: true, reachedEnd: entity.path.length === 0, blockerId: null };
     }
 
-    // Try sliding around a blocking character on whichever axis makes meaningful forward progress
-    if (Math.abs(dx) > 0.05) {
-      const slideX = entity.x + Math.sign(dx) * Math.min(stepSize, Math.abs(dx));
-      if (this.isStepWalkableAndUnblocked(slideX, entity.y, entity.x, entity.y, selfId).ok) {
-        entity.x = slideX;
-        return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+    // Try sliding along forward axes for wall corners (only when not colliding with a character,
+    // otherwise axis slide can pull back toward a character we just sidestepped around)
+    if (!direct.blockerId) {
+      if (Math.abs(dx) > 0.05) {
+        const slideX = entity.x + Math.sign(dx) * Math.min(stepSize, Math.abs(dx));
+        if (this.isStepWalkableAndUnblocked(slideX, entity.y, entity.x, entity.y, selfId).ok) {
+          entity.x = slideX;
+          return { progressed: true, reachedEnd: false, blockerId: null };
+        }
+      }
+      if (Math.abs(dy) > 0.05) {
+        const slideY = entity.y + Math.sign(dy) * Math.min(stepSize, Math.abs(dy));
+        if (this.isStepWalkableAndUnblocked(entity.x, slideY, entity.x, entity.y, selfId).ok) {
+          entity.y = slideY;
+          return { progressed: true, reachedEnd: false, blockerId: null };
+        }
       }
     }
-    if (Math.abs(dy) > 0.05) {
-      const slideY = entity.y + Math.sign(dy) * Math.min(stepSize, Math.abs(dy));
-      if (this.isStepWalkableAndUnblocked(entity.x, slideY, entity.x, entity.y, selfId).ok) {
-        entity.y = slideY;
-        return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+
+    // Perpendicular sidestep so characters never deadlock head-on along cardinal A* segments
+    const pickSideOrder = (axis: 'x' | 'y'): [number, number] => {
+      if (direct.blockerId) {
+        const blocker =
+          direct.blockerId === this.player.id ? this.player : this.runtimes.get(direct.blockerId);
+        if (blocker) {
+          const offset = axis === 'x' ? entity.x - blocker.x : entity.y - blocker.y;
+          if (Math.abs(offset) > 0.04) {
+            return offset >= 0 ? [1, -1] : [-1, 1];
+          }
+        }
+      }
+      const hash = Math.round(entity.x * 3 + entity.y * 5 + selfId.charCodeAt(selfId.length - 1));
+      return hash % 2 === 0 ? [1, -1] : [-1, 1];
+    };
+
+    const sideStep = Math.min(stepSize, 0.25);
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      for (const s of pickSideOrder('x')) {
+        const sideX = entity.x + s * sideStep;
+        if (this.isStepWalkableAndUnblocked(sideX, entity.y, entity.x, entity.y, selfId).ok) {
+          entity.x = sideX;
+          return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+        }
+      }
+    } else {
+      for (const s of pickSideOrder('y')) {
+        const sideY = entity.y + s * sideStep;
+        if (this.isStepWalkableAndUnblocked(entity.x, sideY, entity.x, entity.y, selfId).ok) {
+          entity.y = sideY;
+          return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+        }
       }
     }
 
@@ -450,7 +503,27 @@ export class VillageSimulation {
 
   private advanceVillagerPath(rt: VillagerRuntime, speed: number, dt: number): boolean {
     if (rt.path.length === 0) return false;
+    if (!isTileWalkable(this.map, Math.round(rt.x), Math.round(rt.y))) {
+      const safe = findNearestWalkableTile(this.map, rt.x, rt.y);
+      rt.x = safe.x;
+      rt.y = safe.y;
+    }
     const res = this.stepAlongPathWithCollision(rt, speed * dt, dt * 5, rt.id);
+
+    // If a character blocked our direct step, immediately reroute around their tile if we aren't about to converse
+    if (res.blockerId && rt.path.length > 0 && (rt.blockedTicks ?? 0) === 0) {
+      const goal = rt.path[rt.path.length - 1];
+      const rerouted = findPath(
+        this.map,
+        { x: rt.x, y: rt.y },
+        goal,
+        this.getOccupiedTileSet(rt.id),
+      );
+      if (rerouted.length > 0) {
+        rt.path = rerouted;
+      }
+    }
+
     if (res.progressed) {
       rt.blockedTicks = 0;
       return !res.reachedEnd;
@@ -483,9 +556,34 @@ export class VillageSimulation {
       }
     }
 
+    // Reroute cleanly around persistent obstacles instead of staying frozen
+    if (rt.blockedTicks === 6 || rt.blockedTicks === 12) {
+      const goal = rt.path[rt.path.length - 1];
+      if (goal) {
+        const distToGoal = Math.hypot(goal.x - rt.x, goal.y - rt.y);
+        if (distToGoal < 1.35) {
+          rt.path = [];
+          rt.blockedTicks = 0;
+          return false;
+        }
+        const rerouted = findPath(
+          this.map,
+          { x: rt.x, y: rt.y },
+          goal,
+          this.getOccupiedTileSet(rt.id),
+        );
+        if (rerouted.length > 0) {
+          rt.path = rerouted;
+          return true;
+        }
+      }
+    }
+
     if (rt.blockedTicks > 18) {
       rt.path = [];
       rt.blockedTicks = 0;
+      // Shorten wait before next autonomous move so villager immediately picks a clear path
+      rt.lastMoveAt = Date.now() - 2200;
       return false;
     }
     return true;
@@ -582,14 +680,29 @@ export class VillageSimulation {
       }
     }
 
-    if (!safeGoal) {
-      const tx = Math.round(rt.x + (Math.random() * 10 - 5));
-      const ty = Math.round(rt.y + (Math.random() * 8 - 4));
+    if (
+      !safeGoal ||
+      (safeGoal.x === Math.round(rt.x) && safeGoal.y === Math.round(rt.y))
+    ) {
+      const tx = Math.round(rt.x + (Math.random() > 0.5 ? 1 : -1) * (3 + Math.random() * 5));
+      const ty = Math.round(rt.y + (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 5));
       safeGoal = findNearestWalkableTile(this.map, tx, ty);
     }
 
     const occupied = this.getOccupiedTileSet(rt.id);
-    const path = findPath(this.map, { x: rt.x, y: rt.y }, safeGoal, occupied);
+    let path = findPath(this.map, { x: rt.x, y: rt.y }, safeGoal, occupied);
+    if (path.length === 0) {
+      // Retry without dynamic blockers so narrow corridors do not paralyze movement
+      path = findPath(this.map, { x: rt.x, y: rt.y }, safeGoal);
+    }
+    if (path.length === 0) {
+      const altGoal = findNearestWalkableTile(
+        this.map,
+        Math.round(rt.x + (Math.random() * 12 - 6)),
+        Math.round(rt.y + (Math.random() * 10 - 5)),
+      );
+      path = findPath(this.map, { x: rt.x, y: rt.y }, altGoal);
+    }
     rt.currentIntention = decision.motive;
     rt.activityLabel = decision.motive;
     rt.lastMoveAt = now;
@@ -598,8 +711,68 @@ export class VillageSimulation {
       rt.path = path;
       rt.state = 'walking';
       this.appendWorldEvent(rt, `Decided: ${decision.motive}`);
+    } else {
+      // Avoid waiting full idle cooldown if pathfinding yielded empty
+      rt.lastMoveAt = now - 2200;
     }
     this.notify();
+  }
+
+  /**
+   * Unsticks any wedged/idle villagers and sends non-conversing residents
+   * walking toward spread-out open destinations across the village.
+   */
+  scatterVillagers() {
+    const now = Date.now();
+    const list = Array.from(this.runtimes.values());
+    const usedGoals = new Set<string>();
+    const spawnPoints = this.map.spawnPoints;
+
+    for (let i = 0; i < list.length; i++) {
+      const rt = list[i];
+      if (rt.activeConversationId) continue;
+
+      if (!isTileWalkable(this.map, Math.round(rt.x), Math.round(rt.y))) {
+        const safe = findNearestWalkableTile(this.map, rt.x, rt.y);
+        rt.x = safe.x;
+        rt.y = safe.y;
+      }
+
+      const sp =
+        spawnPoints.length > 0
+          ? spawnPoints[(i * 2 + Math.floor(Math.random() * spawnPoints.length)) % spawnPoints.length]
+          : undefined;
+      const offsetX = Math.round(Math.random() * 10 - 5);
+      const offsetY = Math.round(Math.random() * 8 - 4);
+      const rawGoalX = sp ? sp.x + offsetX : Math.round(rt.x + (Math.random() * 14 - 7));
+      const rawGoalY = sp ? sp.y + offsetY : Math.round(rt.y + (Math.random() * 12 - 6));
+      let goal = findNearestWalkableTile(this.map, rawGoalX, rawGoalY);
+
+      if (usedGoals.has(`${goal.x},${goal.y}`) || (goal.x === Math.round(rt.x) && goal.y === Math.round(rt.y))) {
+        goal = findNearestWalkableTile(
+          this.map,
+          rawGoalX + (i % 2 === 0 ? 4 : -4),
+          rawGoalY + (i % 3 === 0 ? 3 : -3),
+        );
+      }
+      usedGoals.add(`${goal.x},${goal.y}`);
+
+      const occupied = this.getOccupiedTileSet(rt.id);
+      let path = findPath(this.map, { x: rt.x, y: rt.y }, goal, occupied);
+      if (path.length === 0) {
+        path = findPath(this.map, { x: rt.x, y: rt.y }, goal);
+      }
+
+      rt.blockedTicks = 0;
+      if (path.length > 0) {
+        rt.path = path;
+        rt.state = 'walking';
+        rt.lastMoveAt = now;
+        rt.currentIntention = sp ? `Heading out near ${sp.label}` : 'Exploring Selo lanes';
+        rt.activityLabel = rt.currentIntention;
+      }
+    }
+    this.notify(true);
   }
 
   private getNearestLandmarkName(x: number, y: number): string {
@@ -892,13 +1065,32 @@ export class VillageSimulation {
     return lines.join('\n');
   }
 
-  private applyWorldDirection(_cfg: VillagerConfig, rt: VillagerRuntime, userText: string) {
+  private applyWorldDirection(
+    _cfg: VillagerConfig,
+    rt: VillagerRuntime,
+    userText: string,
+    slotIndex = 0,
+  ) {
     this.appendWorldEvent(rt, `${this.player.name} said: "${userText.slice(0, 90)}"`);
+    rt.memories.push({
+      id: `mem-dir-${Date.now()}-${slotIndex}`,
+      timestamp: Date.now(),
+      importance: 6,
+      kind: 'observation',
+      summary: `${this.player.name} instructed: "${userText.slice(0, 80)}"`,
+    });
     const lower = userText.toLowerCase();
 
-    // Let natural language "@Character go talk to Taras / visit windmill" steer motivation + movement
-    const directedMotion = /\b(go|head|walk|meet|find|talk|visit|check|gather|move)\b/i.test(userText);
+    // Let natural language "@Character / @all go talk to Taras / visit windmill / scatter" steer motivation + movement
+    const directedMotion = /\b(go|head|walk|meet|find|talk|visit|check|gather|move|wander|scatter|roam|explore|disperse|come|patrol|spread)\b/i.test(
+      userText,
+    );
     if (!directedMotion) return;
+
+    const findBestPath = (goal: { x: number; y: number }) => {
+      const p = findPath(this.map, { x: rt.x, y: rt.y }, goal, this.getOccupiedTileSet(rt.id));
+      return p.length > 0 ? p : findPath(this.map, { x: rt.x, y: rt.y }, goal);
+    };
 
     const otherTarget = [...this.configs.values()].find(
       (other) => other.id !== rt.id && lower.includes(other.name.toLowerCase()),
@@ -907,15 +1099,13 @@ export class VillageSimulation {
       const otherRt = this.runtimes.get(otherTarget.id);
       if (otherRt) {
         const goal = this.findAdjacentStandTile(otherRt.x, otherRt.y, rt.id);
-        const path = findPath(
-          this.map,
-          { x: rt.x, y: rt.y },
-          goal,
-          this.getOccupiedTileSet(rt.id),
-        );
+        const path = findBestPath(goal);
         rt.currentIntention = `Heading to speak with ${otherTarget.name}`;
         rt.activityLabel = rt.currentIntention;
-        if (path.length > 0) rt.path = path;
+        if (path.length > 0) {
+          rt.path = path;
+          rt.state = 'walking';
+        }
         return;
       }
     }
@@ -925,16 +1115,64 @@ export class VillageSimulation {
       return lower.includes(sp.label.toLowerCase()) || words.some((w) => w.length > 3 && lower.includes(w));
     });
     if (landmark) {
-      const goal = this.findAdjacentStandTile(landmark.x, landmark.y, rt.id);
-      const path = findPath(
-        this.map,
-        { x: rt.x, y: rt.y },
-        goal,
-        this.getOccupiedTileSet(rt.id),
-      );
+      // Spread multi-character arrivals around the landmark so they don't collide on one tile
+      const ringOffsets = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+        { dx: 2, dy: 1 },
+        { dx: -2, dy: -1 },
+      ];
+      const off = ringOffsets[slotIndex % ringOffsets.length];
+      const goal = findNearestWalkableTile(this.map, landmark.x + off.dx, landmark.y + off.dy);
+      const path = findBestPath(goal);
       rt.currentIntention = `Headed to ${landmark.label}`;
       rt.activityLabel = rt.currentIntention;
-      if (path.length > 0) rt.path = path;
+      if (path.length > 0) {
+        rt.path = path;
+        rt.state = 'walking';
+      }
+      return;
+    }
+
+    if (/\b(come|here|me|traveler)\b/i.test(lower)) {
+      const ringOffsets = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+        { dx: 2, dy: 1 },
+        { dx: -2, dy: 1 },
+      ];
+      const off = ringOffsets[slotIndex % ringOffsets.length];
+      const goal = findNearestWalkableTile(this.map, this.player.x + off.dx, this.player.y + off.dy);
+      const path = findBestPath(goal);
+      rt.currentIntention = `Approaching ${this.player.name}`;
+      rt.activityLabel = rt.currentIntention;
+      if (path.length > 0) {
+        rt.path = path;
+        rt.state = 'walking';
+      }
+      return;
+    }
+
+    // General movement prompt (e.g. "@all scatter / wander / move around")
+    const sp =
+      this.map.spawnPoints.length > 0
+        ? this.map.spawnPoints[(slotIndex + Math.floor(Math.random() * this.map.spawnPoints.length)) % this.map.spawnPoints.length]
+        : undefined;
+    const goal = findNearestWalkableTile(
+      this.map,
+      Math.round((sp?.x ?? rt.x) + (slotIndex % 2 === 0 ? 3 : -3)),
+      Math.round((sp?.y ?? rt.y) + (slotIndex % 3 === 0 ? 2 : -2)),
+    );
+    const path = findBestPath(goal);
+    rt.currentIntention = sp ? `Roaming paths near ${sp.label}` : 'Moving across Selo';
+    rt.activityLabel = rt.currentIntention;
+    if (path.length > 0) {
+      rt.path = path;
+      rt.state = 'walking';
     }
   }
 
@@ -1150,14 +1388,30 @@ export class VillageSimulation {
     conv.updatedAt = Date.now();
     this.notify(true);
 
+    // Apply instruction & pathing simultaneously to all targeted villagers first
+    // so everyone @mentioned (or @all/@world) receives it and starts moving right away.
+    const villagerTargets = targets.filter((t) => t.kind === 'villager');
+    villagerTargets.forEach((target, idx) => {
+      const cfg = this.configs.get(target.id);
+      const rt = this.runtimes.get(target.id);
+      if (cfg && rt) {
+        this.applyWorldDirection(cfg, rt, text, idx);
+      }
+    });
+    this.notify(true);
+
+    const isWideBroadcast = /@(world|all|everyone|village)\b/i.test(text);
+    let villagerRepliesLeft = isWideBroadcast && villagerTargets.length > 6 ? 4 : villagerTargets.length;
+
     for (const target of targets) {
       if (target.kind === 'narrator') {
         await this.executeNarratorReplyTurn(conv, text, speakReply);
       } else {
+        if (villagerRepliesLeft <= 0) continue;
         const cfg = this.configs.get(target.id);
         const rt = this.runtimes.get(target.id);
         if (!cfg || !rt) continue;
-        this.applyWorldDirection(cfg, rt, text);
+        villagerRepliesLeft -= 1;
         await this.executeVillagerReplyTurn(conv, cfg, rt, text, speakReply);
       }
     }

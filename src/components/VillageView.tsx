@@ -8,6 +8,7 @@ import {
   Pause,
   Play,
   Send,
+  Shuffle,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -15,7 +16,12 @@ import {
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
-import { MicRecorder } from '../ai/audioPipeline';
+import {
+  EAVESDROP_SLIDER_MAX,
+  EAVESDROP_WHOLE_MAP_RADIUS,
+  isWholeMapEavesdrop,
+  MicRecorder,
+} from '../ai/audioPipeline';
 import {
   drawAnimatedSprites,
   drawPlayer,
@@ -40,6 +46,7 @@ interface MentionCandidate {
   role: string;
   accentColor: string;
   statusHint?: string;
+  searchAliases?: string;
 }
 
 function findActiveMention(
@@ -211,8 +218,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
       drawAnimatedSprites(ctx, map, timeSec);
 
-      // Subtle spatial hearing radius ring around player when eavesdrop radius > 0
-      if (sim.modelSettings.proximityRadiusTiles > 0) {
+      // Subtle spatial hearing radius ring around player when eavesdrop radius > 0 (hidden for Whole Map)
+      if (
+        sim.modelSettings.proximityRadiusTiles > 0 &&
+        !isWholeMapEavesdrop(sim.modelSettings.proximityRadiusTiles)
+      ) {
         ctx.save();
         ctx.strokeStyle = 'rgba(31, 181, 201, 0.28)';
         ctx.lineWidth = 1.5;
@@ -351,6 +361,22 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
   const mentionCandidates: MentionCandidate[] = [
     {
+      id: 'all',
+      name: 'all',
+      role: 'Broadcast instruction to every villager (@world)',
+      accentColor: '#2a9d8f',
+      statusHint: `${villagers.length} folk`,
+      searchAliases: 'all world everyone village',
+    },
+    {
+      id: 'world',
+      name: 'world',
+      role: 'Broadcast instruction across Selo (@all)',
+      accentColor: '#2a9d8f',
+      statusHint: `${villagers.length} folk`,
+      searchAliases: 'world all everyone village',
+    },
+    {
       id: 'narrator',
       name: narratorName,
       role: `Narrator (${settings.narratorStyle})`,
@@ -367,11 +393,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
   ];
 
   const filteredMentions = mentionMatch
-    ? mentionCandidates.filter(
-        (c) =>
-          c.name.toLowerCase().includes(mentionMatch.query.toLowerCase()) ||
-          c.role.toLowerCase().includes(mentionMatch.query.toLowerCase()),
-      )
+    ? mentionCandidates.filter((c) => {
+        const q = mentionMatch.query.toLowerCase();
+        return (
+          c.name.toLowerCase().includes(q) ||
+          c.role.toLowerCase().includes(q) ||
+          Boolean(c.searchAliases?.toLowerCase().includes(q))
+        );
+      })
     : [];
   const isMentionMenuOpen = Boolean(mentionMatch && filteredMentions.length > 0);
   const clampedMentionIdx =
@@ -505,7 +534,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
         />
 
         {/* Floating Top-Left Simulation Controls */}
-        <div className="absolute left-3 top-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-borderFolk bg-card/90 px-2.5 py-1.5 shadow-md backdrop-blur">
+        <div
+          role="toolbar"
+          aria-label="Village simulation controls"
+          className="absolute left-3 top-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-borderFolk bg-card/90 px-2.5 py-1.5 shadow-md backdrop-blur"
+        >
           <button
             type="button"
             onClick={() => {
@@ -577,10 +610,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
               followSelected ? 'bg-ochre text-white' : 'hover:bg-surface'
             }`}
           >
-            <Compass className="h-3.5 w-3.5" />
+            <Compass className="h-3.5 w-3.5" aria-hidden="true" />
             <span>Follow</span>
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              sim.scatterVillagers();
+              setTick((t) => t + 1);
+            }}
+            title="Unstick and scatter villagers around the map"
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-surface"
+          >
+            <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Scatter</span>
+          </button>
           <div
+            role="group"
+            aria-label="Eavesdrop distance"
             className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition ${
               settings.proximityRadiusTiles > 0 ? 'bg-sage/15 text-ink' : 'text-muted'
             }`}
@@ -598,22 +645,57 @@ export const VillageView: React.FC<VillageViewProps> = ({
               id="village-eavesdrop-radius"
               type="range"
               min={0}
-              max={18}
+              max={EAVESDROP_SLIDER_MAX}
               step={1}
-              value={settings.proximityRadiusTiles}
+              value={
+                isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                  ? EAVESDROP_SLIDER_MAX
+                  : Math.max(0, Math.min(EAVESDROP_SLIDER_MAX - 1, Math.round(settings.proximityRadiusTiles)))
+              }
+              aria-valuetext={
+                settings.proximityRadiusTiles <= 0
+                  ? 'Off'
+                  : isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                    ? 'Whole map'
+                    : `${settings.proximityRadiusTiles} tiles`
+              }
               onChange={(e) => {
-                const nextRadius = Number(e.target.value);
+                const raw = Number(e.target.value);
+                const nextRadius = raw >= EAVESDROP_SLIDER_MAX ? EAVESDROP_WHOLE_MAP_RADIUS : raw;
                 if (nextRadius <= 0) {
                   brainRouter.stopSpeech();
                 }
                 onUpdateSettings({ proximityRadiusTiles: nextRadius });
               }}
               className="w-20 cursor-pointer accent-sage"
-              title="Eavesdrop hearing radius in tiles (0 = Off)"
+              title="Eavesdrop hearing radius (0 = Off, right end = Whole Map)"
             />
             <span className="w-7 text-right font-mono text-[11px]">
-              {settings.proximityRadiusTiles > 0 ? `${settings.proximityRadiusTiles}t` : 'Off'}
+              {settings.proximityRadiusTiles <= 0
+                ? 'Off'
+                : isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                  ? 'All'
+                  : `${settings.proximityRadiusTiles}t`}
             </span>
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateSettings({
+                  proximityRadiusTiles: isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                    ? 10
+                    : EAVESDROP_WHOLE_MAP_RADIUS,
+                })
+              }
+              aria-pressed={isWholeMapEavesdrop(settings.proximityRadiusTiles)}
+              title="Listen across the whole map"
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                  ? 'bg-sage text-white'
+                  : 'bg-surface text-muted hover:text-ink'
+              }`}
+            >
+              Map
+            </button>
           </div>
         </div>
 
@@ -793,8 +875,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
               {!activeConversation || activeConversation.messages.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-borderFolk p-4 text-center text-xs text-muted">
-                  Type a message below or use <code className="font-mono">@Name</code> /{' '}
-                  <code className="font-mono">@{narratorName}</code> to address any character or guide their next step.
+                  Type a message below or use <code className="font-mono">@Name</code>,{' '}
+                  <code className="font-mono">@all</code> / <code className="font-mono">@world</code>, or{' '}
+                  <code className="font-mono">@{narratorName}</code> to guide one or many characters.
                 </div>
               ) : (
                 <ul className="space-y-2">
@@ -955,8 +1038,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     }}
                     placeholder={
                       isScribeSelected
-                        ? `Ask @${narratorName} or guide a villager with @Name…`
-                        : `Talk to ${selectedCfg?.name ?? ''} or type @${narratorName} / @Name…`
+                        ? `Ask @${narratorName}, or broadcast with @all / @world / @Name…`
+                        : `Talk to ${selectedCfg?.name ?? ''} or use @all, @world, @${narratorName}, @Name…`
                     }
                     className="w-full resize-none rounded-md border border-borderFolk bg-surface px-2.5 py-1.5 text-xs text-ink placeholder:text-muted"
                   />

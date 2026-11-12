@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_SETTINGS,
   DEFAULT_VILLAGERS,
 } from '../data/defaultData';
+import { EAVESDROP_WHOLE_MAP_RADIUS } from '../ai/audioPipeline';
 import { ensureVillagerAppearanceSprite } from '../engine/spriteGenerator';
 import type { Conversation, ModelSettings, VillageMap, VillagerConfig } from '../engine/types';
 
@@ -77,7 +78,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
           ...rawSettings,
-          proximityRadiusTiles: Math.max(0, Math.min(18, radius)),
+          proximityRadiusTiles: Math.max(0, Math.min(EAVESDROP_WHOLE_MAP_RADIUS, radius)),
           narratorVoice: {
             ...DEFAULT_MODEL_SETTINGS.narratorVoice,
             ...(stored.modelSettings?.narratorVoice ?? {}),

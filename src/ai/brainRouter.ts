@@ -295,7 +295,7 @@ class BrainRouter {
       latestNarration ? `Just unfolded right here: ${latestNarration}` : '',
       `Dramatic direction: ${sceneTactic}`,
       `Respond to ${partnerName} in 1 to 2 crisp, vivid spoken sentences (under 45 words). Vary rhythm and tone—be playful, guarded, superstitious, blunt, or curious as the moment demands.`,
-      `Speak ONLY plain dialogue in first person. NEVER start with or utter your own name (never write "${villager.name}:"), never re-introduce your profession, and avoid stage directions.`,
+      `Speak ONLY plain dialogue in first person. Always write strictly in natural English regardless of voice accent. NEVER start with or utter your own name (never write "${villager.name}:"), never re-introduce your profession, and avoid stage directions.`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -338,11 +338,14 @@ class BrainRouter {
           params.speakSpatialResolver && settings.enableOmniTts && mix?.inRange,
         );
 
+        const accentCue = voice.language.toLowerCase().includes('english')
+          ? voice.language
+          : `English (with a subtle ${voice.language} cadence/accent, never translating out of English)`;
         const omniMessages = wantVoice
           ? [
               {
                 role: 'system' as const,
-                content: `Respond with interleaved text and audio. Speak in ${voice.language} using a ${voice.gender} voice.\n${systemPrompt}`,
+                content: `Respond with interleaved text and audio. Always write and speak strictly in ${accentCue} using a ${voice.gender} voice.\n${systemPrompt}`,
               },
               ...chatMessages.slice(1),
             ]
@@ -665,7 +668,7 @@ class BrainRouter {
           `You are ${narratorName}, the creative Dungeon Master and unseen chronicler shaping the living story of Selo.`,
           `Write 1 to 3 evocative third-person sentences (under 60 words) in the voice of a ${toneHint}.`,
           `Rules: NEVER parrot job titles or list coordinates like a status report. NEVER say generic filler like "they step close to speak". Introduce concrete sensory detail, a small complication, rumor, omen, or hidden motive that gives the villagers something rich to react to.`,
-          `Never prefix your own name like "${narratorName}:" or break character.`,
+          `Never prefix your own name like "${narratorName}:" or break character. Always write strictly in English.`,
           params.sceneContext ? `Living village pulse:\n${params.sceneContext}` : '',
         ]
           .filter(Boolean)
@@ -758,7 +761,7 @@ class BrainRouter {
               role: 'system',
               content: [
                 `You are ${narratorName}, creative Dungeon Master of Selo (${params.settings.narratorStyle} style).`,
-                `Write crisp third-person prose under 40 words.`,
+                `Write crisp third-person English prose under 40 words.`,
                 `FORBIDDEN clichés: NEVER list job titles like "the rushnyk weaver", NEVER say "steps close to speak", and NEVER say "part ways, carrying their thoughts".`,
               ].join('\n'),
             },
@@ -1082,10 +1085,13 @@ class BrainRouter {
 
     // 2. Generate villager's interleaved voice + text response strictly in turn
     const voice = getEffectiveVoice(params.villager);
+    const accentCue = voice.language.toLowerCase().includes('english')
+      ? voice.language
+      : `English (with a subtle ${voice.language} accent, never switching written or spoken language away from English)`;
     const systemPrompt = [
       `You are ${params.villager.name}, the ${params.villager.role} in the village of Selo.`,
       params.villager.identity,
-      `Speak in ${voice.language} using a ${voice.gender} voice. Style: ${params.villager.voiceStyle}.`,
+      `Always respond and speak strictly in ${accentCue} using a ${voice.gender} voice. Style: ${params.villager.voiceStyle}.`,
       `Respond naturally to the visitor in 1 to 2 short spoken sentences. NEVER utter or prefix your own name.`,
     ].join(' ');
 

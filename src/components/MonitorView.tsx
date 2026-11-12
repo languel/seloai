@@ -890,30 +890,52 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                     <label htmlFor="proximity-radius" className="text-muted">
                       Eavesdrop radius:{' '}
                       <span className="font-mono text-ink">
-                        {settings.proximityRadiusTiles > 0
-                          ? `${settings.proximityRadiusTiles} tiles`
-                          : 'Off (0 tiles)'}
+                        {settings.proximityRadiusTiles <= 0
+                          ? 'Off (0 tiles)'
+                          : settings.proximityRadiusTiles >= 90
+                            ? 'Whole Map (all villagers)'
+                            : `${settings.proximityRadiusTiles} tiles`}
                       </span>
                     </label>
                     <input
                       id="proximity-radius"
                       type="range"
                       min={0}
-                      max={18}
+                      max={25}
                       step={1}
-                      value={settings.proximityRadiusTiles}
+                      value={settings.proximityRadiusTiles >= 90 ? 25 : Math.min(24, Math.max(0, settings.proximityRadiusTiles))}
+                      aria-valuetext={
+                        settings.proximityRadiusTiles <= 0
+                          ? 'Off'
+                          : settings.proximityRadiusTiles >= 90
+                            ? 'Whole map'
+                            : `${settings.proximityRadiusTiles} tiles`
+                      }
                       onChange={(e) => {
-                        const nextRadius = Number(e.target.value);
+                        const raw = Number(e.target.value);
+                        const nextRadius = raw >= 25 ? 999 : raw;
                         if (nextRadius <= 0) {
                           brainRouter.stopSpeech();
                         }
                         onUpdateSettings({ proximityRadiusTiles: nextRadius });
                       }}
-                      className="flex-1"
+                      className="flex-1 accent-sage"
                     />
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ proximityRadiusTiles: 999 })}
+                      aria-pressed={settings.proximityRadiusTiles >= 90}
+                      className={`rounded border px-2 py-0.5 text-[11px] font-medium ${
+                        settings.proximityRadiusTiles >= 90
+                          ? 'border-sage bg-sage text-white'
+                          : 'border-borderFolk bg-surface hover:bg-card'
+                      }`}
+                    >
+                      Whole Map
+                    </button>
                   </div>
                   <p className="text-[11px] text-muted">
-                    Mixes nearby villager voices by distance &amp; stereo pan (set to 0 to turn eavesdropping off).
+                    Mixes villager voices by distance &amp; stereo pan (0 = Off, slide right for Whole Map).
                   </p>
                 </div>
               </div>

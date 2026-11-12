@@ -7,7 +7,7 @@ import {
   OMNI_SPEECH_LANGUAGES,
   WEBGPU_BRAIN_PRESETS,
 } from '../../data/defaultData';
-import { computeSpatialMix } from '../../ai/audioPipeline';
+import { computeSpatialMix, EAVESDROP_WHOLE_MAP_RADIUS } from '../../ai/audioPipeline';
 import { parseDialogueAndNarration } from '../../ai/brainRouter';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
 import {
@@ -425,6 +425,119 @@ describe('SeloAI core engine', () => {
     for (const msg of speech1) {
       expect(msg.text.toLowerCase()).not.toContain('rushnyk weaver');
       expect(msg.text.toLowerCase()).not.toContain('lantern astronomer');
+    }
+  });
+
+  it('supports whole-map eavesdrop audio mix alongside 0=off radius', () => {
+    const wholeCorner = computeSpatialMix(60, 44, 4, 4, EAVESDROP_WHOLE_MAP_RADIUS);
+    expect(wholeCorner.inRange).toBe(true);
+    expect(wholeCorner.gain).toBeGreaterThanOrEqual(0.38);
+    expect(wholeCorner.pan).toBeGreaterThan(0.5);
+
+    const offCorner = computeSpatialMix(5, 5, 4, 4, 0);
+    expect(offCorner.inRange).toBe(false);
+    expect(offCorner.gain).toBe(0);
+  });
+
+  it('unsticks villagers via perpendicular sidestepping, re-routing, and scatterVillagers()', () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityRadiusTiles: 0,
+      enableWebSpeechFallback: false,
+      autoConverse: false,
+    });
+
+    const walker = sim.runtimes.get(DEFAULT_VILLAGERS[0].id)!;
+    const blocker = sim.runtimes.get(DEFAULT_VILLAGERS[1].id)!;
+    // Clear neighbors out of the Village Square lane (y=16) so only walker and blocker interact
+    sim.player.x = 14;
+    sim.player.y = 14;
+    for (const rt of sim.runtimes.values()) {
+      if (rt.id !== walker.id && rt.id !== blocker.id) {
+        rt.x = 14;
+        rt.y = 14;
+        rt.path = [];
+      }
+    }
+
+    // Locate an open 6x3 walkable courtyard in createDefaultMap so walls don't confound blocker avoidance
+    let baseX = 20;
+    let baseY = 15;
+    let foundOpen = false;
+    for (let y = 2; y < map.height - 4 && !foundOpen; y++) {
+      for (let x = 2; x < map.width - 7 && !foundOpen; x++) {
+        let allClear = true;
+        for (let dy = -1; dy <= 1 && allClear; dy++) {
+          for (let dx = 0; dx <= 5 && allClear; dx++) {
+            if (!isTileWalkable(map, x + dx, y + dy)) allClear = false;
+          }
+        }
+        if (allClear) {
+          baseX = x;
+          baseY = y;
+          foundOpen = true;
+        }
+      }
+    }
+    expect(foundOpen).toBe(true);
+
+    walker.x = baseX;
+    walker.y = baseY;
+    walker.path = [
+      { x: baseX + 1, y: baseY },
+      { x: baseX + 2, y: baseY },
+      { x: baseX + 3, y: baseY },
+      { x: baseX + 4, y: baseY },
+    ];
+    walker.state = 'walking';
+
+    blocker.x = baseX + 2;
+    blocker.y = baseY;
+    blocker.path = [];
+    blocker.state = 'idle';
+
+    for (let i = 0; i < 160; i++) {
+      sim.stepFrame(0.05);
+    }
+
+    // Walker sidesteps/reroutes cleanly past blocker instead of deadlocking at baseX + 1.2
+    expect(walker.x).toBeGreaterThan(baseX + 3);
+
+    // Scatter should assign walkable destinations across idle villagers
+    for (const rt of sim.runtimes.values()) {
+      rt.path = [];
+      rt.state = 'idle';
+    }
+    sim.scatterVillagers();
+    const movingCount = Array.from(sim.runtimes.values()).filter((rt) => rt.path.length > 0).length;
+    expect(movingCount).toBeGreaterThanOrEqual(DEFAULT_VILLAGERS.length - 1);
+  });
+
+  it('broadcasts @world / @all and multi-@ instructions to every targeted villager immediately', async () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityRadiusTiles: 0,
+      enableWebSpeechFallback: false,
+      narratorEnabled: false,
+    });
+
+    const allTargets = parseMentionTargets(
+      '@world @Olena gather near the windmill',
+      DEFAULT_VILLAGERS,
+      DEFAULT_MODEL_SETTINGS,
+    );
+    expect(allTargets.length).toBe(DEFAULT_VILLAGERS.length);
+    expect(new Set(allTargets.map((t) => t.id)).size).toBe(DEFAULT_VILLAGERS.length);
+
+    await sim.sendUserAddressedMessage(undefined, '@all scatter and check the windmill', false);
+    for (const v of DEFAULT_VILLAGERS) {
+      const rt = sim.runtimes.get(v.id)!;
+      expect(rt.worldFeed?.some((ev) => ev.includes('@all scatter'))).toBe(true);
+      expect(rt.path.length).toBeGreaterThan(0);
     }
   });
 });

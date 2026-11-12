@@ -295,6 +295,9 @@ class OmniEngine {
     const language = opts.language?.trim() || 'American English';
     const gender = opts.gender ?? 'female';
     const styleSuffix = opts.voiceStyle?.trim() ? ` Delivery style: ${opts.voiceStyle.trim()}` : '';
+    const accentCue = language.toLowerCase().includes('english')
+      ? language
+      : `English with a subtle ${language} accent`;
 
     return this.enqueue(async () => {
       const session = this.model!.create_session();
@@ -302,7 +305,7 @@ class OmniEngine {
       const messages = [
         {
           role: 'system',
-          content: `Perform TTS in ${language} using a ${gender} voice.${styleSuffix}`,
+          content: `Read the user text aloud verbatim in ${accentCue} using a ${gender} voice.${styleSuffix}`,
         },
         {
           role: 'user',
