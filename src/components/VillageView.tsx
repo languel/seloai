@@ -725,6 +725,34 @@ export const VillageView: React.FC<VillageViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              if (!isScribeSelected && selectedCfg) {
+                sim.setFocalWorldline(
+                  sim.focalWorldlineId === selectedCfg.id ? 'traveler' : selectedCfg.id,
+                );
+                setTick((t) => t + 1);
+              } else {
+                sim.setFocalWorldline('traveler');
+                setTick((t) => t + 1);
+              }
+            }}
+            aria-pressed={sim.focalWorldlineId !== 'traveler'}
+            title="Hop Scribe & spatial audio POV to selected character (or click again to return to You)"
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
+              sim.focalWorldlineId !== 'traveler'
+                ? 'bg-crimson text-white'
+                : 'hover:bg-surface text-muted'
+            }`}
+          >
+            <span>
+              POV:{' '}
+              {sim.focalWorldlineId === 'traveler'
+                ? 'You'
+                : sim.configs.get(sim.focalWorldlineId)?.name ?? 'Char'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               sim.scatterVillagers();
               setTick((t) => t + 1);
             }}

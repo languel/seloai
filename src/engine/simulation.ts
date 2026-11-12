@@ -139,6 +139,7 @@ export class VillageSimulation {
   public tickCount = 0;
   public fps = 60;
   public modelSettings: ModelSettings;
+  public focalWorldlineId: string | 'traveler' = 'traveler';
 
   private listeners = new Set<() => void>();
   private aiAccumulator = 0;
@@ -644,6 +645,36 @@ export class VillageSimulation {
     }
   }
 
+  setFocalWorldline(targetId: string | 'traveler') {
+    const resolved =
+      targetId !== 'traveler' && this.runtimes.has(targetId) ? targetId : 'traveler';
+    if (this.focalWorldlineId === resolved) return;
+    this.focalWorldlineId = resolved;
+    brainRouter.refreshActiveSpatialMix();
+    const label =
+      resolved === 'traveler'
+        ? this.player.name
+        : this.configs.get(resolved)?.name ?? resolved;
+    brainRouter.log({
+      channel: 'sim',
+      level: 'info',
+      title: `Worldline POV: ${label}`,
+      detail: `Scribe and spatial audio listener hopped to ${label}'s point of view.`,
+    });
+    this.notify(true);
+  }
+
+  getListenerPosition(): { x: number; y: number; label: string; villagerId?: string } {
+    if (this.focalWorldlineId !== 'traveler') {
+      const rt = this.runtimes.get(this.focalWorldlineId);
+      const cfg = this.configs.get(this.focalWorldlineId);
+      if (rt && cfg) {
+        return { x: rt.x, y: rt.y, label: cfg.name, villagerId: cfg.id };
+      }
+    }
+    return { x: this.player.x, y: this.player.y, label: this.player.name };
+  }
+
   private async planNextVillagerAction(cfg: VillagerConfig, rt: VillagerRuntime) {
     const now = Date.now();
     const others = [...this.configs.values()].filter((v) => v.id !== cfg.id);
@@ -716,14 +747,16 @@ export class VillageSimulation {
       rt.state = 'walking';
       this.appendWorldEvent(rt, `Decided: ${decision.motive}`);
       if (this.modelSettings.eavesdropThoughts && this.modelSettings.proximityRadiusTiles > 0) {
-        const thoughtResolver = () =>
-          computeSpatialMix(
+        const thoughtResolver = () => {
+          const listener = this.getListenerPosition();
+          return computeSpatialMix(
             rt.x,
             rt.y,
-            this.player.x,
-            this.player.y,
+            listener.x,
+            listener.y,
             this.modelSettings.proximityRadiusTiles,
           );
+        };
         const mix = thoughtResolver();
         if (mix.inRange) {
           rt.currentBubble = { text: `(${decision.motive})`, expiresAt: Date.now() + 3600 };
@@ -890,14 +923,16 @@ export class VillageSimulation {
     rtB.activityLabel = `Chatting with ${cfgA.name}`;
     this.notify(true);
 
-    const midpointResolver = () =>
-      computeSpatialMix(
+    const midpointResolver = () => {
+      const listener = this.getListenerPosition();
+      return computeSpatialMix(
         (rtA.x + rtB.x) / 2,
         (rtA.y + rtB.y) / 2,
-        this.player.x,
-        this.player.y,
+        listener.x,
+        listener.y,
         this.modelSettings.proximityRadiusTiles,
       );
+    };
 
     try {
       const eavesdropEnabled = this.modelSettings.proximityRadiusTiles > 0;
@@ -935,14 +970,16 @@ export class VillageSimulation {
         speakerRt.state = 'thinking';
         this.notify(true);
 
-        const resolver = () =>
-          computeSpatialMix(
+        const resolver = () => {
+          const listener = this.getListenerPosition();
+          return computeSpatialMix(
             speakerRt.x,
             speakerRt.y,
-            this.player.x,
-            this.player.y,
+            listener.x,
+            listener.y,
             this.modelSettings.proximityRadiusTiles,
           );
+        };
 
         const res = await brainRouter.generateVillagerReply({
           villager: speakerCfg,
@@ -1116,9 +1153,26 @@ export class VillageSimulation {
   }
 
   private buildSceneContext(focus?: { x: number; y: number }): string {
-    const focal = focus ?? { x: this.player.x, y: this.player.y };
+    const listener = this.getListenerPosition();
+    const focal = focus ?? { x: listener.x, y: listener.y };
     const focalLandmark = this.getNearestLandmarkName(focal.x, focal.y);
-    const lines: string[] = [`Focal location: ${focalLandmark}`];
+    const lines: string[] = [
+      `Active Worldline POV: ${listener.label}${listener.villagerId ? ' (character perspective)' : ' (traveler perspective)'}`,
+      `Focal location: ${focalLandmark}`,
+    ];
+    if (listener.villagerId) {
+      const povCfg = this.configs.get(listener.villagerId);
+      const povRt = this.runtimes.get(listener.villagerId);
+      if (povCfg && povRt) {
+        const recentMems = povRt.memories
+          .slice(-3)
+          .map((m) => m.summary)
+          .join(' | ');
+        lines.push(
+          `Focal character inner lens (${povCfg.name}): motive="${povRt.currentIntention || povCfg.plan}"${recentMems ? `; memories=[${recentMems}]` : ''}`,
+        );
+      }
+    }
     const pois = this.map.pointsOfInterest ?? [];
     if (pois.length > 0) {
       lines.push(
@@ -1312,11 +1366,12 @@ export class VillageSimulation {
 
     try {
       const resolver = () => {
+        const listener = this.getListenerPosition();
         const mix = computeSpatialMix(
           rt.x,
           rt.y,
-          this.player.x,
-          this.player.y,
+          listener.x,
+          listener.y,
           Math.max(9, this.modelSettings.proximityRadiusTiles),
         );
         return {

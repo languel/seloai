@@ -5,6 +5,7 @@ import {
   Download,
   Map as MapIcon,
   Moon,
+  Network,
   RotateCcw,
   Sun,
   Upload,
@@ -17,6 +18,7 @@ import { AssetGuideView } from './components/AssetGuideView';
 import { CharacterEditorView } from './components/CharacterEditorView';
 import { LevelEditorView } from './components/LevelEditorView';
 import { MonitorView } from './components/MonitorView';
+import { ObservatoryView } from './components/ObservatoryView';
 import { VillageView } from './components/VillageView';
 import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
@@ -28,7 +30,7 @@ import {
   savePersistedState,
 } from './storage/villageStore';
 
-type TabId = 'village' | 'level' | 'characters' | 'monitor' | 'guides';
+type TabId = 'village' | 'observatory' | 'level' | 'characters' | 'monitor' | 'guides';
 
 export function App() {
   const [tab, setTab] = useState<TabId>('village');
@@ -221,6 +223,7 @@ export function App() {
           {(
             [
               ['village', 'Village', Trees],
+              ['observatory', 'Control Room', Network],
               ['level', 'Level Editor', MapIcon],
               ['characters', 'Characters', Users],
               ['monitor', 'AI & Voice Monitor', Activity],
@@ -310,6 +313,17 @@ export function App() {
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             onOpenMonitor={() => setTab('monitor')}
+          />
+        )}
+        {tab === 'observatory' && (
+          <ObservatoryView
+            sim={simRef.current}
+            villagers={villagers}
+            settings={settings}
+            onJumpToVillage={(villagerId) => {
+              if (villagerId) simRef.current?.setFocalWorldline(villagerId);
+              setTab('village');
+            }}
           />
         )}
         {tab === 'level' && <LevelEditorView map={map} onApplyMap={handleApplyMap} />}
