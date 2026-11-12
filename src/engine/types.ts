@@ -59,6 +59,113 @@ export interface CustomSpriteSheet {
 
 export type VoiceGender = 'female' | 'male';
 
+export type CharacterGender = 'female' | 'male' | 'neutral';
+
+export type SkinToneId =
+  | 'porcelain'
+  | 'ivory'
+  | 'warm-peach'
+  | 'olive'
+  | 'tan'
+  | 'amber'
+  | 'chestnut'
+  | 'deep-espresso';
+
+export type EyeColorId =
+  | 'brown'
+  | 'blue'
+  | 'green'
+  | 'hazel'
+  | 'amber'
+  | 'charcoal'
+  | 'violet';
+
+export type HairStyleId =
+  | 'short-crop'
+  | 'parted-bob'
+  | 'long-wavy'
+  | 'braids'
+  | 'ponytail'
+  | 'spiky'
+  | 'bun'
+  | 'curly-afro'
+  | 'scholar-crown'
+  | 'shaved';
+
+export type HairColorId =
+  | 'raven'
+  | 'espresso'
+  | 'chestnut'
+  | 'auburn'
+  | 'golden-blonde'
+  | 'platinum-silver'
+  | 'copper-rose'
+  | 'indigo-dye'
+  | 'forest-sage';
+
+export type FacialHairId = 'none' | 'stubble' | 'mustache' | 'goatee' | 'full-beard';
+
+export type ClothingStyleId =
+  | 'rushnyk-tunic'
+  | 'herbalist-dress'
+  | 'blacksmith-apron'
+  | 'scholar-robe'
+  | 'forester-vest'
+  | 'traveler-cloak'
+  | 'overalls'
+  | 'noble-coat';
+
+export type ClothingColorId =
+  | 'crimson'
+  | 'cobalt'
+  | 'forest'
+  | 'ochre'
+  | 'plum'
+  | 'charcoal'
+  | 'cream-linen'
+  | 'teal'
+  | 'rust'
+  | 'burgundy';
+
+export type TrimColorId =
+  | 'gold'
+  | 'crimson'
+  | 'ivory'
+  | 'indigo'
+  | 'emerald'
+  | 'copper'
+  | 'silver'
+  | 'obsidian';
+
+export type BottomStyleId = 'trousers' | 'skirt' | 'breeches';
+
+export type FootwearColorId = 'dark-leather' | 'russet-brown' | 'charcoal' | 'straw-tan';
+
+export type AccessoryId =
+  | 'none'
+  | 'glasses'
+  | 'flower-crown'
+  | 'straw-hat'
+  | 'hood'
+  | 'bandana'
+  | 'headscarf'
+  | 'feather-cap';
+
+export interface CharacterAppearance {
+  gender: CharacterGender;
+  skinTone: SkinToneId;
+  eyeColor: EyeColorId;
+  hairStyle: HairStyleId;
+  hairColor: HairColorId;
+  facialHair: FacialHairId;
+  clothingStyle: ClothingStyleId;
+  clothingColor: ClothingColorId;
+  trimColor: TrimColorId;
+  bottomStyle: BottomStyleId;
+  footwearColor: FootwearColorId;
+  accessory: AccessoryId;
+}
+
 export interface VillagerVoiceProfile {
   gender: VoiceGender;
   /** Any of the 19 LFM3-Omni-2B speech locales (e.g. "American English", "British English", "Polish") */
@@ -78,6 +185,7 @@ export interface VillagerConfig {
   accentColor: string;
   spritesheetId: string;
   customSprite?: CustomSpriteSheet;
+  appearance?: CharacterAppearance;
   identity: string;
   plan: string;
   voiceStyle: string;

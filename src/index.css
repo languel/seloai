@@ -149,6 +149,11 @@ body,
   outline-offset: 2px;
 }
 
+.swatch-radio:focus-visible + .swatch-chip {
+  outline: 2px solid var(--accent-crimson);
+  outline-offset: 2px;
+}
+
 /* Mandatory dialog scroll containment from modern-web-guidance */
 dialog:modal {
   overscroll-behavior: contain;

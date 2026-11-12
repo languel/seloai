@@ -18,10 +18,12 @@ export function getCachedImage(url: string): HTMLImageElement | null {
   if (existing) return existing.complete && existing.naturalWidth > 0 ? existing : null;
 
   const img = new Image();
-  img.crossOrigin = 'anonymous';
+  if (!url.startsWith('data:')) {
+    img.crossOrigin = 'anonymous';
+  }
   img.src = url;
   imageCache.set(url, img);
-  return null;
+  return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
 export function drawTileGrid(

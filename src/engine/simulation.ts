@@ -1,6 +1,7 @@
 import { computeSpatialMix, type SpatialMix } from '../ai/audioPipeline';
 import { brainRouter, parseDialogueAndNarration } from '../ai/brainRouter';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
+import { ensureVillagerAppearanceSprite } from './spriteGenerator';
 import type {
   ChatMessage,
   Conversation,
@@ -202,7 +203,8 @@ export class VillageSimulation {
     }
     this.configs.clear();
 
-    for (const v of villagers) {
+    for (const rawVillager of villagers) {
+      const v = ensureVillagerAppearanceSprite(rawVillager);
       this.configs.set(v.id, v);
       const existing = this.runtimes.get(v.id);
       if (!existing) {

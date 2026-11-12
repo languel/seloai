@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_SETTINGS,
   DEFAULT_VILLAGERS,
 } from '../data/defaultData';
+import { ensureVillagerAppearanceSprite } from '../engine/spriteGenerator';
 import type { Conversation, ModelSettings, VillageMap, VillagerConfig } from '../engine/types';
 
 const DB_NAME = 'seloai-db';
@@ -63,7 +64,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
     if (stored && stored.map && Array.isArray(stored.villagers) && stored.villagers.length > 0) {
       return {
         map: stored.map,
-        villagers: stored.villagers,
+        villagers: stored.villagers.map(ensureVillagerAppearanceSprite),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
           ...(stored.modelSettings ?? {}),
@@ -142,7 +143,7 @@ export function parseImportedVillageJson(raw: string): {
     result.map = data.map as VillageMap;
   }
   if (Array.isArray(data.villagers) && data.villagers.length > 0) {
-    result.villagers = data.villagers as VillagerConfig[];
+    result.villagers = (data.villagers as VillagerConfig[]).map(ensureVillagerAppearanceSprite);
   }
   if (data.modelSettings && typeof data.modelSettings === 'object') {
     result.modelSettings = data.modelSettings as Partial<ModelSettings>;
