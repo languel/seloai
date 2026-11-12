@@ -38,12 +38,14 @@ import {
 } from 'lucide-react';
 import {
   appendTilesToTileset,
+  applyChromaKeyToPixelGrid,
   convertTapestryToMap,
   createMacroStampFromIndices,
   detectMotifRegions,
   floodFillTransparent,
   generateProceduralCodeFromGrid,
   getOpaqueBounds,
+  parseHexColor,
   processTilePixels,
   rebuildCrispPixelArt,
   removeEdgeBackground,
@@ -142,7 +144,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const [refOpacity, setRefOpacity] = useState(100);
   const [traceLayerVisible, setTraceLayerVisible] = useState(true);
   const [traceLayerOpacity, setTraceLayerOpacity] = useState(85);
+  const [traceGridOpacity, setTraceGridOpacity] = useState(45);
   const [traceOverlayMode, setTraceOverlayMode] = useState<TraceOverlayMode>('lines');
+  const [previewCompositeRef, setPreviewCompositeRef] = useState(false);
   const [mirrorX, setMirrorX] = useState(false);
   const [mirrorY, setMirrorY] = useState(false);
 
@@ -239,14 +243,12 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     }
   }, []);
 
-  const getChromaFilter = (): ChromaKeyFilter | null => {
-    if (!enableChroma) return null;
-    const hex = chromaHex.replace('#', '');
-    const num = parseInt(hex, 16);
+  const getChromaFilter = (forceEnabled: boolean = false, hexOverride?: string): ChromaKeyFilter | null => {
+    if (!forceEnabled && !enableChroma) return null;
+    const rgb = parseHexColor(hexOverride ?? chromaHex);
+    if (!rgb) return null;
     return {
-      r: (num >> 16) & 255,
-      g: (num >> 8) & 255,
-      b: num & 255,
+      ...rgb,
       tolerance: chromaTolerance,
     };
   };
@@ -260,6 +262,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     targetH: number,
     maxColors: number,
     pushUndo: boolean = false,
+    chromaOverride?: ChromaKeyFilter | null,
   ) => {
     if (targetCrop.w <= 0 || targetCrop.h <= 0) return;
     if (pushUndo) {
@@ -272,18 +275,18 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       outRows: builderOutRows,
       maxColors,
       fnName: stampName || 'Motif',
-      chromaKey: getChromaFilter(),
+      chromaKey: chromaOverride !== undefined ? chromaOverride : getChromaFilter(),
       trimAndFit: false, // keep 1:1 geometric alignment directly over the reference crop!
     });
+    const nextPalette =
+      res.palette.length > 0
+        ? res.palette
+        : ['#be1e2d', '#eab308', '#228b4a', '#1f2937', '#f5f0e1'];
     setBuilderW(res.gridWidth);
     setBuilderH(res.gridHeight);
     setBuilderGrid(res.grid);
-    setBuilderPalette(
-      res.palette.length > 0
-        ? res.palette
-        : ['#be1e2d', '#eab308', '#228b4a', '#1f2937', '#f5f0e1'],
-    );
-    setActiveColorIdx(0);
+    setBuilderPalette(nextPalette);
+    setActiveColorIdx((idx) => Math.max(0, Math.min(idx, nextPalette.length - 1)));
   };
 
   const loadImageUrl = (url: string) => {
@@ -403,25 +406,57 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setStatusMsg('Removed edge background');
   };
 
+  const handleApplyTranspToLayer = (hexOverride?: string, retraceClean: boolean = false) => {
+    const targetHex = hexOverride ?? chromaHex;
+    const filter = getChromaFilter(true, targetHex);
+    if (!filter) return;
+    setChromaHex(targetHex);
+    setEnableChroma(true);
+    setPickingChromaKey(false);
+
+    if (retraceClean && sourceImg) {
+      traceCropIntoLayer(
+        sourceImg,
+        imgWidth,
+        imgHeight,
+        crop,
+        builderW,
+        builderH,
+        maxTraceColors,
+        true,
+        filter,
+      );
+      setStatusMsg(`Re-traced cleanly with ${targetHex} (±${chromaTolerance}%) set transparent`);
+      return;
+    }
+
+    pushTraceUndo();
+    const res = applyChromaKeyToPixelGrid(builderGrid, builderPalette, filter);
+    const nextPalette =
+      res.palette.length > 0
+        ? res.palette
+        : ['#be1e2d', '#eab308', '#228b4a', '#1f2937', '#f5f0e1'];
+    setBuilderGrid(res.grid);
+    setBuilderPalette(nextPalette);
+    setActiveColorIdx((idx) => Math.max(0, Math.min(idx, nextPalette.length - 1)));
+    setStatusMsg(
+      `Applied transparency for ${targetHex} (±${chromaTolerance}%): cleared ${res.removedCells} pixel(s)`,
+    );
+  };
+
   const handleApplyColorKeyToImage = () => {
     if (!sourceImg) return;
+    const filter = getChromaFilter(true);
+    if (!filter) return;
     const ctx = sourceImg.getContext('2d');
     if (!ctx) return;
     pushBgUndoSnapshot();
-    const hex = chromaHex.replace('#', '');
-    const num = parseInt(hex, 16);
     const imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
-    processTilePixels(imgData, {
-      chromaKey: {
-        r: (num >> 16) & 255,
-        g: (num >> 8) & 255,
-        b: num & 255,
-        tolerance: chromaTolerance,
-      },
-    });
+    processTilePixels(imgData, { chromaKey: filter });
     ctx.putImageData(imgData, 0, 0);
+    setEnableChroma(true);
     setBgVersion((v) => v + 1);
-    setStatusMsg(`Removed ${chromaHex} across reference image`);
+    setStatusMsg(`Removed ${chromaHex} (±${chromaTolerance}%) across reference image`);
   };
 
   const handleUndoBg = () => {
@@ -498,6 +533,10 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     const sw = Math.max(1, Math.min(Math.round(crop.w), imgWidth - sx));
     const sh = Math.max(1, Math.min(Math.round(crop.h), imgHeight - sy));
     const data = ctx.getImageData(sx, sy, sw, sh);
+    const chromaKey = getChromaFilter();
+    if (chromaKey) {
+      processTilePixels(data, { chromaKey });
+    }
     const bounds = getOpaqueBounds(data);
     if (!bounds) return;
     const nextCrop = {
@@ -708,8 +747,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       }
 
       // Stitch / Pixel trace grid & optional center-dot overlay inside crop
+      const gridAlpha = Math.max(0.04, Math.min(1, traceGridOpacity / 100));
       if (traceOverlayMode === 'lines' || traceOverlayMode === 'both') {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(0.62 * gridAlpha).toFixed(2)})`;
         ctx.lineWidth = 0.75 / zoom;
         ctx.beginPath();
         for (let gx = 1; gx < builderW; gx++) {
@@ -728,7 +768,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       if (traceOverlayMode === 'dots' || traceOverlayMode === 'both') {
         const dotRadius = Math.max(0.55 / zoom, Math.min(cellW, cellH) * 0.14);
         const haloRadius = dotRadius + 0.35 / zoom;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.48)';
+        ctx.fillStyle = `rgba(15, 23, 42, ${(0.58 * gridAlpha).toFixed(2)})`;
         ctx.beginPath();
         for (let gy = 0; gy < builderH; gy++) {
           const cy = crop.y + (gy + 0.5) * cellH;
@@ -740,7 +780,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         }
         ctx.fill();
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
+        ctx.fillStyle = `rgba(255, 255, 255, ${(0.95 * gridAlpha).toFixed(2)})`;
         ctx.beginPath();
         for (let gy = 0; gy < builderH; gy++) {
           const cy = crop.y + (gy + 0.5) * cellH;
@@ -862,6 +902,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     autoSlices,
     traceLayerVisible,
     traceLayerOpacity,
+    traceGridOpacity,
     traceOverlayMode,
     builderGrid,
     builderPalette,
@@ -1023,6 +1064,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       if (hex) {
         setChromaHex(hex);
         setEnableChroma(true);
+        setStatusMsg(`ID'd ${hex} as Transparent Key — adjust Tolerance or Apply`);
+      } else {
+        setStatusMsg('Clicked pixel is already transparent');
       }
       setPickingChromaKey(false);
       return;
@@ -1621,8 +1665,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const selectedSliceCount = autoSlices.filter((s) => s.selected).length;
 
   // Compute cursor class for unified main canvas
-  const canvasCursorClass =
-    activeTool === 'pan'
+  const canvasCursorClass = pickingChromaKey
+    ? 'cursor-crosshair'
+    : activeTool === 'pan'
       ? 'cursor-grab active:cursor-grabbing'
       : activeTool === 'frame'
         ? hoverAction === 'nw' || hoverAction === 'se'
@@ -1967,23 +2012,193 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                     </div>
 
                     <div className="space-y-1">
-                      <span className="block text-center text-[9px] uppercase tracking-wider text-muted">
-                        Traced Layer ({builderW}×{builderH})
-                      </span>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[9px] uppercase tracking-wider text-muted">
+                          Traced ({builderW}×{builderH})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewCompositeRef((v) => !v)}
+                          title="Toggle isolated checkerboard preview vs transparent overlay over reference crop"
+                          className={`rounded px-1 py-0.5 text-[9px] font-medium border transition ${
+                            previewCompositeRef
+                              ? 'border-indigoFolk bg-indigoFolk text-white'
+                              : 'border-borderFolk bg-surface text-muted hover:text-ink'
+                          }`}
+                        >
+                          {previewCompositeRef ? 'Over Ref' : 'Checker'}
+                        </button>
+                      </div>
                       <div
                         style={SUBTLE_CHECKER_STYLE}
-                        className="flex items-center justify-center rounded border border-crimson/50 p-1.5 h-24 overflow-hidden"
+                        className="relative flex items-center justify-center rounded border border-crimson/50 p-1.5 h-24 overflow-hidden"
                       >
+                        {previewCompositeRef && rawCropPreviewUrl && (
+                          <img
+                            src={rawCropPreviewUrl}
+                            alt="Reference underlay"
+                            style={{ opacity: refOpacity / 100 }}
+                            className="absolute inset-1.5 h-[calc(100%-0.75rem)] w-[calc(100%-0.75rem)] object-contain pixel-canvas"
+                          />
+                        )}
                         {builderPreviewUrl ? (
                           <img
                             src={builderPreviewUrl}
                             alt="Traced pixel pattern"
-                            className="max-h-full max-w-full object-contain pixel-canvas"
+                            style={{
+                              opacity: traceLayerVisible
+                                ? (previewCompositeRef ? traceLayerOpacity / 100 : 1)
+                                : 0,
+                            }}
+                            className={
+                              previewCompositeRef
+                                ? 'relative z-10 max-h-full max-w-full object-contain pixel-canvas'
+                                : 'max-h-full max-w-full object-contain pixel-canvas'
+                            }
                           />
                         ) : (
                           <span className="text-[10px] text-white/50">Trace or paint</span>
                         )}
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Overlay & Grid Transparency Controls (synced with canvas while previewing/editing) */}
+                  <div className="grid grid-cols-2 gap-2 rounded border border-borderFolk/60 bg-surface/60 px-2 py-1.5 text-[10px]">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center justify-between text-muted">
+                        <button
+                          type="button"
+                          onClick={() => setTraceLayerVisible((v) => !v)}
+                          className="inline-flex items-center gap-1 hover:text-ink"
+                          title="Toggle Traced Overlay Visibility"
+                        >
+                          {traceLayerVisible ? (
+                            <Eye className="h-3 w-3 text-cyan-400" />
+                          ) : (
+                            <EyeOff className="h-3 w-3 text-muted" />
+                          )}
+                          <span>Overlay</span>
+                        </button>
+                        <span className="font-mono">{traceLayerOpacity}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={traceLayerOpacity}
+                        onChange={(e) => setTraceLayerOpacity(Number(e.target.value))}
+                        aria-label="Trace Overlay Opacity"
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center justify-between text-muted">
+                        <span>Grid / Dots</span>
+                        <span className="font-mono">{traceGridOpacity}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={5}
+                        max={100}
+                        disabled={traceOverlayMode === 'off'}
+                        value={traceGridOpacity}
+                        onChange={(e) => setTraceGridOpacity(Number(e.target.value))}
+                        aria-label="Stitch Grid Overlay Opacity"
+                        className="w-full disabled:opacity-40"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Identify Transparent Color Key & Apply */}
+                  <div className="rounded border border-borderFolk/70 bg-surface/60 p-2 space-y-1.5 text-[10px]">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-muted">
+                        <input
+                          type="checkbox"
+                          checked={enableChroma}
+                          onChange={(e) => setEnableChroma(e.target.checked)}
+                        />
+                        <span>Transp Key Color</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !pickingChromaKey;
+                          setPickingChromaKey(next);
+                          if (next) {
+                            setStatusMsg('Click background pixel on canvas to ID Transparent Key');
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-medium transition ${
+                          pickingChromaKey
+                            ? 'border-crimson bg-crimson text-white animate-pulse'
+                            : 'border-borderFolk bg-card hover:bg-surface'
+                        }`}
+                        title="Click any color on the canvas to identify transparent background key"
+                      >
+                        <Pipette className="h-3 w-3" />
+                        <span>{pickingChromaKey ? 'Click Canvas…' : 'Pick Transp'}</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={chromaHex}
+                        onChange={(e) => {
+                          setChromaHex(e.target.value);
+                          setEnableChroma(true);
+                        }}
+                        title="Transparent key color"
+                        className="h-5 w-7 shrink-0 cursor-pointer rounded border border-borderFolk p-0"
+                      />
+                      <span className="font-mono text-[10px] shrink-0">{chromaHex}</span>
+                      <div className="flex-1 flex items-center gap-1.5">
+                        <span className="text-muted shrink-0">Tol</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={50}
+                          value={chromaTolerance}
+                          onChange={(e) => {
+                            setChromaTolerance(Number(e.target.value));
+                            if (!enableChroma) setEnableChroma(true);
+                          }}
+                          aria-label="Transparent key color tolerance"
+                          className="w-full"
+                        />
+                        <span className="font-mono w-7 text-right shrink-0">{chromaTolerance}%</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleApplyTranspToLayer(chromaHex, false)}
+                        title="Knock out matching pixels from current traced layer while preserving hand edits"
+                        className="rounded bg-indigoFolk px-1.5 py-1 font-medium text-white hover:bg-indigoFolk/90"
+                      >
+                        Apply → Layer
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!sourceImg}
+                        onClick={() => handleApplyTranspToLayer(chromaHex, true)}
+                        title="Re-trace crop cleanly ignoring transparent key color"
+                        className="rounded bg-emerald-700 px-1.5 py-1 font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+                      >
+                        Re-Trace Clean
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!sourceImg}
+                        onClick={handleApplyColorKeyToImage}
+                        title="Erase matching background color from the reference image itself"
+                        className="rounded border border-borderFolk bg-card px-1.5 py-1 font-medium hover:bg-surface disabled:opacity-50"
+                      >
+                        Bake → Ref
+                      </button>
                     </div>
                   </div>
 
@@ -2242,23 +2457,33 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                         />
                         <span className="font-mono">{builderPalette[activeColorIdx]}</span>
                       </div>
-                      {builderPalette.length > 1 && (
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            const removeIdx = activeColorIdx;
-                            pushTraceUndo();
-                            setBuilderPalette((p) => p.filter((_, i) => i !== removeIdx));
-                            setBuilderGrid((g) =>
-                              g.map((v) => (v === removeIdx ? -1 : v > removeIdx ? v - 1 : v)),
-                            );
-                            setActiveColorIdx(Math.max(0, removeIdx - 1));
-                          }}
-                          className="text-muted hover:text-crimson"
+                          onClick={() => handleApplyTranspToLayer(builderPalette[activeColorIdx], false)}
+                          title="Identify this swatch as Transparent Key and clear matching pixels from the traced layer"
+                          className="rounded border border-indigoFolk/60 bg-indigoFolk/15 px-1.5 py-0.5 font-medium text-indigoFolk hover:bg-indigoFolk/25"
                         >
-                          Remove Swatch
+                          Set Transp
                         </button>
-                      )}
+                        {builderPalette.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const removeIdx = activeColorIdx;
+                              pushTraceUndo();
+                              setBuilderPalette((p) => p.filter((_, i) => i !== removeIdx));
+                              setBuilderGrid((g) =>
+                                g.map((v) => (v === removeIdx ? -1 : v > removeIdx ? v - 1 : v)),
+                              );
+                              setActiveColorIdx(Math.max(0, removeIdx - 1));
+                            }}
+                            className="text-muted hover:text-crimson"
+                          >
+                            Remove Swatch
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -36,6 +36,22 @@ export interface AppendTilesResult {
   tileIndices: number[];
 }
 
+const CHROMA_MAX_RGB_DIST = 360;
+
+/**
+ * Parses a `#rrggbb` or `rrggbb` hex string into RGB channels.
+ */
+export function parseHexColor(hex: string): { r: number; g: number; b: number } | null {
+  const clean = hex.trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return null;
+  const num = parseInt(clean, 16);
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255,
+  };
+}
+
 /**
  * Applies chroma-key transparency (e.g. background cloth / white linen removal)
  * and optional pixelation to an ImageData buffer.
@@ -49,8 +65,7 @@ export function processTilePixels(
 
   if (chromaKey) {
     const { r: kr, g: kg, b: kb, tolerance } = chromaKey;
-    // Map tolerance 0..100 to max Euclidean RGB distance (~0..441)
-    const maxDist = (tolerance / 100) * 360;
+    const maxDist = (tolerance / 100) * CHROMA_MAX_RGB_DIST;
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
       const g = data[i + 1];
@@ -63,6 +78,48 @@ export function processTilePixels(
   }
 
   return imgData;
+}
+
+/**
+ * Knocks out any palette swatches within `chromaKey.tolerance` of the target key
+ * color from an indexed pixel grid (setting matching cells to `-1` transparent)
+ * and compacts the surviving palette without altering unmatched swatches.
+ */
+export function applyChromaKeyToPixelGrid(
+  grid: number[],
+  palette: string[],
+  chromaKey: ChromaKeyFilter,
+): { grid: number[]; palette: string[]; removedCells: number; removedSwatches: number } {
+  const maxDist = (chromaKey.tolerance / 100) * CHROMA_MAX_RGB_DIST;
+  const remap = new Array<number>(palette.length).fill(-1);
+  const nextPalette: string[] = [];
+  let removedSwatches = 0;
+
+  for (let i = 0; i < palette.length; i++) {
+    const rgb = parseHexColor(palette[i]);
+    if (rgb && Math.hypot(rgb.r - chromaKey.r, rgb.g - chromaKey.g, rgb.b - chromaKey.b) <= maxDist) {
+      remap[i] = -1;
+      removedSwatches++;
+    } else {
+      remap[i] = nextPalette.length;
+      nextPalette.push(palette[i]);
+    }
+  }
+
+  let removedCells = 0;
+  const nextGrid = grid.map((val) => {
+    if (val < 0 || val >= remap.length) return -1;
+    const mapped = remap[val];
+    if (mapped < 0) removedCells++;
+    return mapped;
+  });
+
+  return {
+    grid: nextGrid,
+    palette: nextPalette,
+    removedCells,
+    removedSwatches,
+  };
 }
 
 /**

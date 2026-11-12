@@ -41,10 +41,12 @@ import {
 } from '../spriteGenerator';
 import {
   appendTilesToTileset,
+  applyChromaKeyToPixelGrid,
   createMacroStampFromIndices,
   detectMotifRegions,
   floodFillTransparent,
   getOpaqueBounds,
+  parseHexColor,
   processTilePixels,
   quantizeAndRebuildPixelGrid,
   removeEdgeBackground,
@@ -1305,5 +1307,18 @@ describe('SeloAI core engine', () => {
     expect(rebuilt.palette.length).toBe(2);
     expect(rebuilt.proceduralCode).toContain('export function drawShevitsaPair(');
     expect(rebuilt.proceduralCode).toContain('ctx.fillRect(');
+
+    // Apply chroma-key transparency directly to indexed pattern layer & palette
+    const bgRgb = parseHexColor('#fafdf4')!;
+    expect(bgRgb).toEqual({ r: 250, g: 253, b: 244 });
+    const keyed = applyChromaKeyToPixelGrid(
+      [0, 1, 2, 0, -1, 1],
+      ['#fafdf4', '#be1e2d', '#f5f8ee'],
+      { ...bgRgb, tolerance: 10 },
+    );
+    expect(keyed.palette).toEqual(['#be1e2d']);
+    expect(keyed.grid).toEqual([-1, 0, -1, -1, -1, 0]);
+    expect(keyed.removedCells).toBe(3);
+    expect(keyed.removedSwatches).toBe(2);
   });
 });
