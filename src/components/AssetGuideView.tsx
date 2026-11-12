@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
+import { omniEngine } from '../ai/omniEngine';
 import { resolvePublicUrl } from '../utils/assetUrl';
 
 interface PromptTemplate {
@@ -135,7 +136,18 @@ export const AssetGuideView: React.FC = () => {
     const userPrompt = `Create a SeloAI villager JSON for: ${genConcept.trim()}`;
 
     try {
-      if (brainRouter.isTextModelReady()) {
+      if (omniEngine.isReady()) {
+        const res = await omniEngine.generateChatReply({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          voice: false,
+          maxNewTokens: 200,
+          onTextChunk: (c) => setGenOutput((p) => p + c),
+        });
+        setGenOutput(res.text);
+      } else if (brainRouter.isTextModelReady()) {
         const res = await brainRouter.generateText(
           [
             { role: 'system', content: systemPrompt },
@@ -344,7 +356,13 @@ export const AssetGuideView: React.FC = () => {
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-ochre" />
               <h2 className="text-sm font-bold">
-                Quick Villager JSON Generator ({brainRouter.isTextModelReady() ? 'LFM3-1.7B WebGPU' : 'Schema Preview'})
+                Quick Villager JSON Generator (
+                {omniEngine.isReady()
+                  ? 'LFM3-Omni WebGPU'
+                  : brainRouter.isTextModelReady()
+                    ? 'LFM3-1.7B WebGPU'
+                    : 'Schema Preview'}
+                )
               </h2>
             </div>
           </div>

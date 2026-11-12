@@ -147,9 +147,14 @@ describe('SeloAI core engine', () => {
     });
   });
 
-  it('includes LFM3-Omni all-in-one, Bonsai-2 27B at the bottom, and webml-community WebGPU brain presets', () => {
+  it('sets LFM3-Omni all-in-one as first choice, keeps Bonsai-2 27B at the bottom, and includes webml-community WebGPU brain presets', () => {
+    expect(WEBGPU_BRAIN_PRESETS[0].id).toBe('lfm3-omni-allinone');
+    expect(WEBGPU_BRAIN_PRESETS[0].engine).toBe('lfm3-omni');
+    expect(DEFAULT_MODEL_SETTINGS.brainEngine).toBe('lfm3-omni');
+
     const ids = WEBGPU_BRAIN_PRESETS.map((p) => p.id);
     expect(ids).toContain('lfm3-omni-allinone');
+    expect(ids).toContain('lfm3-1.7b-local');
     expect(ids).toContain('qwen3.5-0.8b-text');
     expect(ids).toContain('ternary-bonsai-1.7b');
     expect(ids).toContain('bonsai-1.7b-q1');

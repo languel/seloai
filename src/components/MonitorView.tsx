@@ -336,7 +336,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
             </div>
           </div>
           <div className="rushnyk-card rounded-sm p-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted">LFM3-1.7B Speed</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted">Active Brain Speed</div>
             <div className="mt-1 font-mono text-lg font-bold text-indigoFolk">
               {brainRouter.lastMetrics.avgTokensPerSec || '—'}{' '}
               <span className="text-xs font-normal text-muted">tok/s</span>
@@ -395,11 +395,9 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                     textModelId: preset.engine === 'lfm3-omni' ? settings.textModelId : preset.modelId,
                     textDtype: preset.dtype,
                     inferenceMode:
-                      preset.engine === 'lfm3-omni'
-                        ? 'lfm3-omni-brain'
-                        : settings.inferenceMode === 'lfm3-omni-brain'
-                          ? 'auto'
-                          : settings.inferenceMode,
+                      preset.engine !== 'lfm3-omni' && settings.inferenceMode === 'lfm3-omni-brain'
+                        ? 'auto'
+                        : settings.inferenceMode,
                   });
                 }}
                 className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
@@ -420,7 +418,17 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               </p>
             </div>
 
-            {settings.brainEngine !== 'lfm3-omni' && (
+            {settings.brainEngine === 'lfm3-omni' ? (
+              <div className="rounded border border-borderFolk bg-surface/60 p-2 text-xs space-y-1">
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="font-semibold text-indigoFolk">First-Choice Unified Brain</span>
+                  <span className="font-mono text-muted truncate">{settings.omniModelId}</span>
+                </div>
+                <p className="text-[11px] text-muted">
+                  Uses LFM3-Omni-2B for NPC thinking, conversations, Scribe narration, reflections, and optional TTS voice synthesis.
+                </p>
+              </div>
+            ) : (
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_110px] gap-2">
                 <div>
                   <label htmlFor="text-model-id" className="block text-[11px] font-medium text-muted mb-1">

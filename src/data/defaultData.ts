@@ -38,6 +38,15 @@ export interface BrainPreset {
 
 export const WEBGPU_BRAIN_PRESETS: BrainPreset[] = [
   {
+    id: 'lfm3-omni-allinone',
+    label: 'Liquid LFM3-Omni-2B (All-in-One Brain + Voice)',
+    engine: 'lfm3-omni',
+    modelId: 'LiquidAI/LFM3-Omni-2B-GGUF',
+    dtype: 'q4f16',
+    sizeNote: '~1.6 GB (Downloaded, shared)',
+    description: 'First-choice WebGPU model for NPC thinking, conversations, STT & TTS — saves ~1.1 GB VRAM.',
+  },
+  {
     id: 'lfm3-1.7b-local',
     label: 'Liquid LFM3-1.7B (ONNX · Local)',
     engine: 'transformers-onnx',
@@ -45,15 +54,6 @@ export const WEBGPU_BRAIN_PRESETS: BrainPreset[] = [
     dtype: 'q4f16',
     sizeNote: '~1.1 GB (Downloaded)',
     description: 'Tri-hybrid local agent model served from public/models/.',
-  },
-  {
-    id: 'lfm3-omni-allinone',
-    label: 'Liquid LFM3-Omni-2B (All-in-One Brain + Voice)',
-    engine: 'lfm3-omni',
-    modelId: 'LiquidAI/LFM3-Omni-2B-GGUF',
-    dtype: 'q4f16',
-    sizeNote: '~1.6 GB (Downloaded, shared)',
-    description: 'Single WebGPU model for NPC thinking, conversations, STT & TTS — saves ~1.1 GB VRAM.',
   },
   {
     id: 'qwen3.5-0.8b-text',
@@ -448,7 +448,7 @@ export const IMAGE_GEN_PRESETS: Array<{
 ];
 
 export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
-  brainEngine: 'transformers-onnx',
+  brainEngine: 'lfm3-omni',
   textModelId: 'onnx-community/LFM3-1.7B-ONNX',
   textDtype: 'q4f16',
   omniModelId: 'LiquidAI/LFM3-Omni-2B-GGUF',

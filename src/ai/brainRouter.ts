@@ -434,10 +434,11 @@ class BrainRouter {
       });
     }
 
-    // 1. LFM3-Omni-2B as All-in-One Village Brain (when selected or when it's the only WebGPU model loaded)
+    // 1. LFM3-Omni-2B as All-in-One Village Brain (first-choice when selected or when it's the only WebGPU model loaded)
     const preferOmniBrain =
       settings.inferenceMode === 'lfm3-omni-brain' ||
-      (settings.inferenceMode === 'auto' && settings.brainEngine === 'lfm3-omni') ||
+      ((settings.inferenceMode === 'auto' || settings.inferenceMode === 'strict-webgpu') &&
+        settings.brainEngine === 'lfm3-omni') ||
       (settings.inferenceMode === 'auto' &&
         !this.isTextModelReady() &&
         !minicpmEngine.isReady() &&
@@ -545,7 +546,10 @@ class BrainRouter {
           runtime.recentUtterances = pushRing(runtime.recentUtterances, omniResult.text);
           return omniResult;
         }
-      } else if (settings.inferenceMode === 'lfm3-omni-brain') {
+      } else if (
+        settings.inferenceMode === 'lfm3-omni-brain' ||
+        (settings.inferenceMode === 'strict-webgpu' && settings.brainEngine === 'lfm3-omni')
+      ) {
         throw new Error('LFM3-Omni Brain mode selected, but LFM3-Omni-2B is not loaded yet.');
       }
     }
@@ -618,7 +622,7 @@ class BrainRouter {
     if (settings.inferenceMode === 'story-sim') return null;
 
     if (
-      opts.allowOmniFallback &&
+      opts.allowOmniFallback !== false &&
       (settings.inferenceMode === 'lfm3-omni-brain' ||
         settings.brainEngine === 'lfm3-omni' ||
         (!this.isTextModelReady() && !minicpmEngine.isReady() && !bonsaiEngine.isReady())) &&
@@ -636,6 +640,16 @@ class BrainRouter {
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
         this.lastMetrics.totalCalls += 1;
+        if (opts.logLabel) {
+          this.log({
+            channel: 'lfm3-omni',
+            level: 'success',
+            title: `${opts.logLabel} (Omni Brain)`,
+            detail: cleanText,
+            durationMs: res.durationMs,
+            tokensPerSec: res.tokensPerSec,
+          });
+        }
         return { text: cleanText, source: 'lfm3-omni', durationMs: res.durationMs };
       } catch (err: any) {
         if (settings.inferenceMode === 'lfm3-omni-brain' || settings.inferenceMode === 'strict-webgpu') {
