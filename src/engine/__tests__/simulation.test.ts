@@ -39,13 +39,19 @@ import {
   SPRITE_SHEET_HEIGHT,
   SPRITE_SHEET_WIDTH,
 } from '../spriteGenerator';
+import { SEGMENTATION_MODEL_PRESETS } from '../../ai/segmentationClient';
 import {
   appendTilesToTileset,
   applyChromaKeyToPixelGrid,
   applyMacroStampToMap,
+  computeAspectPreservingFootprint,
+  computeSalientSeedPoints,
   createBlankTilesetDataUrl,
   createMacroStampFromIndices,
   detectMotifRegions,
+  detectSalientMotifRegions,
+  extractRegionsFromMatte,
+  filterMaskCandidatesNMS,
   findNearestPaletteIndex,
   findOpenSlotForOutputBox,
   floodFillTransparent,
@@ -1619,5 +1625,143 @@ describe('SeloAI core engine', () => {
     const mcpCompose = JSON.parse(mcpResponses[3].result.content[0].text);
     expect(mcpCompose.ok).toBe(true);
     expect(mcpCompose.placedAt).toEqual({ x: 2, y: 3 });
+  });
+
+  it('auto-slices colorful motifs inside closed outline maps without merging into full-page boxes', () => {
+    const w = 240;
+    const h = 180;
+    const buf = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const o = i * 4;
+      buf[o] = 250;
+      buf[o + 1] = 248;
+      buf[o + 2] = 242;
+      buf[o + 3] = 255;
+    }
+
+    // Draw closed 2px grey border around entire interior (simulates map border that blocked removeEdgeBackground)
+    for (let x = 10; x <= 230; x++) {
+      for (const y of [10, 11, 168, 169]) {
+        const o = (y * w + x) * 4;
+        buf[o] = 192;
+        buf[o + 1] = 192;
+        buf[o + 2] = 190;
+      }
+    }
+    for (let y = 10; y < 170; y++) {
+      for (const x of [10, 11, 229, 230]) {
+        const o = (y * w + x) * 4;
+        buf[o] = 192;
+        buf[o + 1] = 192;
+        buf[o + 2] = 190;
+      }
+    }
+
+    const paintBlock = (bx: number, by: number, bw: number, bh: number, r: number, g: number, b: number) => {
+      for (let y = by; y < by + bh; y++) {
+        for (let x = bx; x < bx + bw; x++) {
+          const o = (y * w + x) * 4;
+          buf[o] = r;
+          buf[o + 1] = g;
+          buf[o + 2] = b;
+        }
+      }
+    };
+
+    // 3 distinct motifs inside the closed outline with varied aspect ratios
+    paintBlock(28, 28, 28, 28, 190, 30, 45); // Square crimson
+    paintBlock(110, 26, 72, 22, 34, 139, 74); // Wide emerald border banner
+    paintBlock(130, 88, 26, 60, 30, 64, 175); // Tall sapphire emblem
+
+    const imgData = { width: w, height: h, data: buf } as ImageData;
+    const regions = detectSalientMotifRegions(imgData, {
+      minSize: 12,
+      mergeGap: 4,
+      bgTolerance: 28,
+    });
+
+    // Must isolate individual motifs inside the closed map outline (not one 220x160 full-page box)
+    expect(regions.length).toBeGreaterThanOrEqual(3);
+    expect(regions.every((r) => r.w < 140 && r.h < 120)).toBe(true);
+    expect(regions.some((r) => r.w > r.h * 2)).toBe(true); // Wide banner preserved
+    expect(regions.some((r) => r.h > r.w * 1.6)).toBe(true); // Tall emblem preserved
+
+    const seeds = computeSalientSeedPoints(imgData, 12);
+    expect(seeds.length).toBeGreaterThan(0);
+    // Seeds must avoid outer cream paper corner (0,0)
+    expect(seeds.every((s) => s.x >= 8 && s.y >= 8)).toBe(true);
+  });
+
+  it('preserves crop aspect ratios, deduplicates overlapping masks with NMS, and exposes AI segmentation presets', () => {
+    const square = computeAspectPreservingFootprint(64, 64, 4, 4, 32, 16);
+    expect(square.outCols).toBe(square.outRows);
+    expect(square.gridWidth).toBe(square.gridHeight);
+
+    const wide = computeAspectPreservingFootprint(160, 40, 4, 4, 32, 16);
+    expect(wide.outCols).toBe(4);
+    expect(wide.outRows).toBe(1);
+    expect(wide.gridWidth / wide.gridHeight).toBe(4);
+
+    const tall = computeAspectPreservingFootprint(36, 120, 4, 4, 32, 16);
+    expect(tall.outRows).toBeGreaterThan(tall.outCols);
+    expect(tall.gridHeight).toBeGreaterThan(tall.gridWidth);
+
+    const mw = 40;
+    const mh = 40;
+    const maskA = new Uint8Array(mw * mh);
+    const maskB = new Uint8Array(mw * mh);
+    const maskC = new Uint8Array(mw * mh);
+    for (let y = 4; y < 16; y++) {
+      for (let x = 4; x < 16; x++) {
+        maskA[y * mw + x] = 255;
+        maskB[y * mw + x] = 255; // exact duplicate overlap
+      }
+    }
+    for (let y = 22; y < 34; y++) {
+      for (let x = 22; x < 34; x++) {
+        maskC[y * mw + x] = 255;
+      }
+    }
+
+    const deduped = filterMaskCandidatesNMS(
+      [
+        { crop: { x: 4, y: 4, w: 12, h: 12 }, mask: maskA, score: 0.92, label: 'Motif A' },
+        { crop: { x: 4, y: 4, w: 12, h: 12 }, mask: maskB, score: 0.71, label: 'Dup A' },
+        { crop: { x: 22, y: 22, w: 12, h: 12 }, mask: maskC, score: 0.85, label: 'Motif C' },
+      ],
+      mw,
+      mh,
+      0.55,
+      6,
+    );
+    expect(deduped).toHaveLength(2);
+    expect(deduped.map((d) => d.label)).toEqual(['Motif A', 'Motif C']);
+
+    const mergedMatte = new Uint8Array(mw * mh);
+    for (let i = 0; i < mw * mh; i++) {
+      mergedMatte[i] = Math.max(maskA[i], maskC[i]);
+    }
+    const extracted = extractRegionsFromMatte(mergedMatte, mw, mh, {
+      minSize: 6,
+      mergeGap: 2,
+      matteThreshold: 112,
+    });
+    expect(extracted).toHaveLength(2);
+    expect(extracted[0].crop).toEqual({ x: 4, y: 4, w: 12, h: 12 });
+    expect(extracted[1].crop).toEqual({ x: 22, y: 22, w: 12, h: 12 });
+
+    expect(SEGMENTATION_MODEL_PRESETS.map((p) => p.id)).toEqual([
+      'contrast-fast',
+      'edgetam',
+      'sam2-tiny',
+      'sam3-tracker',
+      'grounding-dino',
+      'yolos-tiny',
+      'ormbg',
+    ]);
+    expect(SEGMENTATION_MODEL_PRESETS.find((p) => p.id === 'edgetam')?.supportsClickPrompt).toBe(true);
+    expect(SEGMENTATION_MODEL_PRESETS.find((p) => p.id === 'sam3-tracker')?.repoId).toBe(
+      'onnx-community/sam3-tracker-ONNX',
+    );
   });
 });

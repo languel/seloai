@@ -18,6 +18,11 @@ export interface SliceOptions {
   chromaKey?: ChromaKeyFilter | null;
   pixelate?: boolean;
   trimAndFit?: boolean;
+  mask?: Uint8Array | null;
+  maskWidth?: number;
+  maskHeight?: number;
+  outCols?: number;
+  outRows?: number;
 }
 
 export interface SlicedTileResult {
@@ -395,17 +400,17 @@ export interface AutoSliceOptions {
  * pixel islands in an ImageData buffer, merging nearby fragments within `mergeGap`
  * pixels and filtering out specks smaller than `minSize`.
  */
-export function detectMotifRegions(
-  imgData: ImageData,
-  options: AutoSliceOptions = {},
+/**
+ * Connected-component bounding box extractor on a binary 0/1 mask with `mergeGap`
+ * merging, `minSize` filtering, and reading-order sorting.
+ */
+function connectedBoxesFromMask(
+  fgMask: Uint8Array,
+  width: number,
+  height: number,
+  mergeGap: number,
+  minSize: number,
 ): CropSelection[] {
-  const { width, height, data } = imgData;
-  if (width <= 0 || height <= 0) return [];
-
-  const minSize = options.minSize ?? 8;
-  const mergeGap = options.mergeGap ?? 6;
-  const alphaThreshold = options.alphaThreshold ?? 0;
-
   const total = width * height;
   const visited = new Uint8Array(total);
   const queue = new Int32Array(total);
@@ -414,8 +419,7 @@ export function detectMotifRegions(
   for (let startY = 0; startY < height; startY++) {
     for (let startX = 0; startX < width; startX++) {
       const startIdx = startY * width + startX;
-      if (visited[startIdx]) continue;
-      if (data[startIdx * 4 + 3] <= alphaThreshold) continue;
+      if (visited[startIdx] || fgMask[startIdx] === 0) continue;
 
       let head = 0;
       let tail = 0;
@@ -448,7 +452,7 @@ export function detectMotifRegions(
             const nIdx = ny * width + nx;
             if (visited[nIdx]) continue;
             visited[nIdx] = 1;
-            if (data[nIdx * 4 + 3] > alphaThreshold) {
+            if (fgMask[nIdx] > 0) {
               queue[tail++] = nIdx;
             }
           }
@@ -459,7 +463,6 @@ export function detectMotifRegions(
     }
   }
 
-  // Merge boxes whose expanded bounds (by mergeGap) intersect
   let boxes = rawBoxes.slice();
   let mergedAny = true;
   while (mergedAny) {
@@ -511,7 +514,6 @@ export function detectMotifRegions(
     }))
     .filter((r) => r.w >= minSize && r.h >= minSize);
 
-  // Sort in reading order (banded rows, then left-to-right)
   regions.sort((a, b) => {
     const rowA = Math.floor(a.y / 32);
     const rowB = Math.floor(b.y / 32);
@@ -520,6 +522,24 @@ export function detectMotifRegions(
   });
 
   return regions;
+}
+
+export function detectMotifRegions(
+  imgData: ImageData,
+  options: AutoSliceOptions = {},
+): CropSelection[] {
+  const { width, height, data } = imgData;
+  if (width <= 0 || height <= 0) return [];
+
+  const minSize = options.minSize ?? 8;
+  const mergeGap = options.mergeGap ?? 6;
+  const alphaThreshold = options.alphaThreshold ?? 0;
+
+  const fgMask = new Uint8Array(width * height);
+  for (let i = 0; i < fgMask.length; i++) {
+    fgMask[i] = data[i * 4 + 3] > alphaThreshold ? 1 : 0;
+  }
+  return connectedBoxesFromMask(fgMask, width, height, mergeGap, minSize);
 }
 
 export interface CrispPixelArtOptions {
@@ -533,10 +553,14 @@ export interface CrispPixelArtOptions {
   outCols?: number;
   /** Optional explicit output tile rows. */
   outRows?: number;
-  /** Maximum number of palette colors to quantize to (2..32). */
+  /** Maximum number of palette colors to quantize to (2..48). */
   maxColors?: number;
   /** Optional function name for generated procedural code. */
   fnName?: string;
+  /** Optional segmentation mask (binary/alpha per pixel of source image or crop) to isolate the motif cleanly. */
+  mask?: Uint8Array | null;
+  maskWidth?: number;
+  maskHeight?: number;
 }
 
 export interface CrispPixelArtResult {
@@ -853,6 +877,35 @@ export function renderPixelGridToCanvases(
  * Rebuilds a selected crop from a source image/canvas as crisp quantized pixel art,
  * returning both tileable stamp canvases and procedural Canvas2D TypeScript code.
  */
+function applySegmentationMaskToCropData(
+  cropData: ImageData,
+  mask: Uint8Array,
+  sx: number,
+  sy: number,
+  maskWidth: number,
+  maskHeight: number,
+): void {
+  const { width: cw, height: ch, data } = cropData;
+  const fullImageMask = mask.length >= maskWidth * maskHeight && (maskWidth !== cw || maskHeight !== ch);
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      let mVal = 0;
+      if (fullImageMask) {
+        const mx = sx + x;
+        const my = sy + y;
+        if (mx >= 0 && mx < maskWidth && my >= 0 && my < maskHeight) {
+          mVal = mask[my * maskWidth + mx];
+        }
+      } else if (mask.length >= cw * ch) {
+        mVal = mask[y * cw + x];
+      }
+      if (mVal === 0) {
+        data[(y * cw + x) * 4 + 3] = 0;
+      }
+    }
+  }
+}
+
 export function rebuildCrispPixelArt(
   source: CanvasImageSource,
   sourceW: number,
@@ -866,7 +919,7 @@ export function rebuildCrispPixelArt(
   const pixelsPerTile = Math.max(8, Math.min(tileDim, options.pixelsPerTile ?? 16));
   const gridW = Math.max(4, Math.min(128, options.gridWidth ?? cols * pixelsPerTile));
   const gridH = Math.max(4, Math.min(128, options.gridHeight ?? rows * pixelsPerTile));
-  const maxColors = Math.max(2, Math.min(32, options.maxColors ?? 10));
+  const maxColors = Math.max(2, Math.min(48, options.maxColors ?? 10));
   const fnName = options.fnName ?? 'drawMotif';
 
   if (typeof document === 'undefined') {
@@ -899,9 +952,21 @@ export function rebuildCrispPixelArt(
 
   rawCtx.imageSmoothingEnabled = false;
   rawCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
-  if (options.chromaKey) {
+  if (options.mask || options.chromaKey) {
     const d = rawCtx.getImageData(0, 0, sw, sh);
-    processTilePixels(d, { chromaKey: options.chromaKey });
+    if (options.mask) {
+      applySegmentationMaskToCropData(
+        d,
+        options.mask,
+        sx,
+        sy,
+        options.maskWidth ?? sourceW,
+        options.maskHeight ?? sourceH,
+      );
+    }
+    if (options.chromaKey) {
+      processTilePixels(d, { chromaKey: options.chromaKey });
+    }
     rawCtx.putImageData(d, 0, 0);
   }
 
@@ -995,15 +1060,15 @@ export function sliceSelectionToTiles(
     // Headless test fallback
     return {
       canvases: [],
-      cols: Math.max(1, Math.round(crop.w / tileDim)),
-      rows: Math.max(1, Math.round(crop.h / tileDim)),
+      cols: Math.max(1, options.outCols ?? Math.round(crop.w / tileDim)),
+      rows: Math.max(1, options.outRows ?? Math.round(crop.h / tileDim)),
       tileDim,
       previewDataUrl: 'data:image/png;base64,mockPreview',
     };
   }
 
-  const cols = Math.max(1, Math.round(crop.w / tileDim));
-  const rows = Math.max(1, Math.round(crop.h / tileDim));
+  const cols = Math.max(1, options.outCols ?? Math.round(crop.w / tileDim));
+  const rows = Math.max(1, options.outRows ?? Math.round(crop.h / tileDim));
   const targetW = cols * tileDim;
   const targetH = rows * tileDim;
 
@@ -1021,7 +1086,7 @@ export function sliceSelectionToTiles(
     throw new Error('Canvas 2D context not available');
   }
 
-  if (options.trimAndFit) {
+  if (options.trimAndFit || options.mask) {
     const rawCanvas = document.createElement('canvas');
     rawCanvas.width = sw;
     rawCanvas.height = sh;
@@ -1029,13 +1094,25 @@ export function sliceSelectionToTiles(
     if (rawCtx) {
       rawCtx.imageSmoothingEnabled = false;
       rawCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
-      if (options.chromaKey) {
+      if (options.mask || options.chromaKey) {
         const rawData = rawCtx.getImageData(0, 0, sw, sh);
-        processTilePixels(rawData, options);
+        if (options.mask) {
+          applySegmentationMaskToCropData(
+            rawData,
+            options.mask,
+            sx,
+            sy,
+            options.maskWidth ?? sourceW,
+            options.maskHeight ?? sourceH,
+          );
+        }
+        if (options.chromaKey) {
+          processTilePixels(rawData, options);
+        }
         rawCtx.putImageData(rawData, 0, 0);
       }
       const rawData = rawCtx.getImageData(0, 0, sw, sh);
-      const bounds = getOpaqueBounds(rawData);
+      const bounds = options.trimAndFit ? getOpaqueBounds(rawData) : null;
       const bx = bounds ? bounds.x : 0;
       const by = bounds ? bounds.y : 0;
       const bw = bounds ? bounds.w : sw;
@@ -1780,4 +1857,429 @@ export function applyMacroStampToMap(
     objectTiles: nextObj,
     collisionGrid: nextCol,
   };
+}
+
+/**
+ * Computes an aspect-ratio-preserving tile footprint `(outCols, outRows)` bounded by
+ * `maxSpanCols x maxSpanRows` plus crisp sampling grid dimensions `(gridWidth, gridHeight)`.
+ * Prevents oversized crops from wrapping awkwardly across narrow tilesets.
+ */
+export function computeAspectPreservingFootprint(
+  cropW: number,
+  cropH: number,
+  maxSpanCols: number = 4,
+  maxSpanRows: number = 4,
+  tileDim: number = 32,
+  pixelsPerTile: number = 16,
+): { outCols: number; outRows: number; gridWidth: number; gridHeight: number } {
+  const safeW = Math.max(1, cropW);
+  const safeH = Math.max(1, cropH);
+  const maxC = Math.max(1, Math.min(8, maxSpanCols));
+  const maxR = Math.max(1, Math.min(8, maxSpanRows));
+  const aspect = safeW / safeH;
+
+  let rawC = safeW / Math.max(1, tileDim);
+  let rawR = safeH / Math.max(1, tileDim);
+  const scaleDown = Math.min(1, maxC / Math.max(1e-3, rawC), maxR / Math.max(1e-3, rawR));
+  rawC *= scaleDown;
+  rawR *= scaleDown;
+
+  let bestCols = 1;
+  let bestRows = 1;
+  let bestScore = Infinity;
+  for (let c = 1; c <= maxC; c++) {
+    for (let r = 1; r <= maxR; r++) {
+      const candidateAspect = c / r;
+      const aspectErr = Math.abs(Math.log(candidateAspect / aspect));
+      const scaleErr = Math.hypot(c - rawC, r - rawR) * 0.08;
+      const score = aspectErr + scaleErr;
+      if (score < bestScore) {
+        bestScore = score;
+        bestCols = c;
+        bestRows = r;
+      }
+    }
+  }
+
+  const ppt = Math.max(8, Math.min(32, pixelsPerTile));
+  const targetMaxPx = Math.max(bestCols, bestRows) * ppt;
+  let gridWidth: number;
+  let gridHeight: number;
+  if (aspect >= 1) {
+    gridWidth = Math.max(8, Math.min(128, Math.round(targetMaxPx)));
+    gridHeight = Math.max(8, Math.min(128, Math.round(gridWidth / aspect)));
+  } else {
+    gridHeight = Math.max(8, Math.min(128, Math.round(targetMaxPx)));
+    gridWidth = Math.max(8, Math.min(128, Math.round(gridHeight * aspect)));
+  }
+
+  return { outCols: bestCols, outRows: bestRows, gridWidth, gridHeight };
+}
+
+/**
+ * Estimates the global modal paper/linen background color of `imgData` using a sampled 4-bit
+ * RGB histogram (plus border weight) and returns RGB + alpha transparency statistics.
+ */
+function estimateGlobalBackgroundStats(imgData: ImageData): {
+  r: number;
+  g: number;
+  b: number;
+  transparentFraction: number;
+} {
+  const { width, height, data } = imgData;
+  const stepX = Math.max(1, Math.floor(width / 48));
+  const stepY = Math.max(1, Math.floor(height / 48));
+  const bins = new Map<number, { score: number; count: number; r: number; g: number; b: number }>();
+  let totalSampled = 0;
+  let transparentCount = 0;
+
+  for (let y = 0; y < height; y += stepY) {
+    const onBorderY = y < height * 0.08 || y > height * 0.92;
+    for (let x = 0; x < width; x += stepX) {
+      totalSampled++;
+      const p = (y * width + x) * 4;
+      if (data[p + 3] <= 24) {
+        transparentCount++;
+        continue;
+      }
+      const onBorder = onBorderY || x < width * 0.08 || x > width * 0.92;
+      const r = data[p];
+      const g = data[p + 1];
+      const b = data[p + 2];
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+      // Slight bias toward border pixels & neutral tones so vivid motifs don't win the background vote
+      const weight = (onBorder ? 2.0 : 1.0) * (chroma < 25 ? 1.5 : 0.7);
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const entry = bins.get(key);
+      if (entry) {
+        entry.score += weight;
+        entry.count++;
+        entry.r += r;
+        entry.g += g;
+        entry.b += b;
+      } else {
+        bins.set(key, { score: weight, count: 1, r, g, b });
+      }
+    }
+  }
+
+  let best: { score: number; count: number; r: number; g: number; b: number } | null = null;
+  for (const entry of bins.values()) {
+    if (!best || entry.score > best.score) best = entry;
+  }
+
+  return {
+    r: best ? Math.round(best.r / best.count) : 255,
+    g: best ? Math.round(best.g / best.count) : 255,
+    b: best ? Math.round(best.b / best.count) : 255,
+    transparentFraction: totalSampled > 0 ? transparentCount / totalSampled : 0,
+  };
+}
+
+/**
+ * Deterministic background-aware Auto-Slicer: separates motifs even when the input image
+ * has opaque interior white/linen paper enclosed by thin map/frame contours or JPEG noise.
+ */
+export function detectSalientMotifRegions(
+  imgData: ImageData,
+  options: AutoSliceOptions & { bgTolerance?: number; suppressThinLines?: boolean } = {},
+): CropSelection[] {
+  const { width, height, data } = imgData;
+  if (width <= 0 || height <= 0) return [];
+
+  const minSize = options.minSize ?? 10;
+  const mergeGap = options.mergeGap ?? 6;
+  const alphaThreshold = options.alphaThreshold ?? 12;
+  const bgStats = estimateGlobalBackgroundStats(imgData);
+
+  // If image already has a real transparent background and does NOT collapse into one giant frame,
+  // respect exact alpha components first.
+  if (bgStats.transparentFraction >= 0.15) {
+    const alphaBoxes = detectMotifRegions(imgData, { minSize, mergeGap, alphaThreshold });
+    const hasGiantBox = alphaBoxes.some((b) => b.w > width * 0.75 && b.h > height * 0.75);
+    if (alphaBoxes.length >= 2 && !hasGiantBox) {
+      return alphaBoxes;
+    }
+  }
+
+  const distThresh = Math.max(18, Math.min(120, options.bgTolerance ?? 36));
+  const rawFg = new Uint8Array(width * height);
+  const pixelChroma = new Uint8Array(width * height);
+
+  for (let i = 0; i < rawFg.length; i++) {
+    const p = i * 4;
+    if (data[p + 3] <= alphaThreshold) continue;
+    const r = data[p];
+    const g = data[p + 1];
+    const b = data[p + 2];
+    const dr = r - bgStats.r;
+    const dg = g - bgStats.g;
+    const db = b - bgStats.b;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    pixelChroma[i] = chroma;
+    if (dist >= distThresh) {
+      rawFg[i] = 1;
+    }
+  }
+
+  // 1) Break 1-2px pale monotone outline bridges & contours via strict 3x3 interior check
+  // while preserving vivid chromatic embroidery/ink stitches (chroma >= 26) intact.
+  const cleanedFg = options.suppressThinLines === false ? rawFg : new Uint8Array(rawFg.length);
+  if (options.suppressThinLines !== false) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
+        if (rawFg[idx] === 0) continue;
+        if (pixelChroma[idx] >= 26) {
+          cleanedFg[idx] = 1;
+          continue;
+        }
+        let allNine = true;
+        for (let dy = -1; dy <= 1 && allNine; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= height) {
+            allNine = false;
+            break;
+          }
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= width || rawFg[ny * width + nx] === 0) {
+              allNine = false;
+              break;
+            }
+          }
+        }
+        if (allNine) {
+          cleanedFg[idx] = 1;
+        }
+      }
+    }
+  }
+
+  // 2) Strip giant hollow border/frame components (e.g. 3-8px country outline / decorative frame
+  // spanning >40% of width & height with <24% fill density) BEFORE bounding-box merging.
+  const visited = new Uint8Array(cleanedFg.length);
+  const stack: number[] = [];
+  const compPixels: number[] = [];
+  for (let i = 0; i < cleanedFg.length; i++) {
+    if (cleanedFg[i] === 0 || visited[i]) continue;
+    visited[i] = 1;
+    stack.length = 0;
+    compPixels.length = 0;
+    stack.push(i);
+    let minX = i % width;
+    let maxX = minX;
+    let minY = (i - minX) / width;
+    let maxY = minY;
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      compPixels.push(cur);
+      const cx = cur % width;
+      const cy = (cur - cx) / width;
+      if (cx < minX) minX = cx;
+      if (cx > maxX) maxX = cx;
+      if (cy < minY) minY = cy;
+      if (cy > maxY) maxY = cy;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = cy + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = cx + dx;
+          if (nx < 0 || nx >= width) continue;
+          const nIdx = ny * width + nx;
+          if (cleanedFg[nIdx] && !visited[nIdx]) {
+            visited[nIdx] = 1;
+            stack.push(nIdx);
+          }
+        }
+      }
+    }
+    const bw = maxX - minX + 1;
+    const bh = maxY - minY + 1;
+    const density = compPixels.length / Math.max(1, bw * bh);
+    if (bw > width * 0.4 && bh > height * 0.4 && density < 0.24) {
+      for (const pIdx of compPixels) {
+        cleanedFg[pIdx] = 0;
+      }
+    }
+  }
+
+  const boxes = connectedBoxesFromMask(cleanedFg, width, height, mergeGap, minSize);
+  return boxes.filter((b) => !(b.w > width * 0.9 && b.h > height * 0.9) || boxes.length === 1);
+}
+
+/**
+ * Selects up to `maxSeeds` candidate `(x, y)` coordinates centered on foreground contrast/chroma
+ * peaks across the image, skipping flat background regions so SAM decoders run fast & accurately.
+ */
+export function computeSalientSeedPoints(
+  imgData: ImageData,
+  maxSeeds: number = 28,
+): Array<{ x: number; y: number; score: number }> {
+  const { width, height, data } = imgData;
+  if (width <= 0 || height <= 0) return [];
+
+  const bgStats = estimateGlobalBackgroundStats(imgData);
+  const gridCols = Math.max(4, Math.min(10, Math.round((maxSeeds * Math.max(1, width / height)) ** 0.5) + 2));
+  const gridRows = Math.max(4, Math.min(10, Math.round((maxSeeds * Math.max(1, height / width)) ** 0.5) + 2));
+  const cellW = width / gridCols;
+  const cellH = height / gridRows;
+  const rawSeeds: Array<{ x: number; y: number; score: number }> = [];
+
+  for (let gr = 0; gr < gridRows; gr++) {
+    for (let gc = 0; gc < gridCols; gc++) {
+      const x0 = Math.floor(gc * cellW);
+      const y0 = Math.floor(gr * cellH);
+      const x1 = Math.min(width, Math.floor((gc + 1) * cellW));
+      const y1 = Math.min(height, Math.floor((gr + 1) * cellH));
+
+      let sumW = 0;
+      let sumX = 0;
+      let sumY = 0;
+      let peakPx = 0;
+      const step = Math.max(1, Math.floor(Math.min(x1 - x0, y1 - y0) / 12));
+
+      for (let y = y0; y < y1; y += step) {
+        for (let x = x0; x < x1; x += step) {
+          const p = (y * width + x) * 4;
+          if (data[p + 3] <= 24) continue;
+          const r = data[p];
+          const g = data[p + 1];
+          const b = data[p + 2];
+          const dist = Math.hypot(r - bgStats.r, g - bgStats.g, b - bgStats.b);
+          if (dist < 28) continue;
+          const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+          const weight = dist + chroma * 0.7;
+          sumW += weight;
+          sumX += x * weight;
+          sumY += y * weight;
+          if (weight > peakPx) peakPx = weight;
+        }
+      }
+
+      if (sumW > 0 && peakPx >= 42) {
+        rawSeeds.push({
+          x: Math.max(0, Math.min(width - 1, Math.round(sumX / sumW))),
+          y: Math.max(0, Math.min(height - 1, Math.round(sumY / sumW))),
+          score: peakPx,
+        });
+      }
+    }
+  }
+
+  rawSeeds.sort((a, b) => b.score - a.score);
+  const minSpacing = Math.max(16, Math.min(width, height) * 0.06);
+  const chosen: typeof rawSeeds = [];
+  for (const s of rawSeeds) {
+    if (chosen.length >= maxSeeds) break;
+    const tooClose = chosen.some((c) => Math.hypot(c.x - s.x, c.y - s.y) < minSpacing);
+    if (!tooClose) chosen.push(s);
+  }
+  return chosen;
+}
+
+export interface SegmentedMaskCandidate {
+  crop: CropSelection;
+  mask: Uint8Array; // width = crop.w, height = crop.h (1 = foreground, 0 = background)
+  score: number;
+  label?: string;
+}
+
+/**
+ * Deduplicates candidate object masks / boxes from neural segmenters (EdgeTAM, SAM 2.1, SAM 3)
+ * using IoU non-maximum suppression, background-size rejection, and reading-order sort.
+ */
+export function filterMaskCandidatesNMS(
+  candidates: SegmentedMaskCandidate[],
+  imgWidth: number,
+  imgHeight: number,
+  iouThreshold: number = 0.55,
+  minSize: number = 10,
+): SegmentedMaskCandidate[] {
+  const imgArea = Math.max(1, imgWidth * imgHeight);
+  const filtered = candidates.filter((c) => {
+    if (c.crop.w < minSize || c.crop.h < minSize) return false;
+    const boxArea = c.crop.w * c.crop.h;
+    // Reject whole-canvas background/paper masks
+    if (boxArea > imgArea * 0.65) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => b.score - a.score);
+
+  const kept: SegmentedMaskCandidate[] = [];
+  for (const cand of filtered) {
+    const a = cand.crop;
+    let duplicate = false;
+    for (const prev of kept) {
+      const b = prev.crop;
+      const ix0 = Math.max(a.x, b.x);
+      const iy0 = Math.max(a.y, b.y);
+      const ix1 = Math.min(a.x + a.w, b.x + b.w);
+      const iy1 = Math.min(a.y + a.h, b.y + b.h);
+      if (ix1 > ix0 && iy1 > iy0) {
+        const inter = (ix1 - ix0) * (iy1 - iy0);
+        const areaA = a.w * a.h;
+        const areaB = b.w * b.h;
+        const union = areaA + areaB - inter;
+        const iou = union > 0 ? inter / union : 0;
+        const contain = inter / Math.max(1, Math.min(areaA, areaB));
+        if (iou >= iouThreshold || contain >= 0.85) {
+          duplicate = true;
+          break;
+        }
+      }
+    }
+    if (!duplicate) kept.push(cand);
+  }
+
+  kept.sort((a, b) => {
+    const rowA = Math.floor(a.crop.y / 32);
+    const rowB = Math.floor(b.crop.y / 32);
+    if (rowA !== rowB) return rowA - rowB;
+    return a.crop.x - b.crop.x;
+  });
+  return kept;
+}
+
+/**
+ * Extracts tight motif bounding boxes and per-box binary masks from a neural foreground matte
+ * (e.g. ORMBG alpha buffer of length `width * height` or RGBA buffer of length `width * height * 4`).
+ */
+export function extractRegionsFromMatte(
+  matteBuffer: Uint8Array,
+  width: number,
+  height: number,
+  options: AutoSliceOptions & { matteThreshold?: number } = {},
+): SegmentedMaskCandidate[] {
+  const thresh = options.matteThreshold ?? 128;
+  const minSize = options.minSize ?? 10;
+  const mergeGap = options.mergeGap ?? 6;
+  const total = width * height;
+  const isRgba = matteBuffer.length >= total * 4;
+  const fg = new Uint8Array(total);
+  for (let i = 0; i < total; i++) {
+    const alpha = isRgba ? matteBuffer[i * 4 + 3] : matteBuffer[i];
+    if (alpha >= thresh) fg[i] = 1;
+  }
+
+  const boxes = connectedBoxesFromMask(fg, width, height, mergeGap, minSize);
+  return boxes.map((crop) => {
+    const mask = new Uint8Array(crop.w * crop.h);
+    let fgPixels = 0;
+    for (let y = 0; y < crop.h; y++) {
+      for (let x = 0; x < crop.w; x++) {
+        const val = fg[(crop.y + y) * width + (crop.x + x)];
+        mask[y * crop.w + x] = val;
+        fgPixels += val;
+      }
+    }
+    return {
+      crop,
+      mask,
+      score: fgPixels / Math.max(1, crop.w * crop.h),
+    };
+  });
 }

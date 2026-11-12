@@ -43,7 +43,9 @@ import {
   applyChromaKeyToPixelGrid,
   convertTapestryToMap,
   createMacroStampFromIndices,
-  detectMotifRegions,
+  computeAspectPreservingFootprint,
+  computeSalientSeedPoints,
+  detectSalientMotifRegions,
   findFirstEmptyTileBlock,
   findOpenSlotForOutputBox,
   floodFillTransparent,
@@ -51,7 +53,6 @@ import {
   getOpaqueBounds,
   hitTestBoxAction,
   parseHexColor,
-  placeTilesInTilesetAt,
   processTilePixels,
   rebuildCrispPixelArt,
   remapTileIndicesInMap,
@@ -69,8 +70,15 @@ import {
 import type { TileMacroStamp, VillageMap } from '../engine/types';
 import { resolvePublicUrl } from '../utils/assetUrl';
 
+import {
+  SEGMENTATION_MODEL_PRESETS,
+  segmentationClient,
+  type SegmentationModelId,
+  type SegmentationStatus,
+} from '../ai/segmentationClient';
+
 type CanvasViewMode = 'create' | 'tileset';
-type CanvasTool = 'frame' | 'pencil' | 'eraser' | 'fill' | 'eyedropper' | 'wand' | 'pan';
+type CanvasTool = 'frame' | 'sam' | 'pencil' | 'eraser' | 'fill' | 'eyedropper' | 'wand' | 'pan';
 type TilesetTool = 'position' | 'move' | 'pencil' | 'eraser' | 'eyedropper' | 'pan';
 type ResizeHandle = BoxResizeHandle;
 type CropHoverAction = BoxHoverAction;
@@ -105,6 +113,9 @@ interface AutoSliceItem {
   id: number;
   crop: CropSelection;
   selected: boolean;
+  mask?: Uint8Array;
+  label?: string;
+  score?: number;
 }
 
 export interface SavedPatternEntry {
@@ -325,10 +336,26 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const [pickingChromaKey, setPickingChromaKey] = useState(false);
   const [bgVersion, setBgVersion] = useState(0);
 
-  // Auto-Slicer state
+  // Auto-Slicer & Neural Segmentation state
   const [autoSlices, setAutoSlices] = useState<AutoSliceItem[]>([]);
   const [sliceMergeGap, setSliceMergeGap] = useState(6);
   const [sliceMinSize, setSliceMinSize] = useState(10);
+  const [segModelId, setSegModelId] = useState<SegmentationModelId>('contrast-fast');
+  const [segPrompt, setSegPrompt] = useState(
+    'embroidery motif . ornament . pattern . house . cottage . tree . flower . emblem',
+  );
+  const [segScoreThresh, setSegScoreThresh] = useState(0.22);
+  const [segStatus, setSegStatus] = useState<SegmentationStatus>(() => segmentationClient.getStatus());
+  const [activeSegMask, setActiveSegMask] = useState<{
+    crop: CropSelection;
+    mask: Uint8Array;
+    sourceW: number;
+    sourceH: number;
+  } | null>(null);
+
+  useEffect(() => {
+    return segmentationClient.subscribeStatus(setSegStatus);
+  }, []);
 
   // Pixel Trace Layer state (lives directly on top of the active crop on the main canvas)
   const [builderW, setBuilderW] = useState<number>(16);
@@ -642,6 +669,25 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     };
   };
 
+  const getMaskIfMatchesCrop = (
+    targetCrop: CropSelection,
+    srcW: number,
+    srcH: number,
+  ): Uint8Array | undefined => {
+    if (!activeSegMask) return undefined;
+    if (
+      activeSegMask.sourceW === srcW &&
+      activeSegMask.sourceH === srcH &&
+      activeSegMask.crop.x === targetCrop.x &&
+      activeSegMask.crop.y === targetCrop.y &&
+      activeSegMask.crop.w === targetCrop.w &&
+      activeSegMask.crop.h === targetCrop.h
+    ) {
+      return activeSegMask.mask;
+    }
+    return undefined;
+  };
+
   const traceCropIntoLayer = (
     src: HTMLCanvasElement,
     srcW: number,
@@ -652,20 +698,33 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     maxColors: number,
     pushUndo: boolean = false,
     chromaOverride?: ChromaKeyFilter | null,
+    maskOverride?: Uint8Array | null,
+    outColsOverride?: number,
+    outRowsOverride?: number,
   ) => {
     if (targetCrop.w <= 0 || targetCrop.h <= 0) return;
     if (pushUndo) {
       pushTraceUndo();
     }
+    const resolvedOutCols = outColsOverride ?? builderOutCols;
+    const resolvedOutRows = outRowsOverride ?? builderOutRows;
+    const resolvedMask =
+      maskOverride !== undefined
+        ? maskOverride ?? undefined
+        : getMaskIfMatchesCrop(targetCrop, srcW, srcH);
+
     const res = rebuildCrispPixelArt(src, srcW, srcH, targetCrop, tileDim, {
       gridWidth: targetW,
       gridHeight: targetH,
-      outCols: builderOutCols,
-      outRows: builderOutRows,
+      outCols: resolvedOutCols,
+      outRows: resolvedOutRows,
       maxColors,
       fnName: stampName || 'Motif',
       chromaKey: chromaOverride !== undefined ? chromaOverride : getChromaFilter(),
       trimAndFit: false, // keep 1:1 geometric alignment directly over the reference crop!
+      mask: resolvedMask,
+      maskWidth: srcW,
+      maskHeight: srcH,
     });
     const nextPalette =
       res.palette.length > 0
@@ -676,6 +735,103 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setBuilderGrid(res.grid);
     setBuilderPalette(nextPalette);
     setActiveColorIdx((idx) => Math.max(0, Math.min(idx, nextPalette.length - 1)));
+  };
+
+  /** Computes an aspect-ratio-preserving tile footprint & pixel grid, then traces the crop + optional mask. */
+  const traceCropWithAspect = (
+    src: HTMLCanvasElement,
+    srcW: number,
+    srcH: number,
+    targetCrop: CropSelection,
+    mask?: Uint8Array | null,
+    maxColorsOverride?: number,
+  ) => {
+    const fp = computeAspectPreservingFootprint(
+      targetCrop.w,
+      targetCrop.h,
+      Math.min(4, Math.max(2, tilesetCols)),
+      4,
+      tileDim,
+      targetCrop.w > tileDim * 2 || targetCrop.h > tileDim * 2 ? 24 : 16,
+    );
+    setBuilderOutCols(fp.outCols);
+    setBuilderOutRows(fp.outRows);
+    setActiveSegMask(
+      mask
+        ? { crop: { ...targetCrop }, mask, sourceW: srcW, sourceH: srcH }
+        : null,
+    );
+    traceCropIntoLayer(
+      src,
+      srcW,
+      srcH,
+      targetCrop,
+      fp.gridWidth,
+      fp.gridHeight,
+      maxColorsOverride ?? maxTraceColors,
+      true,
+      undefined,
+      mask ?? null,
+      fp.outCols,
+      fp.outRows,
+    );
+    return fp;
+  };
+
+  /** Runs SAM point-to-segment (EdgeTAM / SAM 2.1 / SAM 3) at a clicked reference coordinate. */
+  const handleSamClickAt = async (x: number, y: number, positive: boolean = true) => {
+    if (!sourceImg) return;
+    const ctx = sourceImg.getContext('2d');
+    if (!ctx) return;
+
+    const currentPreset = SEGMENTATION_MODEL_PRESETS.find((p) => p.id === segModelId);
+    const activeSamModel: SegmentationModelId =
+      currentPreset && currentPreset.supportsClickPrompt ? currentPreset.id : 'edgetam';
+    if (activeSamModel !== segModelId) {
+      setSegModelId(activeSamModel);
+    }
+
+    setIsProcessing(true);
+    setStatusMsg(`AI Segmenting motif near (${x}, ${y})…`);
+    try {
+      const imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+      const candidate = await segmentationClient.segmentPrompt(activeSamModel, imgData, {
+        point: { x, y, positive },
+      });
+      if (!candidate) {
+        setStatusMsg(`No clear motif mask returned near (${x}, ${y}). Try clicking directly on a motif.`);
+        return;
+      }
+      setCrop(candidate.crop);
+      setAutoSlices((prev) => {
+        const nextId = prev.length > 0 ? Math.max(...prev.map((s) => s.id)) + 1 : 1;
+        return [
+          {
+            id: nextId,
+            crop: candidate.crop,
+            selected: true,
+            mask: candidate.mask,
+            label: candidate.label || 'SAM Click',
+            score: candidate.score,
+          },
+          ...prev,
+        ];
+      });
+      const fp = traceCropWithAspect(
+        sourceImg,
+        sourceImg.width,
+        sourceImg.height,
+        candidate.crop,
+        candidate.mask,
+      );
+      setStatusMsg(
+        `AI segmented ${candidate.crop.w}×${candidate.crop.h}px motif (${Math.round(candidate.score * 100)}%) → ${fp.outCols}×${fp.outRows} tiles (${fp.gridWidth}×${fp.gridHeight}px)`,
+      );
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'AI segmentation failed.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const loadImageUrl = (url: string) => {
@@ -872,43 +1028,68 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setStatusMsg('Reset reference image');
   };
 
-  const handleAutoSlice = () => {
+  const handleAutoSlice = async () => {
     if (!sourceImg) return;
     const ctx = sourceImg.getContext('2d');
     if (!ctx) return;
 
-    let imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
-    let hasTransparency = false;
-    for (let i = 3; i < imgData.data.length; i += 4) {
-      if (imgData.data[i] === 0) {
-        hasTransparency = true;
-        break;
+    const imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+    let items: AutoSliceItem[] = [];
+
+    if (segModelId === 'contrast-fast') {
+      const regions = detectSalientMotifRegions(imgData, {
+        minSize: sliceMinSize,
+        mergeGap: sliceMergeGap,
+        bgTolerance: Math.min(38, Math.max(20, chromaTolerance + 6)),
+      });
+      items = regions.map((r, idx) => ({
+        id: idx + 1,
+        crop: r,
+        selected: true,
+        label: 'Contrast',
+      }));
+    } else {
+      setIsProcessing(true);
+      const presetLabel =
+        SEGMENTATION_MODEL_PRESETS.find((p) => p.id === segModelId)?.label ?? segModelId;
+      setStatusMsg(`Running ${presetLabel} Auto-Slicer…`);
+      try {
+        const seeds = computeSalientSeedPoints(imgData, 28);
+        const result = await segmentationClient.autoSegmentImage(segModelId, imgData, {
+          seeds,
+          textPrompt: segPrompt,
+          scoreThreshold: segScoreThresh,
+          minSize: sliceMinSize,
+          mergeGap: sliceMergeGap,
+        });
+        items = result.candidates.map((cand, idx) => ({
+          id: idx + 1,
+          crop: cand.crop,
+          selected: true,
+          mask: cand.mask,
+          label: cand.label,
+          score: cand.score,
+        }));
+      } catch (err) {
+        setIsProcessing(false);
+        setStatusMsg(err instanceof Error ? err.message : 'AI Auto-Slicer failed.');
+        return;
       }
-    }
-    if (!hasTransparency) {
-      pushBgUndoSnapshot();
-      removeEdgeBackground(imgData, chromaTolerance);
-      ctx.putImageData(imgData, 0, 0);
-      setBgVersion((v) => v + 1);
-      imgData = ctx.getImageData(0, 0, sourceImg.width, sourceImg.height);
+      setIsProcessing(false);
     }
 
-    const regions = detectMotifRegions(imgData, {
-      minSize: sliceMinSize,
-      mergeGap: sliceMergeGap,
-    });
-    const items: AutoSliceItem[] = regions.map((r, idx) => ({
-      id: idx + 1,
-      crop: r,
-      selected: true,
-    }));
     setAutoSlices(items);
     if (items.length > 0) {
-      setCrop(items[0].crop);
-      traceCropIntoLayer(sourceImg, imgWidth, imgHeight, items[0].crop, builderW, builderH, maxTraceColors, true);
-      setStatusMsg(`Auto-sliced ${items.length} motifs`);
+      const first = items[0];
+      setCrop(first.crop);
+      traceCropWithAspect(sourceImg, imgWidth, imgHeight, first.crop, first.mask);
+      setStatusMsg(
+        `Auto-sliced ${items.length} motif${items.length === 1 ? '' : 's'} (${
+          SEGMENTATION_MODEL_PRESETS.find((p) => p.id === segModelId)?.label ?? segModelId
+        })`,
+      );
     } else {
-      setStatusMsg('No distinct motifs found (adjust tolerance or min size)');
+      setStatusMsg('No distinct motifs found. Lower Min Size or switch Engine to EdgeTAM / Grounding DINO.');
     }
   };
 
@@ -2053,6 +2234,11 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       return;
     }
 
+    if (activeTool === 'sam' && sourceImg) {
+      void handleSamClickAt(x, y, !e.shiftKey);
+      return;
+    }
+
     if (activeTool === 'wand' && sourceImg) {
       const ctx = sourceImg.getContext('2d');
       if (ctx) {
@@ -2787,56 +2973,6 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setDropPreview(null);
   };
 
-  const placeCanvasesIntoStudioTileset = async (
-    canvases: HTMLCanvasElement[],
-    colsSpan: number,
-    rowsSpan: number,
-    name: string,
-    targetCol?: number,
-    targetRow?: number,
-    pushUndoFlag: boolean = true,
-  ) => {
-    const work = tilesetWorkCanvasRef.current || ensureBlankTilesetCanvas(8, 4);
-    const slot =
-      targetCol !== undefined && targetRow !== undefined
-        ? { col: targetCol, row: targetRow }
-        : findFirstEmptyTileBlock(work, tileDim, colsSpan, rowsSpan);
-    if (pushUndoFlag) {
-      pushTilesetUndo();
-    }
-    const placed = await placeTilesInTilesetAt(
-      work,
-      work.width,
-      work.height,
-      tileDim,
-      canvases,
-      slot.col,
-      slot.row,
-      colsSpan,
-      rowsSpan,
-    );
-    await drawDataUrlOntoWorkCanvas(placed.newTilesetUrl, placed.newDimX, placed.newDimY);
-    const stamp = createMacroStampFromIndices(
-      name,
-      colsSpan,
-      rowsSpan,
-      placed.tileIndices,
-      targetLayer,
-      blocksMovement,
-    );
-    const firstIdx = placed.tileIndices[0];
-    setStudioStamps((prev) => [
-      ...prev.filter((s) => !(s.tiles[0] === firstIdx && s.width === colsSpan && s.height === rowsSpan)),
-      stamp,
-    ]);
-    setTilesetDimX(placed.newDimX);
-    setTilesetDimY(placed.newDimY);
-    setSelectedTilesetSlot({ col: slot.col, row: slot.row, w: colsSpan, h: rowsSpan });
-    setTilesetHasEdits(true);
-    setTilesetVersion((v) => v + 1);
-    return { stamp, placed, col: slot.col, row: slot.row };
-  };
-
   const buildStampsFromOutputLayers = (dimX: number, dimY: number): TileMacroStamp[] => {
     const cols = Math.max(1, Math.floor(dimX / tileDim));
     const rows = Math.max(1, Math.floor(dimY / tileDim));
@@ -3167,75 +3303,145 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     }
   };
 
-  // Raw image slice add -> stages directly into Studio Output Tileset (NOT live map!)
-  const handleAddRawCropStamp = async () => {
-    if (!sourceImg || crop.w <= 0 || crop.h <= 0) return;
-    setIsProcessing(true);
-    setStatusMsg('Placing raw crop tiles into Studio Output Tileset…');
-    try {
-      const sliced = sliceSelectionToTiles(sourceImg, imgWidth, imgHeight, crop, tileDim, {
-        pixelate,
-        trimAndFit,
-        chromaKey: getChromaFilter(),
+  /** Stages one or many cropped/segmented motifs cleanly into Output Composer + Pattern Library without aspect distortion. */
+  const stageCropsToOutputAndLibrary = (
+    items: Array<{ name: string; crop: CropSelection; mask?: Uint8Array | null }>,
+  ) => {
+    if (!sourceImg || items.length === 0) return;
+    const work = tilesetWorkCanvasRef.current || ensureBlankTilesetCanvas(8, 4);
+    const cols = Math.max(1, Math.floor(work.width / tileDim));
+    let rows = Math.max(1, Math.floor(work.height / tileDim));
+    const chromaKey = getChromaFilter();
+    const maxTileSpan = Math.min(4, Math.max(2, cols));
+
+    const newLibraryEntries: SavedPatternEntry[] = [];
+    const newLayers: OutputPlacedPattern[] = [];
+    const runningLayers: OutputPlacedPattern[] = [...outputLayers];
+
+    pushTilesetUndo();
+
+    for (const item of items) {
+      if (item.crop.w <= 0 || item.crop.h <= 0) continue;
+      const fp = computeAspectPreservingFootprint(
+        item.crop.w,
+        item.crop.h,
+        maxTileSpan,
+        4,
+        tileDim,
+        16,
+      );
+      const res = rebuildCrispPixelArt(sourceImg, imgWidth, imgHeight, item.crop, tileDim, {
+        gridWidth: fp.gridWidth,
+        gridHeight: fp.gridHeight,
+        outCols: fp.outCols,
+        outRows: fp.outRows,
+        maxColors: Math.max(16, Math.min(32, maxTraceColors)),
+        fnName: item.name,
+        chromaKey,
+        trimAndFit: true,
+        mask: item.mask ?? undefined,
+        maskWidth: imgWidth,
+        maskHeight: imgHeight,
       });
-      const { stamp, placed, col, row } = await placeCanvasesIntoStudioTileset(
-        sliced.canvases,
-        sliced.cols,
-        sliced.rows,
-        `${stampName || 'Motif'} (Raw)`,
+
+      const previewCanvas = renderIndexedPatternCanvas(
+        res.grid,
+        res.gridWidth,
+        res.gridHeight,
+        res.palette,
       );
-      setCanvasViewMode('tileset');
-      fitTilesetToViewport(placed.newDimX, placed.newDimY);
-      setStatusMsg(
-        `Placed raw crop "${stamp.name}" at (${col}, ${row}) in Studio Output Tileset (live map unchanged)`,
+      const patId = `pat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      const entry: SavedPatternEntry = {
+        id: patId,
+        name: item.name,
+        gridWidth: res.gridWidth,
+        gridHeight: res.gridHeight,
+        outCols: fp.outCols,
+        outRows: fp.outRows,
+        palette: [...res.palette],
+        grid: [...res.grid],
+        previewDataUrl: previewCanvas.toDataURL('image/png'),
+        proceduralCode: res.proceduralCode,
+        createdAt: Date.now(),
+      };
+      newLibraryEntries.push(entry);
+
+      const layerW = Math.max(8, fp.outCols * tileDim);
+      const layerH = Math.max(8, fp.outRows * tileDim);
+      const slot = findOpenSlotForOutputBox(
+        runningLayers,
+        cols,
+        rows,
+        tileDim,
+        layerW,
+        layerH,
+        (c, r) => isBaseTileOccupied(work, tileDim, c, r),
       );
-    } catch (err) {
-      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setIsProcessing(false);
+      if (slot.requiredRows > rows) {
+        rows = slot.requiredRows;
+      }
+
+      const layer: OutputPlacedPattern = {
+        id: `out-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        sourcePatternId: entry.id,
+        name: entry.name,
+        x: slot.x,
+        y: slot.y,
+        w: layerW,
+        h: layerH,
+        gridWidth: entry.gridWidth,
+        gridHeight: entry.gridHeight,
+        palette: [...entry.palette],
+        grid: [...entry.grid],
+        layer: targetLayer,
+        blocksMovement,
+      };
+      runningLayers.push(layer);
+      newLayers.push(layer);
     }
+
+    if (newLayers.length === 0) {
+      setStatusMsg('Selected region had no opaque pixels to stage.');
+      return;
+    }
+
+    const finalWork = expandTilesetRowsIfNeeded(rows);
+    setPatternLibrary((prev) => [...newLibraryEntries.slice().reverse(), ...prev]);
+    setOutputLayers(runningLayers);
+    setSelectedOutputLayerId(newLayers[newLayers.length - 1].id);
+    setTilesetTool('position');
+    setTilesetHasEdits(true);
+    setCanvasViewMode('tileset');
+    fitTilesetToViewport(finalWork.width, rows * tileDim);
+    setStatusMsg(
+      `Staged ${newLayers.length} aspect-preserved motif${newLayers.length > 1 ? 's' : ''} in Output Composer & Pattern Library (live map unchanged)`,
+    );
   };
 
-  const handleBatchAddAutoSlices = async () => {
+  // Current crop add -> stages aspect-preserved pattern in Output Composer & Pattern Library
+  const handleAddRawCropStamp = () => {
+    if (!sourceImg || crop.w <= 0 || crop.h <= 0) return;
+    const mask = getMaskIfMatchesCrop(crop, imgWidth, imgHeight) ?? null;
+    stageCropsToOutputAndLibrary([
+      {
+        name: stampName || 'Motif',
+        crop: { ...crop },
+        mask,
+      },
+    ]);
+  };
+
+  const handleBatchAddAutoSlices = () => {
     if (!sourceImg) return;
     const selectedItems = autoSlices.filter((s) => s.selected);
     if (selectedItems.length === 0) return;
-
-    setIsProcessing(true);
-    setStatusMsg(`Placing ${selectedItems.length} motifs into Studio Output Tileset…`);
-
-    try {
-      const chromaKey = getChromaFilter();
-      pushTilesetUndo();
-      let placedCount = 0;
-
-      for (const item of selectedItems) {
-        const sliced = sliceSelectionToTiles(sourceImg, imgWidth, imgHeight, item.crop, tileDim, {
-          pixelate,
-          trimAndFit,
-          chromaKey,
-        });
-        await placeCanvasesIntoStudioTileset(
-          sliced.canvases,
-          sliced.cols,
-          sliced.rows,
-          `${stampName || 'Motif'} #${item.id}`,
-          undefined,
-          undefined,
-          false,
-        );
-        placedCount++;
-      }
-
-      setCanvasViewMode('tileset');
-      const finalWork = tilesetWorkCanvasRef.current;
-      fitTilesetToViewport(finalWork?.width ?? tilesetDimX, finalWork?.height ?? tilesetDimY);
-      setStatusMsg(`Placed ${placedCount} batch motifs into Studio Output Tileset (live map unchanged)`);
-    } catch (err) {
-      setStatusMsg(`Batch error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setIsProcessing(false);
-    }
+    stageCropsToOutputAndLibrary(
+      selectedItems.map((item) => ({
+        name: `${stampName || 'Motif'} #${item.id}${item.label && item.label !== 'Contrast' ? ` (${item.label})` : ''}`,
+        crop: item.crop,
+        mask: item.mask ?? null,
+      })),
+    );
   };
 
   const handleConvertWholeMap = async () => {
@@ -3474,6 +3680,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                   {/* Create Canvas Tool Palette */}
                   {[
                     ['frame', 'Frame (V) - Select/Move/Resize Crop', SquareDashedMousePointer],
+                    ['sam', 'AI Segment Click - Point & Isolate Motif with EdgeTAM/SAM', Sparkles],
                     ['pencil', 'Trace Pencil (B) - Paint Pixel Layer', Pencil],
                     ['eraser', 'Eraser (E) - Clear Pixel Cell', Eraser],
                     ['fill', 'Flood Fill (G)', PaintBucket],
@@ -4915,26 +5122,127 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                   </div>
                 </div>
 
-                {/* Auto-Slicer */}
+                {/* Auto-Slicer & Neural Segmentation */}
                 <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                      Auto-Slicer
+                      AI Auto-Slicer
                     </span>
                     <span className="font-mono text-[10px] text-muted">
                       {autoSlices.length > 0 ? `${selectedSliceCount}/${autoSlices.length}` : 'Ready'}
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleAutoSlice}
-                    disabled={!sourceImg}
-                    className="flex w-full items-center justify-center gap-1.5 rounded bg-cyan-700 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
-                  >
-                    <Scissors className="h-3.5 w-3.5" />
-                    <span>Auto-Slice All Motifs</span>
-                  </button>
+                  <label className="block space-y-1 text-[10px] text-muted">
+                    <span>Segmentation Engine</span>
+                    <select
+                      value={segModelId}
+                      onChange={(e) => setSegModelId(e.target.value as SegmentationModelId)}
+                      className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-[11px] text-ink"
+                    >
+                      {SEGMENTATION_MODEL_PRESETS.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] leading-tight text-muted/85">
+                      {SEGMENTATION_MODEL_PRESETS.find((p) => p.id === segModelId)?.description}
+                    </p>
+                  </label>
+
+                  {segModelId === 'grounding-dino' && (
+                    <label className="block space-y-0.5 text-[10px] text-muted">
+                      <span>Text Prompts (dot-separated)</span>
+                      <input
+                        type="text"
+                        value={segPrompt}
+                        onChange={(e) => setSegPrompt(e.target.value)}
+                        placeholder="embroidery motif . flower . cottage . tree"
+                        className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-[11px] text-ink"
+                      />
+                    </label>
+                  )}
+
+                  {(segModelId === 'grounding-dino' || segModelId === 'yolos-tiny') && (
+                    <label className="block space-y-0.5 text-[10px] text-muted">
+                      <span>Confidence Threshold: {Math.round(segScoreThresh * 100)}%</span>
+                      <input
+                        type="range"
+                        min={10}
+                        max={75}
+                        value={Math.round(segScoreThresh * 100)}
+                        onChange={(e) => setSegScoreThresh(Number(e.target.value) / 100)}
+                        className="w-full"
+                      />
+                    </label>
+                  )}
+
+                  {segStatus.modelId && segStatus.modelId !== 'contrast-fast' && (
+                    <div className="rounded border border-borderFolk bg-surface px-2 py-1.5 text-[10px] space-y-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate font-medium text-ink">
+                          {segStatus.message}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {segStatus.device && (
+                            <span className="rounded bg-indigo-500/20 px-1 py-0.5 font-mono text-[9px] uppercase text-indigoFolk">
+                              {segStatus.device}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void segmentationClient.unload()}
+                            className="rounded border border-borderFolk px-1 py-0.5 text-[9px] text-muted hover:text-ink"
+                          >
+                            Unload
+                          </button>
+                        </div>
+                      </div>
+                      {(segStatus.status === 'loading' || segStatus.status === 'running') && (
+                        <div className="h-1.5 w-full overflow-hidden rounded bg-borderFolk/50">
+                          <div
+                            className="h-full bg-cyan-600 transition-all"
+                            style={{ width: `${Math.max(8, Math.round(segStatus.fraction * 100))}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleAutoSlice()}
+                      disabled={!sourceImg || isProcessing}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded bg-cyan-700 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
+                    >
+                      <Scissors className="h-3.5 w-3.5" />
+                      <span>{isProcessing ? 'Segmenting…' : 'Auto-Slice All Motifs'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!sourceImg || isProcessing}
+                      onClick={() => {
+                        const cur = SEGMENTATION_MODEL_PRESETS.find((p) => p.id === segModelId);
+                        if (!cur?.supportsClickPrompt) {
+                          setSegModelId('edgetam');
+                        }
+                        setCanvasViewMode('create');
+                        setActiveTool('sam');
+                        setStatusMsg('Click directly on any motif in the canvas to AI-segment it (EdgeTAM/SAM)');
+                      }}
+                      title="Click a motif on the reference canvas to segment it with EdgeTAM / SAM"
+                      className={`inline-flex items-center gap-1 rounded px-2 py-1.5 text-[11px] font-medium transition ${
+                        activeTool === 'sam' && canvasViewMode === 'create'
+                          ? 'bg-crimson text-white'
+                          : 'border border-borderFolk bg-surface text-ink hover:bg-card'
+                      }`}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      <span>SAM Click</span>
+                    </button>
+                  </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[10px] text-muted">
                     <label className="space-y-0.5">
@@ -4969,7 +5277,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                             key={item.id}
                             className="flex items-center justify-between gap-1 text-[10px] font-mono"
                           >
-                            <label className="flex items-center gap-1.5 cursor-pointer">
+                            <label className="flex items-center gap-1.5 cursor-pointer min-w-0">
                               <input
                                 type="checkbox"
                                 checked={item.selected}
@@ -4981,27 +5289,28 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                                   )
                                 }
                               />
-                              <span>#{item.id}</span>
+                              <span className="truncate">
+                                #{item.id}
+                                {item.label && item.label !== 'Contrast' ? ` ${item.label}` : ''}
+                              </span>
                             </label>
                             <button
                               type="button"
                               onClick={() => {
                                 setCrop(item.crop);
+                                setCanvasViewMode('create');
                                 if (sourceImg) {
-                                  traceCropIntoLayer(
+                                  traceCropWithAspect(
                                     sourceImg,
                                     imgWidth,
                                     imgHeight,
                                     item.crop,
-                                    builderW,
-                                    builderH,
-                                    maxTraceColors,
-                                    true,
+                                    item.mask ?? null,
                                   );
                                 }
                                 setInspectorTab('trace');
                               }}
-                              className="text-left text-indigoFolk hover:underline"
+                              className="text-left text-indigoFolk hover:underline shrink-0"
                             >
                               Trace {item.crop.w}×{item.crop.h}px →
                             </button>
@@ -5014,7 +5323,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                         onClick={handleBatchAddAutoSlices}
                         className="w-full rounded bg-cyan-800 px-2 py-1 text-[11px] font-medium text-white hover:bg-cyan-700 disabled:opacity-50"
                       >
-                        Stage {selectedSliceCount} Raw Motifs in Output
+                        Stage {selectedSliceCount} Motifs to Output &amp; Library
                       </button>
                     </div>
                   )}
@@ -5028,7 +5337,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                     className="flex w-full items-center justify-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-[11px] font-medium hover:bg-card"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    <span>Place Raw Crop in Output Tileset</span>
+                    <span>Stage Active Crop to Output &amp; Library</span>
                   </button>
                   <button
                     type="button"
