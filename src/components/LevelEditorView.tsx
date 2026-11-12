@@ -4,14 +4,17 @@ import {
   Check,
   Download,
   Eraser,
+  FilePlus2,
   Hand,
   PaintBucket,
   Paintbrush,
   Pipette,
   Plus,
+  Redo2,
   Trash2,
   Undo2,
   Upload,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -59,6 +62,13 @@ function cloneMap(m: VillageMap): VillageMap {
 export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMap }) => {
   const [draft, setDraft] = useState<VillageMap>(() => cloneMap(map));
   const [undoStack, setUndoStack] = useState<VillageMap[]>([]);
+  const [redoStack, setRedoStack] = useState<VillageMap[]>([]);
+  const [newLevelOpen, setNewLevelOpen] = useState(false);
+  const [newLevelName, setNewLevelName] = useState('New Realm');
+  const [newLevelW, setNewLevelW] = useState(48);
+  const [newLevelH, setNewLevelH] = useState(36);
+  const [newLevelFill, setNewLevelFill] = useState<'grass' | 'selected' | 'empty'>('grass');
+  const [newLevelKeepStamps, setNewLevelKeepStamps] = useState(true);
   const [activeLayer, setActiveLayer] = useState<EditorLayer>('bg0');
   const [tool, setTool] = useState<Tool>('brush');
   const [paletteSel, setPaletteSel] = useState<PaletteSelection>({
@@ -109,15 +119,51 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     : undefined;
 
   const pushUndo = (snapshot: VillageMap) => {
-    setUndoStack((prev) => [...prev.slice(-19), cloneMap(snapshot)]);
+    setUndoStack((prev) => [...prev.slice(-29), cloneMap(snapshot)]);
+    setRedoStack([]);
   };
 
   const handleUndo = () => {
     if (undoStack.length === 0) return;
     const prev = undoStack[undoStack.length - 1];
     setUndoStack((s) => s.slice(0, -1));
+    setRedoStack((r) => [...r.slice(-29), cloneMap(draft)]);
     setDraft(prev);
   };
+
+  const handleRedo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack((r) => r.slice(0, -1));
+    setUndoStack((s) => [...s.slice(-29), cloneMap(draft)]);
+    setDraft(next);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((key === 'z' && e.shiftKey) || key === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   // Preload/notify when tileset URL changes so switching tilesets renders immediately
   useEffect(() => {
@@ -572,6 +618,50 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     onApplyMap(cloneMap(draft));
     setAppliedToast(true);
     setTimeout(() => setAppliedToast(false), 2000);
+  };
+
+  const handleCreateNewLevel = (e: React.FormEvent) => {
+    e.preventDefault();
+    const w = Math.max(12, Math.min(80, newLevelW));
+    const h = Math.max(12, Math.min(64, newLevelH));
+    const fillTile =
+      newLevelFill === 'empty'
+        ? -1
+        : newLevelFill === 'selected'
+          ? Math.max(0, selectedTileIdx)
+          : 271;
+    const makeGrid = (fill: number): TileGrid =>
+      Array.from({ length: w }, () => Array.from({ length: h }, () => fill));
+    const cx = Math.floor(w / 2);
+    const cy = Math.floor(h / 2);
+
+    pushUndo(draft);
+    setDraft({
+      name: newLevelName.trim() || 'New Realm',
+      tileDim: draft.tileDim,
+      width: w,
+      height: h,
+      tileSetUrl: draft.tileSetUrl,
+      tileSetDimX: draft.tileSetDimX,
+      tileSetDimY: draft.tileSetDimY,
+      bgTiles: [makeGrid(fillTile), makeGrid(-1)],
+      objectTiles: [makeGrid(-1), makeGrid(-1)],
+      collisionGrid: Array.from({ length: w }, () => Array.from({ length: h }, () => false)),
+      animatedSprites: [],
+      spawnPoints: [{ id: `spawn-${Date.now()}`, label: 'Starting Square', x: cx, y: cy }],
+      pointsOfInterest: [
+        {
+          id: `poi-${Date.now()}`,
+          tag: 'Plaza',
+          label: 'Central Plaza',
+          x: cx,
+          y: Math.max(1, cy - 2),
+          description: 'Heart of the new map',
+        },
+      ],
+      stamps: newLevelKeepStamps ? (draft.stamps ?? []).map((s) => ({ ...s, tiles: [...s.tiles] })) : [],
+    });
+    setNewLevelOpen(false);
   };
 
   const getPaletteTileFromEvent = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1195,17 +1285,31 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
       />
 
       {/* Main Editor Canvas + Action Header */}
-      <section className="flex flex-1 flex-col overflow-hidden bg-stone-950 min-w-0">
+      <section className="relative flex flex-1 flex-col overflow-hidden bg-stone-950 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borderFolk bg-card px-4 py-2">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleUndo}
               disabled={undoStack.length === 0}
-              className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs disabled:opacity-40"
+              title="Undo (Ctrl/Cmd+Z)"
+              aria-label="Undo"
+              className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs hover:bg-card disabled:opacity-40"
             >
               <Undo2 className="h-3.5 w-3.5" />
               <span>Undo</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              title="Redo (Ctrl/Cmd+Shift+Z)"
+              aria-label="Redo"
+              className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs hover:bg-card disabled:opacity-40"
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+              <span>Redo</span>
             </button>
 
             <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
@@ -1244,6 +1348,15 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setNewLevelOpen(true)}
+              className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs font-medium hover:bg-card"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+              <span>New Level</span>
+            </button>
+
             <button
               type="button"
               onClick={handleExportMap}
@@ -1296,6 +1409,159 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
             }}
           />
         </div>
+
+        {newLevelOpen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-level-title"
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 p-4"
+          >
+            <form
+              onSubmit={handleCreateNewLevel}
+              className="w-full max-w-sm rounded-lg border border-borderFolk bg-card p-4 shadow-2xl space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <h2 id="new-level-title" className="text-sm font-semibold">
+                  Start New Level
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setNewLevelOpen(false)}
+                  aria-label="Close new level dialog"
+                  className="rounded p-1 text-muted hover:bg-surface"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div>
+                <label htmlFor="new-level-name" className="block text-xs font-medium mb-1">
+                  Level Name
+                </label>
+                <input
+                  id="new-level-name"
+                  type="text"
+                  value={newLevelName}
+                  onChange={(e) => setNewLevelName(e.target.value)}
+                  className="w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium">Dimensions (tiles)</span>
+                  <div className="flex gap-1">
+                    {(
+                      [
+                        [32, 24],
+                        [48, 36],
+                        [64, 48],
+                      ] as const
+                    ).map(([pw, ph]) => (
+                      <button
+                        key={`${pw}x${ph}`}
+                        type="button"
+                        onClick={() => {
+                          setNewLevelW(pw);
+                          setNewLevelH(ph);
+                        }}
+                        className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                          newLevelW === pw && newLevelH === ph
+                            ? 'border-indigoFolk bg-indigoFolk text-white'
+                            : 'border-borderFolk bg-surface'
+                        }`}
+                      >
+                        {pw}×{ph}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label htmlFor="new-level-w" className="block text-[11px] text-muted">
+                      Width
+                    </label>
+                    <input
+                      id="new-level-w"
+                      type="number"
+                      min={12}
+                      max={80}
+                      value={newLevelW}
+                      onChange={(e) => setNewLevelW(Number(e.target.value))}
+                      className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="new-level-h" className="block text-[11px] text-muted">
+                      Height
+                    </label>
+                    <input
+                      id="new-level-h"
+                      type="number"
+                      min={12}
+                      max={64}
+                      value={newLevelH}
+                      onChange={(e) => setNewLevelH(Number(e.target.value))}
+                      className="w-full rounded border border-borderFolk bg-surface px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <span className="block text-xs font-medium mb-1">Base Ground Fill</span>
+                <div className="grid grid-cols-3 gap-1.5 text-xs">
+                  {(
+                    [
+                      ['grass', 'Grass Meadow'],
+                      ['selected', 'Selected Tile'],
+                      ['empty', 'Empty Void'],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setNewLevelFill(id)}
+                      className={`rounded border px-2 py-1.5 text-[11px] font-medium ${
+                        newLevelFill === id
+                          ? 'border-crimson bg-crimson text-white'
+                          : 'border-borderFolk bg-surface hover:bg-card'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="inline-flex items-center gap-1.5 text-xs text-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newLevelKeepStamps}
+                  onChange={(e) => setNewLevelKeepStamps(e.target.checked)}
+                />
+                <span>Keep saved macro stamps</span>
+              </label>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setNewLevelOpen(false)}
+                  className="rounded border border-borderFolk bg-surface px-3 py-1.5 text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded bg-crimson px-3 py-1.5 text-xs font-semibold text-white hover:opacity-95"
+                >
+                  Create Level
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </section>
     </div>
   );
