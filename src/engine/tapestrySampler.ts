@@ -366,6 +366,14 @@ export function detectMotifRegions(
 export interface CrispPixelArtOptions {
   /** Pixel art resolution per tile (e.g. 16 = chunky 16px-per-tile pixel art, 32 = native). */
   pixelsPerTile?: number;
+  /** Optional explicit output pixel width (overrides cols * pixelsPerTile). */
+  gridWidth?: number;
+  /** Optional explicit output pixel height (overrides rows * pixelsPerTile). */
+  gridHeight?: number;
+  /** Optional explicit output tile columns. */
+  outCols?: number;
+  /** Optional explicit output tile rows. */
+  outRows?: number;
   /** Maximum number of palette colors to quantize to (2..32). */
   maxColors?: number;
   /** Optional function name for generated procedural code. */
@@ -483,28 +491,46 @@ export function quantizeAndRebuildPixelGrid(
   }
 
   const sortedClusters = Array.from(colorCounts.values())
-    .map((c) => ({
-      count: c.count,
-      r: Math.round(c.r / c.count),
-      g: Math.round(c.g / c.count),
-      b: Math.round(c.b / c.count),
-    }))
+    .map((c) => {
+      const r = Math.round(c.r / c.count);
+      const g = Math.round(c.g / c.count);
+      const b = Math.round(c.b / c.count);
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+      return { count: c.count, r, g, b, chroma };
+    })
     .sort((a, b) => b.count - a.count);
 
   const paletteRgb: Array<{ r: number; g: number; b: number }> = [];
-  const minPaletteDist = 28;
-  for (const c of sortedClusters) {
-    if (paletteRgb.length >= maxColors) break;
-    const tooClose = paletteRgb.some(
-      (p) => Math.hypot(p.r - c.r, p.g - c.g, p.b - c.b) < minPaletteDist,
-    );
-    if (!tooClose) paletteRgb.push({ r: c.r, g: c.g, b: c.b });
-  }
-  // Fill remaining slots if needed
-  for (const c of sortedClusters) {
-    if (paletteRgb.length >= maxColors) break;
-    if (!paletteRgb.some((p) => p.r === c.r && p.g === c.g && p.b === c.b)) {
-      paletteRgb.push({ r: c.r, g: c.g, b: c.b });
+  if (sortedClusters.length > 0) {
+    // Seed with most frequent cluster
+    paletteRgb.push({
+      r: sortedClusters[0].r,
+      g: sortedClusters[0].g,
+      b: sortedClusters[0].b,
+    });
+
+    // Farthest-point + chroma-weighted selection so vibrant accents (e.g. yellow/red centers)
+    // are preserved instead of being crowded out by slightly different grey/beige shades.
+    while (paletteRgb.length < maxColors && paletteRgb.length < sortedClusters.length) {
+      let bestCandidate: (typeof sortedClusters)[number] | null = null;
+      let bestScore = -1;
+
+      for (const c of sortedClusters) {
+        let minDist = Infinity;
+        for (const p of paletteRgb) {
+          const d = Math.hypot(p.r - c.r, p.g - c.g, p.b - c.b);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist < 22) continue;
+        const score = minDist * (1 + c.chroma / 96) * Math.log2(c.count + 2);
+        if (score > bestScore) {
+          bestScore = score;
+          bestCandidate = c;
+        }
+      }
+
+      if (!bestCandidate) break;
+      paletteRgb.push({ r: bestCandidate.r, g: bestCandidate.g, b: bestCandidate.b });
     }
   }
 
@@ -528,13 +554,34 @@ export function quantizeAndRebuildPixelGrid(
     }
   }
 
-  // 3. Run-length encode horizontal spans into clean procedural TypeScript/Canvas2D code
+  const proceduralCode = generateProceduralCodeFromGrid(grid, gridW, gridH, palette, fnName);
+
+  return {
+    gridWidth: gridW,
+    gridHeight: gridH,
+    palette,
+    grid,
+    proceduralCode,
+  };
+}
+
+/**
+ * Generates self-contained run-length-encoded Canvas2D TypeScript code from an
+ * editable pixel-art grid and palette.
+ */
+export function generateProceduralCodeFromGrid(
+  grid: ReadonlyArray<number>,
+  gridW: number,
+  gridH: number,
+  palette: ReadonlyArray<string>,
+  fnName: string = 'drawMotif',
+): string {
   const spansByColor: Array<Array<[number, number, number]>> = palette.map(() => []);
   for (let y = 0; y < gridH; y++) {
     let x = 0;
     while (x < gridW) {
       const cIdx = grid[y * gridW + x];
-      if (cIdx < 0) {
+      if (cIdx === undefined || cIdx < 0 || cIdx >= palette.length) {
         x++;
         continue;
       }
@@ -558,7 +605,7 @@ export function quantizeAndRebuildPixelGrid(
     .filter(Boolean)
     .join('\n');
 
-  const proceduralCode = [
+  return [
     `// Procedural Crisp Pixel Art (${gridW}x${gridH}, ${palette.length} colors)`,
     `export const ${safeFn}Palette = [`,
     paletteLines,
@@ -578,13 +625,62 @@ export function quantizeAndRebuildPixelGrid(
     `  }`,
     `}`,
   ].join('\n');
+}
+
+/**
+ * Renders an editable pixel-art grid + palette into individual tileDim x tileDim
+ * canvases and a combined preview data URL.
+ */
+export function renderPixelGridToCanvases(
+  grid: ReadonlyArray<number>,
+  gridW: number,
+  gridH: number,
+  palette: ReadonlyArray<string>,
+  cols: number,
+  rows: number,
+  tileDim: number = 32,
+): { canvases: HTMLCanvasElement[]; previewDataUrl: string } {
+  const crispSmall = document.createElement('canvas');
+  crispSmall.width = gridW;
+  crispSmall.height = gridH;
+  const csCtx = crispSmall.getContext('2d')!;
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const cIdx = grid[y * gridW + x];
+      if (cIdx !== undefined && cIdx >= 0 && cIdx < palette.length) {
+        csCtx.fillStyle = palette[cIdx];
+        csCtx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+
+  const targetW = cols * tileDim;
+  const targetH = rows * tileDim;
+  const fullCanvas = document.createElement('canvas');
+  fullCanvas.width = targetW;
+  fullCanvas.height = targetH;
+  const fCtx = fullCanvas.getContext('2d')!;
+  fCtx.imageSmoothingEnabled = false;
+  fCtx.drawImage(crispSmall, 0, 0, gridW, gridH, 0, 0, targetW, targetH);
+
+  const canvases: HTMLCanvasElement[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const tc = document.createElement('canvas');
+      tc.width = tileDim;
+      tc.height = tileDim;
+      const tCtx = tc.getContext('2d');
+      if (tCtx) {
+        tCtx.imageSmoothingEnabled = false;
+        tCtx.drawImage(fullCanvas, c * tileDim, r * tileDim, tileDim, tileDim, 0, 0, tileDim, tileDim);
+      }
+      canvases.push(tc);
+    }
+  }
 
   return {
-    gridWidth: gridW,
-    gridHeight: gridH,
-    palette,
-    grid,
-    proceduralCode,
+    canvases,
+    previewDataUrl: fullCanvas.toDataURL('image/png'),
   };
 }
 
@@ -600,11 +696,11 @@ export function rebuildCrispPixelArt(
   tileDim: number = 32,
   options: CrispPixelArtOptions & { chromaKey?: ChromaKeyFilter | null; trimAndFit?: boolean } = {},
 ): CrispPixelArtResult {
-  const cols = Math.max(1, Math.round(crop.w / tileDim));
-  const rows = Math.max(1, Math.round(crop.h / tileDim));
+  const cols = Math.max(1, options.outCols ?? Math.round(crop.w / tileDim));
+  const rows = Math.max(1, options.outRows ?? Math.round(crop.h / tileDim));
   const pixelsPerTile = Math.max(8, Math.min(tileDim, options.pixelsPerTile ?? 16));
-  const gridW = cols * pixelsPerTile;
-  const gridH = rows * pixelsPerTile;
+  const gridW = Math.max(4, Math.min(128, options.gridWidth ?? cols * pixelsPerTile));
+  const gridH = Math.max(4, Math.min(128, options.gridHeight ?? rows * pixelsPerTile));
   const maxColors = Math.max(2, Math.min(32, options.maxColors ?? 10));
   const fnName = options.fnName ?? 'drawMotif';
 

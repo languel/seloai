@@ -13,6 +13,7 @@ import {
   Layers,
   Maximize2,
   Palette,
+  Pencil,
   Pipette,
   Plus,
   RotateCcw,
@@ -30,9 +31,11 @@ import {
   createMacroStampFromIndices,
   detectMotifRegions,
   floodFillTransparent,
+  generateProceduralCodeFromGrid,
   processTilePixels,
   rebuildCrispPixelArt,
   removeEdgeBackground,
+  renderPixelGridToCanvases,
   sliceSelectionToTiles,
   type ChromaKeyFilter,
   type CrispPixelArtResult,
@@ -40,6 +43,7 @@ import {
 } from '../engine/tapestrySampler';
 import type { TileMacroStamp, VillageMap } from '../engine/types';
 import { resolvePublicUrl } from '../utils/assetUrl';
+import { PixelBuilderCanvas } from './PixelBuilderCanvas';
 
 interface AutoSliceItem {
   id: number;
@@ -89,17 +93,35 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const [bgVersion, setBgVersion] = useState(0);
   const [hoverAction, setHoverAction] = useState<CropHoverAction>(null);
 
+  // Studio sub-mode: source sampler vs interactive pixel builder
+  const [studioMode, setStudioMode] = useState<'sample' | 'builder'>('sample');
+
   // Auto-Slicer state
   const [autoSlices, setAutoSlices] = useState<AutoSliceItem[]>([]);
   const [sliceMergeGap, setSliceMergeGap] = useState(6);
   const [sliceMinSize, setSliceMinSize] = useState(10);
 
-  // Crisp Pixel Art Rebuilder state
+  // Crisp Pixel Art Rebuilder + Interactive Pixel Builder state
   const [crispPixelsPerTile, setCrispPixelsPerTile] = useState<number>(16);
-  const [crispMaxColors, setCrispMaxColors] = useState<number>(10);
+  const [crispMaxColors, setCrispMaxColors] = useState<number>(8);
   const [crispResult, setCrispResult] = useState<CrispPixelArtResult | null>(null);
   const [showProceduralCode, setShowProceduralCode] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  const [builderW, setBuilderW] = useState<number>(16);
+  const [builderH, setBuilderH] = useState<number>(16);
+  const [builderOutCols, setBuilderOutCols] = useState<number>(1);
+  const [builderOutRows, setBuilderOutRows] = useState<number>(1);
+  const [builderGrid, setBuilderGrid] = useState<number[]>(() => new Array<number>(16 * 16).fill(-1));
+  const [builderPalette, setBuilderPalette] = useState<string[]>([
+    '#be1e2d',
+    '#eab308',
+    '#228b4a',
+    '#1f2937',
+    '#f5f0e1',
+  ]);
+  const [builderPreviewUrl, setBuilderPreviewUrl] = useState<string>('');
+  const [builderCode, setBuilderCode] = useState<string>('');
 
   // Target Stamp Config
   const [stampName, setStampName] = useState('Tapestry Motif');
@@ -1002,10 +1024,121 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     }
   };
 
-  const handleCopyProceduralCode = async () => {
-    if (!crispResult?.proceduralCode) return;
+  // Keep Pixel Builder live preview & procedural code synced
+  useEffect(() => {
     try {
-      await navigator.clipboard.writeText(crispResult.proceduralCode);
+      const code = generateProceduralCodeFromGrid(
+        builderGrid,
+        builderW,
+        builderH,
+        builderPalette,
+        stampName || 'Motif',
+      );
+      setBuilderCode(code);
+      const rendered = renderPixelGridToCanvases(
+        builderGrid,
+        builderW,
+        builderH,
+        builderPalette,
+        builderOutCols,
+        builderOutRows,
+        tileDim,
+      );
+      setBuilderPreviewUrl(rendered.previewDataUrl);
+    } catch {
+      // ignore
+    }
+  }, [builderGrid, builderPalette, builderW, builderH, builderOutCols, builderOutRows, tileDim, stampName]);
+
+  const retraceIntoBuilder = (
+    targetW: number = builderW,
+    targetH: number = builderH,
+    maxColors: number = crispMaxColors,
+  ) => {
+    if (!sourceImg || crop.w <= 0 || crop.h <= 0) return;
+    const res = rebuildCrispPixelArt(sourceImg, imgWidth, imgHeight, crop, tileDim, {
+      gridWidth: targetW,
+      gridHeight: targetH,
+      outCols: builderOutCols,
+      outRows: builderOutRows,
+      maxColors,
+      fnName: stampName || 'Motif',
+      chromaKey: getChromaFilter(),
+      trimAndFit,
+    });
+    setBuilderW(res.gridWidth);
+    setBuilderH(res.gridHeight);
+    setBuilderGrid(res.grid);
+    setBuilderPalette(
+      res.palette.length > 0
+        ? res.palette
+        : ['#be1e2d', '#eab308', '#228b4a', '#1f2937', '#f5f0e1'],
+    );
+    setStatusMsg(`Traced ${crop.w}×${crop.h} sample → ${res.gridWidth}×${res.gridHeight} (${res.palette.length} colors)`);
+  };
+
+  const openPixelBuilderWithSample = () => {
+    retraceIntoBuilder(builderW, builderH, crispMaxColors);
+    setStudioMode('builder');
+  };
+
+  const setBuilderResolution = (nextW: number, nextH: number) => {
+    const w = Math.max(4, Math.min(128, nextW));
+    const h = Math.max(4, Math.min(128, nextH));
+    setBuilderW(w);
+    setBuilderH(h);
+    retraceIntoBuilder(w, h, crispMaxColors);
+  };
+
+  const handleAddBuilderStamp = async (directPlace: boolean = false) => {
+    setIsProcessing(true);
+    setStatusMsg('Building cleaned pixel art stamp…');
+    try {
+      const rendered = renderPixelGridToCanvases(
+        builderGrid,
+        builderW,
+        builderH,
+        builderPalette,
+        builderOutCols,
+        builderOutRows,
+        tileDim,
+      );
+      const existingImg = await loadExistingTileset();
+      const appended = await appendTilesToTileset(
+        existingImg,
+        map.tileSetDimX,
+        map.tileSetDimY,
+        tileDim,
+        rendered.canvases,
+      );
+      const stamp = createMacroStampFromIndices(
+        `${stampName || 'Motif'} (${builderW}×${builderH})`,
+        builderOutCols,
+        builderOutRows,
+        appended.tileIndices,
+        targetLayer,
+        blocksMovement,
+      );
+      commitStampToMap({
+        tilesetUrl: appended.newTilesetUrl,
+        tilesetDimX: appended.newDimX,
+        tilesetDimY: appended.newDimY,
+        stamps: [stamp],
+        directPlaceStamp: directPlace ? stamp : undefined,
+      });
+      setStatusMsg(`Added "${stamp.name}" (${builderOutCols}×${builderOutRows} tiles) to Level Editor`);
+    } catch (err) {
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCopyProceduralCode = async (codeOverride?: string) => {
+    const text = codeOverride ?? (studioMode === 'builder' ? builderCode : crispResult?.proceduralCode);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 1800);
     } catch {
@@ -1022,7 +1155,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       tabIndex={-1}
     >
       {/* Top Studio Header */}
-      <header className="flex items-center justify-between border-b border-borderFolk bg-card px-4 py-2 shrink-0">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-borderFolk bg-card px-4 py-2 shrink-0">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 items-center justify-center rounded-sm bg-crimson/15 text-crimson">
             <Palette className="h-4 w-4" />
@@ -1032,9 +1165,41 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
               Tapestry &amp; Pixel Art Studio
             </h2>
             <p className="text-[11px] text-muted">
-              Remove backgrounds, auto-slice motifs, shift off-grid, rebuild crisp pixel art &amp; procedural code.
+              Sample &amp; slice tapestries, then trace &amp; paint crisp pixel art with procedural code output.
             </p>
           </div>
+        </div>
+
+        {/* Studio Sub-Mode Switcher */}
+        <div className="flex items-center gap-1 rounded border border-borderFolk bg-surface p-0.5">
+          <button
+            type="button"
+            onClick={() => setStudioMode('sample')}
+            className={`inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition ${
+              studioMode === 'sample'
+                ? 'bg-card text-ink shadow-sm font-semibold'
+                : 'text-muted hover:text-ink'
+            }`}
+          >
+            <Scissors className="h-3.5 w-3.5" />
+            <span>1. Sample &amp; Slice</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (studioMode !== 'builder') {
+                openPixelBuilderWithSample();
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition ${
+              studioMode === 'builder'
+                ? 'bg-crimson text-white shadow-sm font-semibold'
+                : 'text-muted hover:text-ink'
+            }`}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            <span>2. Pixel Builder (Trace &amp; Paint)</span>
+          </button>
         </div>
         <div className="flex items-center gap-2">
           {onOpenLevelEditor && (
@@ -1052,7 +1217,23 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
 
       {/* Studio Body */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Main Image Viewport Area */}
+        {studioMode === 'builder' ? (
+          <PixelBuilderCanvas
+            gridWidth={builderW}
+            gridHeight={builderH}
+            pixelsPerTile={Math.max(4, Math.floor(builderW / Math.max(1, builderOutCols)))}
+            grid={builderGrid}
+            palette={builderPalette}
+            onChangeGridAndPalette={(nextGrid, nextPalette) => {
+              setBuilderGrid(nextGrid);
+              setBuilderPalette(nextPalette);
+            }}
+            onRetraceFromSample={() => retraceIntoBuilder(builderW, builderH, crispMaxColors)}
+            sourceCanvas={sourceImg}
+            crop={crop}
+            trimAndFit={trimAndFit}
+          />
+        ) : (
         <div className="relative flex flex-1 flex-col bg-stone-950 overflow-hidden">
           {/* Viewport Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-black/40 px-3 py-1.5 text-xs text-white shrink-0">
@@ -1222,14 +1403,176 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                   ? 'Magic Wand: Click any background area to erase'
                   : pickingColor
                     ? 'Eyedropper: Click a color to key out'
-                    : `${imgWidth}×${imgHeight} px · Drag inside box to shift off-grid · Arrows nudge`
+                    : `${imgWidth}×${imgHeight} px · Drag inside box to shift off-grid · Drag handles to resize`
                 : 'Import an image to start'}
             </div>
           </div>
         </div>
+        )}
 
         {/* Right Inspector & Stamp Creator Sidebar */}
         <aside className="w-84 border-l border-borderFolk bg-surface flex flex-col overflow-y-auto thin-scroll p-3 space-y-3 shrink-0">
+          {studioMode === 'builder' ? (
+            <>
+              {/* Target Pattern Grid Resolution (independent of source crop) */}
+              <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    Digitizer Grid Size
+                  </span>
+                  <span className="font-mono text-xs font-bold text-crimson">
+                    {builderW}×{builderH} px
+                  </span>
+                </div>
+                <p className="text-[10px] text-muted">
+                  Source crop ({crop.w}×{crop.h} px) resampled cleanly onto your target stitch/pixel grid.
+                </p>
+
+                <div className="grid grid-cols-4 gap-1 text-[10px]">
+                  {[
+                    [16, 16],
+                    [24, 24],
+                    [32, 32],
+                    [48, 48],
+                  ].map(([pw, ph]) => (
+                    <button
+                      key={`${pw}x${ph}`}
+                      type="button"
+                      onClick={() => setBuilderResolution(pw, ph)}
+                      className={`rounded border px-1 py-0.5 font-mono ${
+                        builderW === pw && builderH === ph
+                          ? 'border-crimson bg-crimson/10 font-bold text-crimson'
+                          : 'border-borderFolk bg-surface hover:bg-card'
+                      }`}
+                    >
+                      {pw}×{ph}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <label className="space-y-0.5 text-muted">
+                    <span>Width (px)</span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={128}
+                      value={builderW}
+                      onChange={(e) => setBuilderResolution(Number(e.target.value), builderH)}
+                      className="w-full rounded border border-borderFolk bg-surface px-1.5 py-1 font-mono text-xs text-ink"
+                    />
+                  </label>
+                  <label className="space-y-0.5 text-muted">
+                    <span>Height (px)</span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={128}
+                      value={builderH}
+                      onChange={(e) => setBuilderResolution(builderW, Number(e.target.value))}
+                      className="w-full rounded border border-borderFolk bg-surface px-1.5 py-1 font-mono text-xs text-ink"
+                    />
+                  </label>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-[10px] text-muted">
+                    <span>Thread Colors (Auto-Trace)</span>
+                    <span className="font-mono">{crispMaxColors} colors</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={2}
+                    max={24}
+                    value={crispMaxColors}
+                    onChange={(e) => setCrispMaxColors(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => retraceIntoBuilder(builderW, builderH, crispMaxColors)}
+                  className="w-full rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-600"
+                >
+                  Auto-Trace {builderW}×{builderH} ({crispMaxColors} Colors)
+                </button>
+              </div>
+
+              {/* Cleaned Pattern Preview + Tile Footprint */}
+              <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    Cleaned Pattern Output
+                  </span>
+                  <span className="font-mono text-[10px] text-muted">
+                    {builderOutCols}×{builderOutRows} tiles ({builderOutCols * tileDim}×{builderOutRows * tileDim}px)
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-center rounded border border-borderFolk bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:8px_8px] p-2 min-h-[100px] overflow-hidden">
+                  {builderPreviewUrl ? (
+                    <img
+                      src={builderPreviewUrl}
+                      alt="Cleaned pixel art preview"
+                      className="max-h-32 max-w-full object-contain pixel-canvas border border-borderFolk shadow-sm"
+                    />
+                  ) : (
+                    <span className="text-[11px] text-muted">Paint or trace to preview</span>
+                  )}
+                </div>
+
+                <div>
+                  <span className="block text-[10px] text-muted mb-1">Output Tile Footprint:</span>
+                  <div className="grid grid-cols-4 gap-1 text-[10px]">
+                    {[
+                      [1, 1],
+                      [2, 2],
+                      [3, 3],
+                      [4, 4],
+                    ].map(([c, r]) => (
+                      <button
+                        key={`out-${c}x${r}`}
+                        type="button"
+                        onClick={() => {
+                          setBuilderOutCols(c);
+                          setBuilderOutRows(r);
+                        }}
+                        className={`rounded border px-1 py-0.5 font-mono ${
+                          builderOutCols === c && builderOutRows === r
+                            ? 'border-crimson bg-crimson/10 font-bold text-crimson'
+                            : 'border-borderFolk bg-surface hover:bg-card'
+                        }`}
+                      >
+                        {c}×{r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Procedural Canvas2D Code */}
+              <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    Procedural Code
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyProceduralCode(builderCode)}
+                    className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2 py-0.5 text-[10px] font-medium hover:bg-card"
+                  >
+                    <Copy className="h-3 w-3" />
+                    <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
+                  </button>
+                </div>
+                <pre className="max-h-36 overflow-auto thin-scroll rounded border border-borderFolk bg-stone-950 p-2 text-[9px] font-mono text-emerald-300">
+                  {builderCode}
+                </pre>
+              </div>
+            </>
+          ) : (
+            <>
           {/* Selection Metrics */}
           <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
             <div className="flex items-center justify-between">
@@ -1623,22 +1966,32 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                   <button
                     type="button"
                     disabled={isProcessing || !sourceImg}
+                    onClick={openPixelBuilderWithSample}
+                    className="inline-flex items-center justify-center gap-1 rounded bg-crimson px-2 py-1 text-[10px] font-medium text-white hover:bg-crimson/90 disabled:opacity-50"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    <span>Trace &amp; Paint…</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isProcessing || !sourceImg}
                     onClick={() => handleAddSelection({ useCrisp: true })}
                     className="inline-flex items-center justify-center gap-1 rounded bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
                   >
                     <Sparkles className="h-3 w-3" />
                     <span>Add Crisp Stamp</span>
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={handleCopyProceduralCode}
-                    className="inline-flex items-center justify-center gap-1 rounded border border-borderFolk bg-surface px-2 py-1 text-[10px] font-medium hover:bg-card"
-                  >
-                    <Copy className="h-3 w-3" />
-                    <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
-                  </button>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleCopyProceduralCode()}
+                  className="inline-flex w-full items-center justify-center gap-1 rounded border border-borderFolk bg-surface px-2 py-1 text-[10px] font-medium hover:bg-card"
+                >
+                  <Copy className="h-3 w-3" />
+                  <span>{copiedCode ? 'Copied!' : 'Copy Procedural Code'}</span>
+                </button>
 
                 <button
                   type="button"
@@ -1657,6 +2010,8 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
               </>
             )}
           </div>
+            </>
+          )}
 
           {/* Target Stamp Settings */}
           <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
@@ -1713,37 +2068,61 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
           </div>
 
           {/* Primary Action Buttons */}
-          <div className="space-y-1.5 pt-1">
-            <button
-              type="button"
-              disabled={isProcessing || !sourceImg}
-              onClick={() => handleAddSelection({ directPlace: false })}
-              className="flex w-full items-center justify-center gap-1.5 rounded bg-crimson px-3 py-2 text-xs font-semibold text-white hover:bg-crimson/90 disabled:opacity-50"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add Selection to Tileset &amp; Stamps</span>
-            </button>
+          {studioMode === 'builder' ? (
+            <div className="space-y-1.5 pt-1">
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => handleAddBuilderStamp(false)}
+                className="flex w-full items-center justify-center gap-1.5 rounded bg-crimson px-3 py-2 text-xs font-semibold text-white hover:bg-crimson/90 disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Cleaned Pattern to Tileset</span>
+              </button>
 
-            <button
-              type="button"
-              disabled={isProcessing || !sourceImg}
-              onClick={() => handleAddSelection({ directPlace: true })}
-              className="flex w-full items-center justify-center gap-1.5 rounded border border-indigoFolk bg-indigoFolk/10 px-3 py-1.5 text-xs font-medium text-indigoFolk hover:bg-indigoFolk/20 disabled:opacity-50"
-            >
-              <Check className="h-3.5 w-3.5" />
-              <span>Add &amp; Place at Map Center</span>
-            </button>
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => handleAddBuilderStamp(true)}
+                className="flex w-full items-center justify-center gap-1.5 rounded border border-indigoFolk bg-indigoFolk/10 px-3 py-1.5 text-xs font-medium text-indigoFolk hover:bg-indigoFolk/20 disabled:opacity-50"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Add &amp; Place at Map Center</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-1.5 pt-1">
+              <button
+                type="button"
+                disabled={isProcessing || !sourceImg}
+                onClick={() => handleAddSelection({ directPlace: false })}
+                className="flex w-full items-center justify-center gap-1.5 rounded bg-crimson px-3 py-2 text-xs font-semibold text-white hover:bg-crimson/90 disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Selection to Tileset &amp; Stamps</span>
+              </button>
 
-            <button
-              type="button"
-              disabled={isProcessing || !sourceImg}
-              onClick={handleConvertWholeMap}
-              className="flex w-full items-center justify-center gap-1.5 rounded border border-borderFolk bg-surface px-3 py-1.5 text-[11px] font-medium text-muted hover:bg-card hover:text-ink disabled:opacity-50"
-            >
-              <Maximize2 className="h-3 w-3" />
-              <span>Convert Whole Image to Map</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                disabled={isProcessing || !sourceImg}
+                onClick={() => handleAddSelection({ directPlace: true })}
+                className="flex w-full items-center justify-center gap-1.5 rounded border border-indigoFolk bg-indigoFolk/10 px-3 py-1.5 text-xs font-medium text-indigoFolk hover:bg-indigoFolk/20 disabled:opacity-50"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Add &amp; Place at Map Center</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isProcessing || !sourceImg}
+                onClick={handleConvertWholeMap}
+                className="flex w-full items-center justify-center gap-1.5 rounded border border-borderFolk bg-surface px-3 py-1.5 text-[11px] font-medium text-muted hover:bg-card hover:text-ink disabled:opacity-50"
+              >
+                <Maximize2 className="h-3 w-3" />
+                <span>Convert Whole Image to Map</span>
+              </button>
+            </div>
+          )}
         </aside>
       </div>
     </div>
