@@ -33,7 +33,7 @@ Attach `character-spritesheet-template-384x512.png` as a reference image and pro
 
 ```text
 Create a top-down 2D pixel-art RPG character spritesheet strictly matching the attached 3x4 grid template (384x512 px, 3 columns x 4 rows of 128x128 cells representing 32x32 pixel blocks).
-Subject: An Eastern European village weaver wearing an embroidered white linen vyshyvanka tunic with geometric crimson and indigo cross-stitch patterns, dark wool vest, and boots.
+Subject: A fantasy village weaver wearing a tailored linen tunic with geometric trim, dark wool vest, and leather boots.
 Layout rules:
 - Row 1 (top): facing DOWN (front view), 3 walking animation frames (left foot, neutral, right foot).
 - Row 2: facing LEFT, 3 walking animation frames.
@@ -44,30 +44,30 @@ Style: Crisp 16-bit/32-bit pixel art, clean dark outlines, flat solid #00FF00 ch
 
 ---
 
-## 3. Custom Map & Embroidery Tileset Specification
+## 3. Custom Map & Fantasy Tileset Specification
 
 ### Tileset Grid (`512×512` = 256 tiles of `32×32 px`)
-- **Tile size**: `32×32 px` (`tileDim: 32`)
-- **Seamless ground tiles** (Rows 0–2): Linen meadow grass, wild chamomile, woven earth.
+- **Tile size**: `32×32 px` (`tileDim: 32`) — also supports `16px`, `48px`, `64px`, or custom `px` in the Level Editor
+- **Seamless ground tiles** (Rows 0–2): Meadow grass, clover, worn earth.
 - **Paths & bridges** (Rows 3–5): Cobblestone, packed dirt, wooden footbridge.
-- **Water & shores** (Rows 6–7): Deep indigo brook, reed edges.
-- **Cottages & roofs** (Rows 8–11): Whitewashed clay *khata* walls, thatched roofs, painted shutters.
-- **Trees & fences** (Rows 12–13): Birch, rowanberry, willow, woven wattle fence.
-- **Folk props & rushnyk borders** (Rows 14–15): Wooden loom, pottery, lanterns, red/black embroidered border strips.
+- **Water & shores** (Rows 6–7): Deep brook water, reed edges, stone banks.
+- **Cottages & roofs** (Rows 8–11): Timber and stone cottage walls, slate/thatch roofs, painted shutters.
+- **Trees & fences** (Rows 12–13): Birch, pine, orchard trees, wood/stone fences.
+- **Props & details** (Rows 14–15): Craft stalls, hearths, barrels, lanterns, rugs.
 
-### Prompt for Image Models (Embroidery-Inspired Tileset)
+### Prompt for Image Models (Fantasy Village Tileset)
 Attach `tileset-template-512x512.png` as a reference image and prompt:
 
 ```text
 Create a seamless 2D top-down RPG pixel-art tileset strictly aligned to the attached 16x16 grid of 32x32 pixel tiles (512x512 px total).
-Visual theme: Eastern European folk embroidery (vyshyvanka & rushnyk) blended with cozy pastoral pixel art — warm unbleached linen ground tones, madder crimson, indigo blue, golden ochre, and forest sage.
+Visual theme: Cozy medieval/fantasy pixel art — muted stone and earth ground tones, weathered timber, slate roofs, moss green, and warm lantern accents.
 Zone layout matching the reference colors:
-- Rows 1-3 (green zone): seamless meadow grass, clover, wildflower patches, embroidered border grass.
+- Rows 1-3 (green zone): seamless meadow grass, clover, wildflower patches, bordered grass edges.
 - Rows 4-6 (tan zone): cobblestone plaza tiles, dirt footpath edges, wooden bridge planks.
 - Rows 7-8 (blue zone): clear creek water, shoreline edges, river reeds.
-- Rows 9-12 (cream zone): whitewashed village cottage walls, thatched roofs, carved timber doors and window frames.
-- Rows 13-14 (dark green zone): birch trees, rowanberry bushes, woven wattle fences.
-- Rows 15-16 (crimson zone): wooden weaving loom, hearth firepit, clay jugs, folk lanterns, decorative cross-stitch rug tiles.
+- Rows 9-12 (cream zone): stone and half-timbered cottage walls, slate/thatch roofs, timber doors and window frames.
+- Rows 13-14 (dark green zone): oak and pine trees, berry bushes, wooden fences and stone walls.
+- Rows 15-16 (crimson zone): craft tables, hearth firepit, barrels, street lanterns, woven rugs.
 Rules: Orthographic top-down 3/4 RPG perspective, crisp pixel edges, NO anti-aliasing blur, NO visible black grid lines in the output, transparent background around object tiles.
 ```
 

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
+import { resolvePublicUrl } from '../utils/assetUrl';
 import {
   computeSpatialMix,
   EAVESDROP_SLIDER_MAX,
@@ -95,7 +96,7 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
         ctx.fillRect(4, 4, size - 8, size - 8);
         const preload = new Image();
         preload.onload = () => draw();
-        preload.src = frame.url;
+        preload.src = resolvePublicUrl(frame.url);
       }
     };
     draw();

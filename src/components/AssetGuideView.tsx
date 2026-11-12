@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
+import { resolvePublicUrl } from '../utils/assetUrl';
 
 interface PromptTemplate {
   id: string;
@@ -79,31 +80,31 @@ const DOWNLOAD_FILES = [
     name: 'character-spritesheet-template-384x512.png',
     label: 'Character Grid 4× (384×512 PNG)',
     desc: 'Best size to attach directly to Gemini/Flux/Midjourney',
-    href: '/templates/character-spritesheet-template-384x512.png',
+    href: resolvePublicUrl('/templates/character-spritesheet-template-384x512.png'),
   },
   {
     name: 'character-spritesheet-template-96x128.png',
     label: 'Character Grid Native (96×128 PNG)',
     desc: 'Exact 1:1 32×32 pixel grid (3 cols × 4 rows)',
-    href: '/templates/character-spritesheet-template-96x128.png',
+    href: resolvePublicUrl('/templates/character-spritesheet-template-96x128.png'),
   },
   {
     name: 'tileset-template-512x512.png',
     label: 'Tileset Grid (512×512 PNG)',
     desc: '16×16 zone-coded 32×32 tileset layout',
-    href: '/templates/tileset-template-512x512.png',
+    href: resolvePublicUrl('/templates/tileset-template-512x512.png'),
   },
   {
     name: 'villager-character-template.json',
     label: 'Villager JSON Schema',
     desc: 'Starter VillagerConfig JSON for LLM generation',
-    href: '/templates/villager-character-template.json',
+    href: resolvePublicUrl('/templates/villager-character-template.json'),
   },
   {
     name: 'village-map-template.json',
     label: 'Village Map JSON Schema',
     desc: 'Minimal 8×6 column-major [x][y] map JSON',
-    href: '/templates/village-map-template.json',
+    href: resolvePublicUrl('/templates/village-map-template.json'),
   },
 ];
 
@@ -197,7 +198,7 @@ export const AssetGuideView: React.FC = () => {
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-bold">Character Spritesheet Grid (3×4 · 32×32 cells)</h2>
               <a
-                href="/templates/character-spritesheet-template-384x512.png"
+                href={resolvePublicUrl('/templates/character-spritesheet-template-384x512.png')}
                 download="character-spritesheet-template-384x512.png"
                 className="inline-flex items-center gap-1 rounded bg-crimson px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
               >
@@ -207,7 +208,7 @@ export const AssetGuideView: React.FC = () => {
             </div>
             <div className="flex flex-col sm:flex-row gap-2.5 items-start">
               <img
-                src="/templates/character-spritesheet-template-384x512.png"
+                src={resolvePublicUrl('/templates/character-spritesheet-template-384x512.png')}
                 alt="3 by 4 character walk-cycle spritesheet template grid for Down, Left, Right, and Up directions"
                 className="pixel-canvas w-36 rounded border border-borderFolk bg-surface shrink-0"
               />
@@ -234,7 +235,7 @@ export const AssetGuideView: React.FC = () => {
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-bold">Tileset Reference Grid (16×16 · 512×512 px)</h2>
               <a
-                href="/templates/tileset-template-512x512.png"
+                href={resolvePublicUrl('/templates/tileset-template-512x512.png')}
                 download="tileset-template-512x512.png"
                 className="inline-flex items-center gap-1 rounded bg-indigoFolk px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
               >
@@ -244,7 +245,7 @@ export const AssetGuideView: React.FC = () => {
             </div>
             <div className="flex flex-col sm:flex-row gap-2.5 items-start">
               <img
-                src="/templates/tileset-template-512x512.png"
+                src={resolvePublicUrl('/templates/tileset-template-512x512.png')}
                 alt="16 by 16 tileset template grid organized by terrain, paths, water, cottages, trees, and folk props"
                 className="pixel-canvas w-40 rounded border border-borderFolk bg-surface shrink-0"
               />

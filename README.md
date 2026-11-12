@@ -1,42 +1,47 @@
-# SeloAI — Clean-Slate In-Browser WebGPU AI Village
+# SeloAI — Client-Side WebGPU AI Village
 
-SeloAI is a 100% client-side, browser-native AI village inspired by `ai-town`, with zero Convex or backend database dependencies. All village state persists locally in IndexedDB, and AI inference runs locally via **WebGPU** (`LFM3-1.7B` + `LFM3-Omni-2B`) with optional **Ollama / LM Studio** HTTP fallback and an instant **Story Sim** fallback.
+SeloAI is a 100% browser-native AI village sandbox inspired by `ai-town`, with zero backend or Convex dependencies. All worlds, characters, conversations, and memories persist locally in IndexedDB, while inference runs locally via **WebGPU** (`LFM3-1.7B`, `LFM3-Omni-2B`, `MiniCPM5-2B`, `Bonsai-2 27B`), optional **Ollama / LM Studio** HTTP fallback, or an instant **Story Sim** engine.
 
-## Features
+## Workspace Views
 
-- **In-Browser Simulation**: Fixed-step Canvas2D world renderer, A* pathfinding, autonomous villager schedules, spontaneous villager-to-villager conversations, memory reflection, floating speech bubbles, and a walkable visitor avatar (`WASD`/Arrows or click-to-move).
-- **LFM3-1.7B WebGPU Brain** (`src/workers/lfm3TextWorker.ts`): Runs `onnx-community/LFM3-1.7B-ONNX` (or custom Hugging Face / local ONNX finetunes) in a dedicated Web Worker via `@huggingface/transformers`. Prefers locally hosted files in `public/models/`.
-- **LFM3-Omni-2B WebGPU STT + TTS** (`src/ai/omniEngine.ts`): Uses `Lfm3OmniForConditionalGeneration` (`LiquidAI/LFM3-Omni-2B-GGUF` or custom GGUF finetune + `mmproj`) for microphone STT, 24 kHz PCM streaming TTS, and multimodal voice-to-voice turns.
-- **Ollama / LM Studio Fallback** (`src/ai/localApiClient.ts`): Connect to `http://localhost:11434/v1` (Ollama) or `http://localhost:1234/v1` (LM Studio) with model auto-detection and streaming responses.
-- **Built-in Level Editor** (`src/components/LevelEditorView.tsx`): Paint ground/object layers, edit collision masks, place animated props (`campfire`, `windmill`, `waterfall`), manage spawn landmarks, upload custom tilesets, and apply changes live.
-- **Built-in Character Editor** (`src/components/CharacterEditorView.tsx`): Create/edit/duplicate villagers, tune identity/plan/voice prompts, choose preset sprites or upload custom spritesheets with live 4-direction walk previews.
-- **AI & Voice Monitor** (`src/components/MonitorView.tsx`): Load/unload WebGPU models, swap in custom finetune endpoints, test STT/TTS in the Omni Voice Studio, configure Ollama/LM Studio fallback, inspect villager memory matrices, and stream live telemetry logs.
-- **Guides & Templates** (`src/components/AssetGuideView.tsx`, `docs/CUSTOM_ASSETS_GUIDE.md`): Downloadable PNG grid templates (`384×512` / `96×128` character spritesheets, `512×512` tileset), JSON schemas, and copy-paste prompts for image and LLM models.
+- **Village (`VillageView`)**: Fixed-step Canvas2D pixel renderer, A* pathfinding, autonomous schedules & encounters, walkable player avatar (`WASD`/Arrows or click-to-move), label toggle, spatial audio eavesdropping (`Live Audio` / `Thread` / `World Script` filters + audio queue flush), `@Name` / `@Scribe` / `@all` / `#POI` autocomplete directives, and a draggable-width collapsible inspector sidebar.
+- **Control Room (`ObservatoryView`)**: Westworld-style observability toolkit featuring **Worldline POV** hopping (`Scribe` or any villager listener/narrative lens), an interactive **Psychophysical Graph** linking characters and landmarks, natural-language **World DB** querying + raw tabular database view, and the **Scribe Loom** chronicle assembler.
+- **Level Editor (`LevelEditorView`)**: Paint ground (`BG 0/1`) and object (`Obj 0/1`) layers, edit collision masks, place animated sprites, define spawn points and `#POI` tags, capture reusable multi-tile **Macro Stamps**, zoom/pan the resizable tileset palette, select multi-tile blocks, adjust brush sizes & custom tile dimensions (`16px` / `32px` / `48px` / `64px` / custom), undo/redo (`50` steps), start blank maps, and upload custom PNG tilesets.
+- **Characters (`CharacterEditorView`, `ModularCharacterCreator`)**: Author villagers or batch-generate generic fantasy residents, customize 128×128 modular pixel spritesheets with trait locking, configure voice accents & speech locales, or upload custom spritesheets with live 4-direction previews.
+- **AI & Voice Monitor (`MonitorView`)**: Load/unload WebGPU brains (`LFM3-1.7B-ONNX`, `LFM3-Omni-2B-GGUF`, `MiniCPM5-2B`, `Bonsai-2 27B`), configure Ollama / LM Studio endpoints, inspect `<think>` / `<thought>` / Scribe settings, test mic STT + 24 kHz PCM streaming TTS, and monitor live telemetry.
+- **Guides & Templates (`AssetGuideView`)**: Downloadable PNG grid templates (`384×512`, `96×128`, `512×512`), JSON schemas, and prompts for image and language models.
 
-## Local Models Setup
+## World, Story & Data Portability
 
-Model weights are stored (and gitignored) in `public/models/`:
-- `public/models/onnx-community/LFM3-1.7B-ONNX/` (`q4f16` ONNX + tokenizer/config files)
-- `public/models/LiquidAI/LFM3-Omni-2B-GGUF/` (`LFM3-Omni-2B-Q4_K_M.gguf` + `mmproj-LFM3-Omni-2B-Q8_0.gguf`)
+Open the **World & Data** modal from the top bar (`Database` glyph) to:
+- Start a **New Story** (clear conversations & character memories while keeping map and cast), create a **New Blank World**, or **Reset Defaults**.
+- Export/Import:
+  - **Whole Project (`seloai-project-v1`)**: World map, villagers, settings, conversation DB, and personal character histories.
+  - **Level Only (`seloai-level-v1`)**: Map tiles, collisions, spawns, `#POI` tags, and macro stamps.
+  - **Characters Only (`seloai-characters-v1`)**: Roster and sprite configs.
+  - **Characters + Histories (`seloai-characters-history-v1`)**: Portable cast + personal memories/intentions to drop into another level or story.
+  - **Database Only (`seloai-db-v1`)**: Conversations and character memories.
 
-A custom Vite middleware in `vite.config.ts` ensures missing optional paths under `/models/` return `404` rather than the SPA HTML fallback.
+## Local Models & Development
 
-## Placeholder Assets & Future Embroidery Art
-
-Placeholder pixel-art tilesets and spritesheets (`gentle-obj.png`, `32x32folk.png`, `player.png`, animated props) live in `public/assets/`. See `docs/CUSTOM_ASSETS_GUIDE.md` (or the in-app **Guides & Templates** tab) for specs and reference templates to generate custom Eastern European embroidery (*vyshyvanka* / *rushnyk*) art.
-
-## Development
+Model weights are optional and gitignored under `public/models/` (remote Hugging Face download is used automatically if local files are absent):
+- `public/models/onnx-community/LFM3-1.7B-ONNX/`
+- `public/models/LiquidAI/LFM3-Omni-2B-GGUF/`
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Tests & production build:
+Tests and production build:
 
 ```bash
 pnpm test
 pnpm build
 ```
 
-See `HANDOFF.md` for architecture notes, known caveats, and next steps.
+## GitHub Pages Deployment
+
+`.github/workflows/deploy-pages.yml` builds with `VITE_BASE_PATH="/<repo>/"`, runs `pnpm test`, and deploys `dist/` via `actions/upload-pages-artifact` and `actions/deploy-pages` on every push to `main`. All runtime public URLs (`/assets/...`, `/vendor/...`, `/templates/...`, `/models/...`) resolve through `src/utils/assetUrl.ts` (`import.meta.env.BASE_URL`). Note that GitHub Pages publishing on a **private** repository requires a GitHub plan that supports private Pages (Pro/Team/Enterprise).
+
+See [HANDOFF.md](HANDOFF.md) for architecture details and troubleshooting notes.

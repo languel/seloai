@@ -1,7 +1,8 @@
 import { pipeline, TextStreamer, env } from '@huggingface/transformers';
+import { resolvePublicUrl } from '../utils/assetUrl';
 
 // Prefer locally hosted models under /models/ first, with remote HF fallback
-env.localModelPath = '/models/';
+env.localModelPath = resolvePublicUrl('/models/');
 env.allowLocalModels = true;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;

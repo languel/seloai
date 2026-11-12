@@ -1,5 +1,6 @@
 import { ANIMATION_CATALOG, SPRITESHEET_PRESETS } from '../data/defaultData';
 import { data as playerSpritesheet } from '../data/spritesheets/player';
+import { resolvePublicUrl } from '../utils/assetUrl';
 import type {
   CustomSpriteSheet,
   Direction,
@@ -18,10 +19,11 @@ export function getCachedImage(url: string): HTMLImageElement | null {
   if (existing) return existing.complete && existing.naturalWidth > 0 ? existing : null;
 
   const img = new Image();
-  if (!url.startsWith('data:')) {
+  const resolvedUrl = resolvePublicUrl(url);
+  if (!resolvedUrl.startsWith('data:')) {
     img.crossOrigin = 'anonymous';
   }
-  img.src = url;
+  img.src = resolvedUrl;
   imageCache.set(url, img);
   return img.complete && img.naturalWidth > 0 ? img : null;
 }

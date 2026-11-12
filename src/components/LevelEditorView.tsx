@@ -21,6 +21,7 @@ import {
 import { ANIMATION_CATALOG, TILESET_PRESETS } from '../data/defaultData';
 import { drawAnimatedSprites, drawTileGrid, getCachedImage } from '../engine/renderer';
 import type { PointOfInterest, TileGrid, TileMacroStamp, VillageMap } from '../engine/types';
+import { resolvePublicUrl } from '../utils/assetUrl';
 
 interface LevelEditorViewProps {
   map: VillageMap;
@@ -180,7 +181,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
       }
       setTilesetLoadTick((t) => t + 1);
     };
-    img.src = draft.tileSetUrl;
+    img.src = resolvePublicUrl(draft.tileSetUrl);
   }, [draft.tileSetUrl]);
 
   // Render tileset palette

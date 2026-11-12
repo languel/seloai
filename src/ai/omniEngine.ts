@@ -1,4 +1,5 @@
 import type { ModelProgress } from '../engine/types';
+import { resolveOriginUrl } from '../utils/assetUrl';
 
 interface OmniModule {
   Lfm3OmniForConditionalGeneration: {
@@ -27,11 +28,7 @@ let cachedModule: OmniModule | null = null;
 
 async function loadOmniModule(): Promise<OmniModule> {
   if (cachedModule) return cachedModule;
-  const base =
-    typeof globalThis.location !== 'undefined' && globalThis.location.origin !== 'null'
-      ? globalThis.location.origin
-      : 'http://localhost';
-  const moduleUrl = `${base}/vendor/Lfm3OmniForConditionalGeneration.js`;
+  const moduleUrl = resolveOriginUrl('/vendor/Lfm3OmniForConditionalGeneration.js');
   const mod = (await import(/* @vite-ignore */ moduleUrl)) as OmniModule;
   cachedModule = mod;
   return mod;
@@ -45,17 +42,14 @@ async function resolveLocalOmniSource(modelId: string, mmproj?: string): Promise
   const trimmed = modelId.trim();
   const cleanMmproj = mmproj?.trim() || undefined;
   if (/^https?:/i.test(trimmed) || trimmed.startsWith('/') || trimmed.startsWith('.')) {
-    const abs =
-      trimmed.startsWith('/') && typeof globalThis.location !== 'undefined'
-        ? `${globalThis.location.origin}${trimmed}`
-        : trimmed;
+    const abs = trimmed.startsWith('/') ? resolveOriginUrl(trimmed) : trimmed;
     return { resolvedModelId: abs, resolvedMmproj: cleanMmproj, isLocal: !/^https?:\/\/huggingface\.co/i.test(abs) };
   }
 
   // Probe BOTH local GGUF and mmproj before switching to local /models/
   if (typeof globalThis.location !== 'undefined' && globalThis.location.origin !== 'null') {
     const repoName = (trimmed.split('/').pop() ?? trimmed).replace(/-GGUF$/i, '');
-    const localBase = `${globalThis.location.origin}/models/${trimmed}`;
+    const localBase = resolveOriginUrl(`/models/${trimmed}`);
     const ggufUrl = `${localBase}/${repoName}-Q4_K_M.gguf`;
     const mmprojUrl = cleanMmproj
       ? cleanMmproj.startsWith('/') || /^https?:/i.test(cleanMmproj)

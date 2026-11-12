@@ -1,4 +1,5 @@
 import type { ModelProgress } from '../engine/types';
+import { resolveOriginUrl } from '../utils/assetUrl';
 
 interface BonsaiModule {
   DEFAULT_MODEL_ID: string;
@@ -33,11 +34,7 @@ let cachedModule: BonsaiModule | null = null;
 
 async function loadBonsaiModule(): Promise<BonsaiModule> {
   if (cachedModule) return cachedModule;
-  const base =
-    typeof globalThis.location !== 'undefined' && globalThis.location.origin !== 'null'
-      ? globalThis.location.origin
-      : 'http://localhost';
-  const moduleUrl = `${base}/vendor/TernaryBonsai2.js`;
+  const moduleUrl = resolveOriginUrl('/vendor/TernaryBonsai2.js');
   const mod = (await import(/* @vite-ignore */ moduleUrl)) as BonsaiModule;
   cachedModule = mod;
   return mod;

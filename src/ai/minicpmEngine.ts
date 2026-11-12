@@ -1,4 +1,5 @@
 import type { ModelProgress } from '../engine/types';
+import { resolveOriginUrl } from '../utils/assetUrl';
 
 interface MiniCpmModule {
   MiniCPM5ForCausalLM: {
@@ -24,11 +25,7 @@ let cachedModule: MiniCpmModule | null = null;
 
 async function loadMiniCpmModule(): Promise<MiniCpmModule> {
   if (cachedModule) return cachedModule;
-  const base =
-    typeof globalThis.location !== 'undefined' && globalThis.location.origin !== 'null'
-      ? globalThis.location.origin
-      : 'http://localhost';
-  const moduleUrl = `${base}/vendor/MiniCPM5ForCausalLM.js`;
+  const moduleUrl = resolveOriginUrl('/vendor/MiniCPM5ForCausalLM.js');
   const mod = (await import(/* @vite-ignore */ moduleUrl)) as MiniCpmModule;
   cachedModule = mod;
   return mod;
