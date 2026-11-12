@@ -123,6 +123,108 @@ export function applyChromaKeyToPixelGrid(
 }
 
 /**
+ * Finds the index of the closest color in `palette` to `(r, g, b)` by Euclidean RGB distance.
+ */
+export function findNearestPaletteIndex(
+  r: number,
+  g: number,
+  b: number,
+  palette: string[],
+): number {
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < palette.length; i++) {
+    const p = parseHexColor(palette[i]);
+    if (!p) continue;
+    const dist = Math.hypot(r - p.r, g - p.g, b - p.b);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/**
+ * Computes the dominant foreground color of an `ImageData` cell (skipping transparent
+ * and chroma-keyed pixels) and returns the nearest matching palette swatch index,
+ * or `-1` if the cell is predominantly transparent/keyed background.
+ */
+export function sampleNearestPaletteIndexFromImageData(
+  imgData: ImageData,
+  palette: string[],
+  chromaKey?: ChromaKeyFilter | null,
+): number {
+  const { data } = imgData;
+  const totalPx = Math.max(1, data.length / 4);
+  const maxKeyDist = chromaKey ? (chromaKey.tolerance / 100) * CHROMA_MAX_RGB_DIST : -1;
+
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let fgCount = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 16) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    if (
+      chromaKey &&
+      Math.hypot(r - chromaKey.r, g - chromaKey.g, b - chromaKey.b) <= maxKeyDist
+    ) {
+      continue;
+    }
+    sumR += r;
+    sumG += g;
+    sumB += b;
+    fgCount++;
+  }
+
+  if (fgCount === 0 || fgCount * 4 < totalPx) {
+    return -1;
+  }
+
+  return findNearestPaletteIndex(sumR / fgCount, sumG / fgCount, sumB / fgCount, palette);
+}
+
+/**
+ * Samples the source image under grid cell `(gx, gy)` inside `crop` and returns
+ * the nearest palette swatch index (`-1` if transparent/keyed background).
+ */
+export function sampleNearestPaletteIndexForCell(
+  source: HTMLImageElement | HTMLCanvasElement,
+  sourceW: number,
+  sourceH: number,
+  crop: CropSelection,
+  gridW: number,
+  gridH: number,
+  gx: number,
+  gy: number,
+  palette: string[],
+  chromaKey?: ChromaKeyFilter | null,
+): number {
+  if (typeof document === 'undefined' || crop.w <= 0 || crop.h <= 0 || gridW <= 0 || gridH <= 0) {
+    return -1;
+  }
+  const x0 = Math.max(0, Math.min(sourceW - 1, Math.floor(crop.x + (gx * crop.w) / gridW)));
+  const y0 = Math.max(0, Math.min(sourceH - 1, Math.floor(crop.y + (gy * crop.h) / gridH)));
+  const x1 = Math.min(sourceW, Math.max(x0 + 1, Math.ceil(crop.x + ((gx + 1) * crop.w) / gridW)));
+  const y1 = Math.min(sourceH, Math.max(y0 + 1, Math.ceil(crop.y + ((gy + 1) * crop.h) / gridH)));
+  const sw = Math.max(1, x1 - x0);
+  const sh = Math.max(1, y1 - y0);
+
+  const tmp = document.createElement('canvas');
+  tmp.width = sw;
+  tmp.height = sh;
+  const ctx = tmp.getContext('2d');
+  if (!ctx) return -1;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, x0, y0, sw, sh, 0, 0, sw, sh);
+  return sampleNearestPaletteIndexFromImageData(ctx.getImageData(0, 0, sw, sh), palette, chromaKey);
+}
+
+/**
  * Flood-fills connected pixels (4-way) matching the seed color within tolerance,
  * setting their alpha channel to 0 (transparent).
  */
@@ -990,6 +1092,296 @@ export function sliceSelectionToTiles(
 }
 
 /**
+ * Creates a blank transparent tileset PNG data URL of `(cols * tileDim) x (rows * tileDim)`.
+ */
+export function createBlankTilesetDataUrl(
+  cols: number,
+  rows: number,
+  tileDim: number,
+): { url: string; dimX: number; dimY: number } {
+  const safeCols = Math.max(1, cols);
+  const safeRows = Math.max(1, rows);
+  const dimX = safeCols * tileDim;
+  const dimY = safeRows * tileDim;
+  if (typeof document === 'undefined') {
+    return { url: 'data:image/png;base64,mockBlankTileset', dimX, dimY };
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = dimX;
+  canvas.height = dimY;
+  return { url: canvas.toDataURL('image/png'), dimX, dimY };
+}
+
+/**
+ * Finds the first empty (all-transparent) contiguous `colsSpan x rowsSpan` block in a tileset canvas,
+ * or falls back to `(0, currentRows)` at the bottom.
+ */
+export function findFirstEmptyTileBlock(
+  tilesetCanvas: HTMLCanvasElement,
+  tileDim: number,
+  colsSpan: number = 1,
+  rowsSpan: number = 1,
+): { col: number; row: number } {
+  const cols = Math.max(1, Math.floor(tilesetCanvas.width / tileDim));
+  const rows = Math.max(1, Math.floor(tilesetCanvas.height / tileDim));
+  const spanC = Math.max(1, Math.min(cols, colsSpan));
+  const spanR = Math.max(1, rowsSpan);
+  const ctx = tilesetCanvas.getContext('2d');
+  if (!ctx || rows < spanR) return { col: 0, row: rows };
+
+  const imgData = ctx.getImageData(0, 0, tilesetCanvas.width, tilesetCanvas.height).data;
+  const tileEmpty = new Uint8Array(cols * rows);
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let empty = true;
+      for (let py = 0; py < tileDim && empty; py++) {
+        const rowOff = (r * tileDim + py) * tilesetCanvas.width;
+        for (let px = 0; px < tileDim; px++) {
+          if (imgData[(rowOff + c * tileDim + px) * 4 + 3] > 0) {
+            empty = false;
+            break;
+          }
+        }
+      }
+      tileEmpty[r * cols + c] = empty ? 1 : 0;
+    }
+  }
+
+  for (let r = 0; r <= rows - spanR; r++) {
+    for (let c = 0; c <= cols - spanC; c++) {
+      let ok = true;
+      for (let dr = 0; dr < spanR && ok; dr++) {
+        for (let dc = 0; dc < spanC; dc++) {
+          if (!tileEmpty[(r + dr) * cols + (c + dc)]) {
+            ok = false;
+            break;
+          }
+        }
+      }
+      if (ok) return { col: c, row: r };
+    }
+  }
+
+  return { col: 0, row: rows };
+}
+
+/**
+ * Places a `colsSpan x rowsSpan` block of tile canvases into an existing tileset at `(startCol, startRow)`,
+ * expanding rows downward if needed while keeping existing `currentDimX` columns intact.
+ */
+export async function placeTilesInTilesetAt(
+  existingTileset: HTMLImageElement | HTMLCanvasElement | null,
+  currentDimX: number,
+  currentDimY: number,
+  tileDim: number,
+  newTiles: HTMLCanvasElement[],
+  startCol: number,
+  startRow: number,
+  colsSpan: number = newTiles.length,
+  rowsSpan: number = 1,
+): Promise<AppendTilesResult> {
+  const cols = Math.max(1, Math.floor(currentDimX / tileDim));
+  const currentRows = Math.max(0, Math.floor(currentDimY / tileDim));
+  const spanC = Math.max(1, colsSpan);
+  const spanR = Math.max(1, rowsSpan);
+  const safeCol =
+    spanC <= cols ? Math.max(0, Math.min(cols - spanC, startCol)) : 0;
+  const safeRow = Math.max(0, startRow);
+
+  const requiredRows =
+    spanC <= cols
+      ? Math.max(currentRows, safeRow + spanR)
+      : Math.max(currentRows, safeRow + Math.ceil(newTiles.length / cols));
+  const newDimY = requiredRows * tileDim;
+
+  const tileIndices: number[] = [];
+  for (let i = 0; i < newTiles.length; i++) {
+    if (spanC <= cols) {
+      const r = Math.floor(i / spanC);
+      const c = i % spanC;
+      tileIndices.push((safeRow + r) * cols + (safeCol + c));
+    } else {
+      tileIndices.push(safeRow * cols + i);
+    }
+  }
+
+  if (typeof document === 'undefined') {
+    return {
+      newTilesetUrl: 'data:image/png;base64,mockPlacedTileset',
+      newDimX: currentDimX,
+      newDimY,
+      startTileIndex: tileIndices[0] ?? safeRow * cols + safeCol,
+      tileIndices,
+    };
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = currentDimX;
+  canvas.height = Math.max(tileDim, newDimY);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Cannot create canvas 2D context');
+  ctx.imageSmoothingEnabled = false;
+
+  if (existingTileset) {
+    ctx.drawImage(existingTileset, 0, 0);
+  }
+
+  for (let i = 0; i < newTiles.length; i++) {
+    const idx = tileIndices[i];
+    const tx = (idx % cols) * tileDim;
+    const ty = Math.floor(idx / cols) * tileDim;
+    ctx.clearRect(tx, ty, tileDim, tileDim);
+    ctx.drawImage(newTiles[i], tx, ty);
+  }
+
+  return {
+    newTilesetUrl: canvas.toDataURL('image/png'),
+    newDimX: currentDimX,
+    newDimY: canvas.height,
+    startTileIndex: tileIndices[0] ?? safeRow * cols + safeCol,
+    tileIndices,
+  };
+}
+
+/**
+ * Moves or swaps a `colsSpan x rowsSpan` block of tiles inside a tileset sheet and returns
+ * a tile-index remapping table so map layers & macro stamps stay consistent.
+ */
+export async function repositionTilesInTileset(
+  existingTileset: HTMLImageElement | HTMLCanvasElement | null,
+  currentDimX: number,
+  currentDimY: number,
+  tileDim: number,
+  fromCol: number,
+  fromRow: number,
+  toCol: number,
+  toRow: number,
+  colsSpan: number = 1,
+  rowsSpan: number = 1,
+  mode: 'swap' | 'move' = 'swap',
+): Promise<{
+  newTilesetUrl: string;
+  newDimX: number;
+  newDimY: number;
+  srcIndices: number[];
+  dstIndices: number[];
+  indexRemap: Record<number, number>;
+}> {
+  const cols = Math.max(1, Math.floor(currentDimX / tileDim));
+  const currentRows = Math.max(1, Math.floor(currentDimY / tileDim));
+  const spanC = Math.max(1, Math.min(cols, colsSpan));
+  const spanR = Math.max(1, rowsSpan);
+  const sCol = Math.max(0, Math.min(cols - spanC, fromCol));
+  const sRow = Math.max(0, Math.min(Math.max(0, currentRows - spanR), fromRow));
+  const dCol = Math.max(0, Math.min(cols - spanC, toCol));
+  const dRow = Math.max(0, toRow);
+
+  const srcIndices: number[] = [];
+  const dstIndices: number[] = [];
+  const indexRemap: Record<number, number> = {};
+
+  for (let r = 0; r < spanR; r++) {
+    for (let c = 0; c < spanC; c++) {
+      srcIndices.push((sRow + r) * cols + (sCol + c));
+      dstIndices.push((dRow + r) * cols + (dCol + c));
+    }
+  }
+
+  const overlaps =
+    sCol < dCol + spanC &&
+    sCol + spanC > dCol &&
+    sRow < dRow + spanR &&
+    sRow + spanR > dRow;
+  const effectiveMode: 'swap' | 'move' = overlaps ? 'move' : mode;
+
+  if (sCol !== dCol || sRow !== dRow) {
+    for (let i = 0; i < srcIndices.length; i++) {
+      indexRemap[srcIndices[i]] = dstIndices[i];
+      if (effectiveMode === 'swap') {
+        indexRemap[dstIndices[i]] = srcIndices[i];
+      }
+    }
+  }
+
+  const requiredRows = Math.max(currentRows, sRow + spanR, dRow + spanR);
+  const newDimY = requiredRows * tileDim;
+
+  if (typeof document === 'undefined') {
+    return {
+      newTilesetUrl: 'data:image/png;base64,mockRepositionedTileset',
+      newDimX: currentDimX,
+      newDimY,
+      srcIndices,
+      dstIndices,
+      indexRemap,
+    };
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = currentDimX;
+  canvas.height = newDimY;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Cannot create canvas 2D context');
+  ctx.imageSmoothingEnabled = false;
+  if (existingTileset) {
+    ctx.drawImage(existingTileset, 0, 0);
+  }
+
+  if (sCol !== dCol || sRow !== dRow) {
+    const bw = spanC * tileDim;
+    const bh = spanR * tileDim;
+    const srcX = sCol * tileDim;
+    const srcY = sRow * tileDim;
+    const dstX = dCol * tileDim;
+    const dstY = dRow * tileDim;
+
+    const srcImg = ctx.getImageData(srcX, srcY, bw, bh);
+    const dstImg = effectiveMode === 'swap' ? ctx.getImageData(dstX, dstY, bw, bh) : null;
+
+    ctx.clearRect(srcX, srcY, bw, bh);
+    if (dstImg) {
+      ctx.putImageData(dstImg, srcX, srcY);
+    }
+    ctx.putImageData(srcImg, dstX, dstY);
+  }
+
+  return {
+    newTilesetUrl: canvas.toDataURL('image/png'),
+    newDimX: currentDimX,
+    newDimY,
+    srcIndices,
+    dstIndices,
+    indexRemap,
+  };
+}
+
+/**
+ * Remaps tile indices inside a VillageMap (bgTiles, objectTiles, and macro stamps)
+ * after moving or swapping tile slots in a tileset sheet.
+ */
+export function remapTileIndicesInMap(
+  map: VillageMap,
+  indexRemap: Record<number, number>,
+): VillageMap {
+  if (Object.keys(indexRemap).length === 0) return map;
+  const remapVal = (idx: number): number =>
+    idx >= 0 && Object.prototype.hasOwnProperty.call(indexRemap, idx)
+      ? indexRemap[idx]
+      : idx;
+
+  return {
+    ...map,
+    bgTiles: map.bgTiles.map((layer) => layer.map((col) => col.map(remapVal))),
+    objectTiles: map.objectTiles.map((layer) => layer.map((col) => col.map(remapVal))),
+    stamps: (map.stamps ?? []).map((st) => ({
+      ...st,
+      tiles: st.tiles.map(remapVal),
+    })),
+  };
+}
+
+/**
  * Appends new tile canvases to an existing tileset image or canvas,
  * returning the updated data URL and assigned tile indices.
  */
@@ -1002,53 +1394,17 @@ export async function appendTilesToTileset(
 ): Promise<AppendTilesResult> {
   const cols = Math.max(1, Math.floor(currentDimX / tileDim));
   const currentRows = Math.max(1, Math.floor(currentDimY / tileDim));
-  const startTileIndex = cols * currentRows;
-
-  if (typeof document === 'undefined') {
-    // Headless test fallback
-    const tileIndices = Array.from({ length: newTiles.length }, (_, i) => startTileIndex + i);
-    return {
-      newTilesetUrl: 'data:image/png;base64,mockAppendedTileset',
-      newDimX: currentDimX,
-      newDimY: currentDimY + Math.ceil(newTiles.length / cols) * tileDim,
-      startTileIndex,
-      tileIndices,
-    };
-  }
-
-  const additionalRows = Math.ceil(newTiles.length / cols);
-  const newDimY = currentDimY + additionalRows * tileDim;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = currentDimX;
-  canvas.height = newDimY;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Cannot create canvas 2D context');
-
-  ctx.imageSmoothingEnabled = false;
-
-  // Draw existing tileset
-  if (existingTileset) {
-    ctx.drawImage(existingTileset, 0, 0);
-  }
-
-  // Draw new tiles row by row
-  const tileIndices: number[] = [];
-  for (let i = 0; i < newTiles.length; i++) {
-    const tileIdx = startTileIndex + i;
-    const tx = (tileIdx % cols) * tileDim;
-    const ty = Math.floor(tileIdx / cols) * tileDim;
-    ctx.drawImage(newTiles[i], tx, ty);
-    tileIndices.push(tileIdx);
-  }
-
-  return {
-    newTilesetUrl: canvas.toDataURL('image/png'),
-    newDimX: currentDimX,
-    newDimY,
-    startTileIndex,
-    tileIndices,
-  };
+  return placeTilesInTilesetAt(
+    existingTileset,
+    currentDimX,
+    currentRows * tileDim,
+    tileDim,
+    newTiles,
+    0,
+    currentRows,
+    cols,
+    Math.max(1, Math.ceil(newTiles.length / cols)),
+  );
 }
 
 /**

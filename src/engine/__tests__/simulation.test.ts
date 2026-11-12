@@ -42,14 +42,20 @@ import {
 import {
   appendTilesToTileset,
   applyChromaKeyToPixelGrid,
+  createBlankTilesetDataUrl,
   createMacroStampFromIndices,
   detectMotifRegions,
+  findNearestPaletteIndex,
   floodFillTransparent,
   getOpaqueBounds,
   parseHexColor,
+  placeTilesInTilesetAt,
   processTilePixels,
   quantizeAndRebuildPixelGrid,
+  remapTileIndicesInMap,
   removeEdgeBackground,
+  repositionTilesInTileset,
+  sampleNearestPaletteIndexFromImageData,
   sliceSelectionToTiles,
 } from '../tapestrySampler';
 import {
@@ -1320,5 +1326,80 @@ describe('SeloAI core engine', () => {
     expect(keyed.grid).toEqual([-1, 0, -1, -1, -1, 0]);
     expect(keyed.removedCells).toBe(3);
     expect(keyed.removedSwatches).toBe(2);
+  });
+
+  it('places, repositions, and remaps tiles in output tilesets and sample-brushes palette swatches', async () => {
+    const blank = createBlankTilesetDataUrl(8, 4, 32);
+    expect(blank.dimX).toBe(256);
+    expect(blank.dimY).toBe(128);
+
+    const dummyTiles = Array.from({ length: 4 }, () => ({}) as HTMLCanvasElement);
+    const placed = await placeTilesInTilesetAt(null, 256, 128, 32, dummyTiles, 3, 1, 2, 2);
+    // 8 cols: row 1 cols 3..4 -> 11,12 ; row 2 cols 3..4 -> 19,20
+    expect(placed.tileIndices).toEqual([11, 12, 19, 20]);
+    expect(placed.newDimY).toBe(128);
+
+    // Expanding past bottom row (startRow 3 with 2 rows tall -> 5 rows = 160px)
+    const expanded = await placeTilesInTilesetAt(null, 256, 128, 32, dummyTiles, 0, 3, 2, 2);
+    expect(expanded.tileIndices).toEqual([24, 25, 32, 33]);
+    expect(expanded.newDimY).toBe(160);
+
+    // Reposition swap mode between two 2x1 blocks: (1, 0) <-> (4, 1) in 8-col tileset
+    const swapped = await repositionTilesInTileset(null, 256, 128, 32, 1, 0, 4, 1, 2, 1, 'swap');
+    expect(swapped.srcIndices).toEqual([1, 2]);
+    expect(swapped.dstIndices).toEqual([12, 13]);
+    expect(swapped.indexRemap).toEqual({ 1: 12, 2: 13, 12: 1, 13: 2 });
+
+    // Move mode only maps source -> dst
+    const moved = await repositionTilesInTileset(null, 256, 128, 32, 0, 0, 2, 0, 1, 1, 'move');
+    expect(moved.indexRemap).toEqual({ 0: 2 });
+
+    const baseMap = createDefaultMap();
+    baseMap.bgTiles[0][1][1] = 1;
+    baseMap.bgTiles[0][2][1] = 12;
+    baseMap.bgTiles[0][3][1] = 5;
+    baseMap.objectTiles[0][1][1] = 2;
+    baseMap.stamps = [
+      createMacroStampFromIndices('Test', 2, 1, [1, 2], 'bg1', false),
+    ];
+    const remappedMap = remapTileIndicesInMap(baseMap, swapped.indexRemap);
+    expect(remappedMap.bgTiles[0][1][1]).toBe(12);
+    expect(remappedMap.bgTiles[0][2][1]).toBe(1);
+    expect(remappedMap.bgTiles[0][3][1]).toBe(5);
+    expect(remappedMap.objectTiles[0][1][1]).toBe(13);
+    expect(remappedMap.stamps?.[0].tiles).toEqual([12, 13]);
+
+    // Palette nearest match + Sample Brush cell approximation
+    const palette = ['#be1e2d', '#228b4a', '#1f2937'];
+    expect(findNearestPaletteIndex(195, 28, 44, palette)).toBe(0);
+    expect(findNearestPaletteIndex(36, 140, 72, palette)).toBe(1);
+
+    // 2x2 cell: 1 transparent pixel + 3 green-ish pixels
+    const fgCell = {
+      width: 2,
+      height: 2,
+      data: new Uint8ClampedArray([
+        0, 0, 0, 0,
+        32, 138, 70, 255,
+        36, 142, 76, 255,
+        34, 136, 74, 255,
+      ]),
+    } as ImageData;
+    expect(sampleNearestPaletteIndexFromImageData(fgCell, palette)).toBe(1);
+
+    // Cell matching chroma-keyed background resolves to transparent (-1)
+    const bgCell = {
+      width: 2,
+      height: 2,
+      data: new Uint8ClampedArray([
+        250, 253, 244, 255,
+        251, 252, 245, 255,
+        249, 253, 243, 255,
+        250, 251, 244, 255,
+      ]),
+    } as ImageData;
+    expect(
+      sampleNearestPaletteIndexFromImageData(bgCell, palette, { r: 250, g: 253, b: 244, tolerance: 8 }),
+    ).toBe(-1);
   });
 });
