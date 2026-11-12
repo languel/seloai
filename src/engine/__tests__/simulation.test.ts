@@ -396,4 +396,35 @@ describe('SeloAI core engine', () => {
     );
     expect(sim.runtimes.size).toBe(DEFAULT_VILLAGERS.length + 5);
   });
+
+  it('produces creative non-repetitive DM beats and avoids reciting villager job titles in dialogue', async () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityRadiusTiles: 0,
+      enableWebSpeechFallback: false,
+      narratorEnabled: true,
+      narrateEvents: true,
+    });
+
+    const vA = DEFAULT_VILLAGERS[0];
+    const vB = DEFAULT_VILLAGERS[3];
+    const c1 = await sim.runConversationBetween(vA.id, vB.id);
+    const c2 = await sim.runConversationBetween(vA.id, vB.id);
+    expect(c1).toBeDefined();
+    expect(c2).toBeDefined();
+
+    const nar1 = c1!.messages.filter((m) => m.kind === 'narration').map((m) => m.text);
+    const nar2 = c2!.messages.filter((m) => m.kind === 'narration').map((m) => m.text);
+    expect(nar1[0]).not.toContain('steps close to speak');
+    expect(nar1[0]).not.toEqual(nar2[0]);
+    expect(nar1[nar1.length - 1]).not.toEqual(nar2[nar2.length - 1]);
+
+    const speech1 = c1!.messages.filter((m) => m.kind === 'speech');
+    for (const msg of speech1) {
+      expect(msg.text.toLowerCase()).not.toContain('rushnyk weaver');
+      expect(msg.text.toLowerCase()).not.toContain('lantern astronomer');
+    }
+  });
 });

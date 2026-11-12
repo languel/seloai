@@ -602,15 +602,18 @@ export class VillageSimulation {
     this.notify();
   }
 
-  private buildSceneIntro(cfgA: VillagerConfig, cfgB: VillagerConfig): string {
-    const style = this.modelSettings.narratorStyle;
-    if (style === 'chronicler') {
-      return `${cfgA.name} and ${cfgB.name} pause nearby in Selo for a word.`;
+  private getNearestLandmarkName(x: number, y: number): string {
+    if (this.map.spawnPoints.length === 0) return 'Village Square';
+    let best = this.map.spawnPoints[0];
+    let bestDist = Infinity;
+    for (const sp of this.map.spawnPoints) {
+      const d = Math.hypot(sp.x - x, sp.y - y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = sp;
+      }
     }
-    if (style === 'storybook') {
-      return `Along the village lane, ${cfgA.name} crosses paths with ${cfgB.name}.`;
-    }
-    return `${cfgA.name}, the ${cfgA.role.toLowerCase()}, meets ${cfgB.name}, the ${cfgB.role.toLowerCase()}, and they step close to speak.`;
+    return best.label;
   }
 
   private async emitNarrationTurn(
@@ -689,10 +692,22 @@ export class VillageSimulation {
 
     try {
       const eavesdropEnabled = this.modelSettings.proximityRadiusTiles > 0;
+      const landmarkName = this.getNearestLandmarkName((rtA.x + rtB.x) / 2, (rtA.y + rtB.y) / 2);
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
+        const introBeat = await brainRouter.generateSceneBeat({
+          phase: 'opening',
+          villagerA: cfgA,
+          runtimeA: rtA,
+          villagerB: cfgB,
+          runtimeB: rtB,
+          landmarkName,
+          settings: this.modelSettings,
+        });
+        this.appendWorldEvent(rtA, `Scene near ${landmarkName}: ${introBeat}`);
+        this.appendWorldEvent(rtB, `Scene near ${landmarkName}: ${introBeat}`);
         await this.emitNarrationTurn(
           conv,
-          this.buildSceneIntro(cfgA, cfgB),
+          introBeat,
           eavesdropEnabled,
           midpointResolver,
         );
@@ -801,7 +816,18 @@ export class VillageSimulation {
       this.appendWorldEvent(rtB, bSummary);
 
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
-        const closing = `${cfgA.name} and ${cfgB.name} part ways, carrying their thoughts back into Selo.`;
+        const closing = await brainRouter.generateSceneBeat({
+          phase: 'closing',
+          villagerA: cfgA,
+          runtimeA: rtA,
+          villagerB: cfgB,
+          runtimeB: rtB,
+          landmarkName,
+          history: conv.messages,
+          settings: this.modelSettings,
+        });
+        this.appendWorldEvent(rtA, `Aftermath: ${closing}`);
+        this.appendWorldEvent(rtB, `Aftermath: ${closing}`);
         await this.emitNarrationTurn(
           conv,
           closing,
@@ -857,8 +883,10 @@ export class VillageSimulation {
     for (const cfg of this.configs.values()) {
       const rt = this.runtimes.get(cfg.id);
       if (!rt) continue;
+      const near = this.getNearestLandmarkName(rt.x, rt.y);
+      const lastEvent = rt.worldFeed?.slice(-1)[0];
       lines.push(
-        `- ${cfg.name} (${cfg.role}) at (${Math.round(rt.x)},${Math.round(rt.y)}) [${rt.state}]: ${rt.currentIntention || rt.activityLabel}`,
+        `- ${cfg.name} near ${near} (${rt.state}): ${rt.currentIntention || rt.activityLabel}${lastEvent ? ` | latest: ${lastEvent}` : ''}`,
       );
     }
     return lines.join('\n');

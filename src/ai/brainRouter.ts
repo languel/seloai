@@ -276,14 +276,26 @@ class BrainRouter {
       .map((ev) => `- ${ev}`)
       .join('\n');
 
+    const spokenHistory = history.filter((m) => m.kind !== 'narration');
+    const latestNarration = [...history].reverse().find((m) => m.kind === 'narration')?.text;
+    const turnIdx = spokenHistory.length;
+    const sceneTactic =
+      turnIdx === 0
+        ? `Jump straight into the moment: react to what just happened nearby, tease a suspicion, or ask ${partnerName} something unexpected.`
+        : turnIdx === 1
+          ? `Counter, question, or complicate what ${partnerName} just said—reveal a subtle detail, doubt, wager, or local rumor.`
+          : `Steer the moment toward a decision: make a pact, warn ${partnerName}, change the subject sharply, or commit to what you'll do next.`;
+
     const systemPrompt = [
-      `You are ${villager.name}, the ${villager.role} in the village of Selo.`,
-      `Identity: ${villager.identity}`,
-      `Current motivation: ${runtime.currentIntention || villager.plan}`,
-      memories ? `Recent memories:\n${memories}` : '',
-      worldEvents ? `Recent world events & impressions:\n${worldEvents}` : '',
-      `Respond in character to ${partnerName} in 1 to 2 natural, spoken sentences (under 45 words).`,
-      `Speak ONLY plain dialogue in first person. NEVER start with or utter your own name (never write "${villager.name}:"), avoid stage directions, and never break character.`,
+      `You are ${villager.name} in the living village of Selo.`,
+      `Background subtext (keep implicit—NEVER recite your job title or copy this bio): ${villager.identity}`,
+      `Current drive: ${runtime.currentIntention || villager.plan}`,
+      memories ? `Personal memories:\n${memories}` : '',
+      worldEvents ? `Recent world events & rumors:\n${worldEvents}` : '',
+      latestNarration ? `Just unfolded right here: ${latestNarration}` : '',
+      `Dramatic direction: ${sceneTactic}`,
+      `Respond to ${partnerName} in 1 to 2 crisp, vivid spoken sentences (under 45 words). Vary rhythm and tone—be playful, guarded, superstitious, blunt, or curious as the moment demands.`,
+      `Speak ONLY plain dialogue in first person. NEVER start with or utter your own name (never write "${villager.name}:"), never re-introduce your profession, and avoid stage directions.`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -295,16 +307,16 @@ class BrainRouter {
           return { role: 'assistant' as const, content: m.text };
         }
         if (m.kind === 'narration' || m.senderId === 'narrator') {
-          return { role: 'user' as const, content: `Scene note: ${m.text}` };
+          return { role: 'user' as const, content: `[Dungeon Master Scene]: ${m.text}` };
         }
-        return { role: 'user' as const, content: `${m.senderName} says: "${m.text}"` };
+        return { role: 'user' as const, content: `${m.senderName}: "${m.text}"` };
       }),
     ];
 
     if (chatMessages.length === 1) {
       chatMessages.push({
         role: 'user',
-        content: `Greet ${partnerName} warmly in your own voice and share what you are working on today.`,
+        content: `Spark an interesting exchange with ${partnerName} right here—react to the atmosphere, a rumor, or something unresolved between you.`,
       });
     }
 
@@ -415,8 +427,8 @@ class BrainRouter {
 
     // Shared fallback chain across WebGPU GGUF/ONNX and local Ollama/LM Studio
     const routed = await this.runTextBrain(chatMessages, settings, {
-      maxTokens: 110,
-      temperature: 0.45,
+      maxTokens: 125,
+      temperature: 0.74,
       onChunk: params.onChunk,
       logLabel: `${villager.name} → ${partnerName}`,
       sanitizeName: villager.name,
@@ -641,19 +653,20 @@ class BrainRouter {
     const narratorName = params.settings.narratorName.trim() || 'Scribe';
     const toneHint =
       params.settings.narratorStyle === 'dungeon-master'
-        ? 'vivid dungeon-master cadence describing atmosphere, motives, and physical action'
+        ? 'inventive, suspenseful Dungeon Master crafting sensory atmosphere, subtle omens, hidden stakes, and dramatic character sparks'
         : params.settings.narratorStyle === 'chronicler'
-          ? 'crisp village chronicler tone'
-          : 'warm fireside storybook tone';
+          ? 'sharp folklore chronicler noting telling gestures, quiet rivalries, and shifting village omens'
+          : 'evocative fireside storyteller revealing unseen details, mood shifts, and folklore undercurrents';
 
     const msgs: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
         content: [
-          `You are ${narratorName}, the invisible Scribe and narrator of Selo village.`,
-          `Speak in a ${toneHint} in third-person narrative (1 to 3 concise sentences, under 55 words).`,
+          `You are ${narratorName}, the creative Dungeon Master and unseen chronicler shaping the living story of Selo.`,
+          `Write 1 to 3 evocative third-person sentences (under 60 words) in the voice of a ${toneHint}.`,
+          `Rules: NEVER parrot job titles or list coordinates like a status report. NEVER say generic filler like "they step close to speak". Introduce concrete sensory detail, a small complication, rumor, omen, or hidden motive that gives the villagers something rich to react to.`,
           `Never prefix your own name like "${narratorName}:" or break character.`,
-          params.sceneContext ? `Current village scene:\n${params.sceneContext}` : '',
+          params.sceneContext ? `Living village pulse:\n${params.sceneContext}` : '',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -667,10 +680,10 @@ class BrainRouter {
 
     try {
       const routed = await this.runTextBrain(msgs, params.settings, {
-        maxTokens: 110,
-        temperature: 0.5,
+        maxTokens: 125,
+        temperature: 0.78,
         onChunk: params.onChunk,
-        logLabel: `Narration (${narratorName})`,
+        logLabel: `DM (${narratorName})`,
         sanitizeName: narratorName,
         allowOmniFallback: true,
       });
@@ -682,17 +695,85 @@ class BrainRouter {
     }
 
     const started = performance.now();
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 90));
     const reply = synthesizeStorySimNarration(params.prompt, params.sceneContext, params.settings);
     const durationMs = Math.round(performance.now() - started);
     this.log({
       channel: 'sim',
       level: 'info',
-      title: `Narration (${narratorName} · Story Sim)`,
+      title: `DM (${narratorName} · Story Sim)`,
       detail: reply,
       durationMs,
     });
     return { text: reply, source: 'story-sim', durationMs };
+  }
+
+  /**
+   * Creative Dungeon Master scene framing for autonomous encounters (opening catalyst & closing consequence).
+   */
+  async generateSceneBeat(params: {
+    phase: 'opening' | 'closing';
+    villagerA: VillagerConfig;
+    runtimeA: VillagerRuntime;
+    villagerB: VillagerConfig;
+    runtimeB: VillagerRuntime;
+    landmarkName: string;
+    history?: ChatMessage[];
+    settings: ModelSettings;
+  }): Promise<string> {
+    const narratorName = params.settings.narratorName.trim() || 'Scribe';
+    const hasActiveWebGpu =
+      omniEngine.isReady() ||
+      minicpmEngine.isReady() ||
+      bonsaiEngine.isReady() ||
+      this.isTextModelReady();
+
+    if (
+      params.settings.inferenceMode !== 'story-sim' &&
+      (hasActiveWebGpu || params.settings.inferenceMode === 'local-api')
+    ) {
+      const snippet = (params.history ?? [])
+        .filter((m) => m.kind !== 'narration')
+        .slice(-2)
+        .map((m) => `${m.senderName}: "${m.text}"`)
+        .join(' ');
+      const contextNotes = [
+        `Setting: near ${params.landmarkName} in Selo`,
+        `${params.villagerA.name}'s current drive: ${params.runtimeA.currentIntention || params.villagerA.plan}`,
+        `${params.villagerB.name}'s current drive: ${params.runtimeB.currentIntention || params.villagerB.plan}`,
+        snippet ? `What just passed between them: ${snippet}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const taskInstruction =
+        params.phase === 'opening'
+          ? `Set a compelling 1-to-2 sentence Dungeon Master opening beat as ${params.villagerA.name} and ${params.villagerB.name} encounter one another. Give them a sensory omen, strange object, tension, or rumor to react to right now.`
+          : `Deliver a 1-sentence Dungeon Master consequence or lingering cliffhanger after that exchange—hinting at what changed or stirs next.`;
+
+      try {
+        const routed = await this.runTextBrain(
+          [
+            {
+              role: 'system',
+              content: [
+                `You are ${narratorName}, creative Dungeon Master of Selo (${params.settings.narratorStyle} style).`,
+                `Write crisp third-person prose under 40 words.`,
+                `FORBIDDEN clichés: NEVER list job titles like "the rushnyk weaver", NEVER say "steps close to speak", and NEVER say "part ways, carrying their thoughts".`,
+              ].join('\n'),
+            },
+            { role: 'user', content: `${contextNotes}\n\n${taskInstruction}` },
+          ],
+          params.settings,
+          { maxTokens: 80, temperature: 0.8, sanitizeName: narratorName, allowOmniFallback: true },
+        );
+        if (routed?.text) return routed.text;
+      } catch {
+        // Fall through to expressive DM story-sim synthesizer
+      }
+    }
+
+    return synthesizeDungeonMasterBeat(params);
   }
 
   async reflectMemory(params: {
@@ -765,15 +846,16 @@ class BrainRouter {
             {
               role: 'system',
               content: [
-                `You are the inner mind of ${villager.name} (${villager.role}). ${villager.identity}`,
+                `You are the inner restlessness of ${villager.name}. Keep your role implicit.`,
+                `Pick a surprising or story-worthy next move driven by curiosity, a hunch, rivalry, unfinished business, or a recent rumor—avoid dull routine chore wording.`,
                 `Reply in ONE line using this exact format:`,
-                `ACTION: talk:<NeighborName> OR visit:<LandmarkName> | MOTIVE: <6 to 12 word motive>`,
+                `ACTION: talk:<NeighborName> OR visit:<LandmarkName> | MOTIVE: <6 to 12 word dramatic motive>`,
               ].join('\n'),
             },
             { role: 'user', content: worldContext },
           ],
           settings,
-          { maxTokens: 45, temperature: 0.55, allowOmniFallback: true },
+          { maxTokens: 48, temperature: 0.78, allowOmniFallback: true },
         );
 
         if (routed?.text) {
@@ -802,26 +884,43 @@ class BrainRouter {
       }
     }
 
-    // Persona-grounded social/story fallback (zero lag)
-    if (otherNames.length > 0 && Math.random() < 0.62) {
+    // Emergent story-driven fallback motives (curiosity, hunches, rumors)
+    if (otherNames.length > 0 && Math.random() < 0.65) {
       const targetName = otherNames[Math.floor(Math.random() * otherNames.length)];
+      const socialMotives = [
+        `Testing a strange rumor with ${targetName} before dusk`,
+        `Asking ${targetName} who left the unmarked parcel by the square`,
+        `Settling an old wager with ${targetName}`,
+        `Catching ${targetName} alone to swap news nobody else heard`,
+      ];
       return {
         action: 'talk',
         targetName,
-        motive: `Seeking out ${targetName} to share news about ${villager.role.toLowerCase()} work`,
+        motive: socialMotives[Math.floor(Math.random() * socialMotives.length)],
       };
     }
-    if (landmarkNames.length > 0 && Math.random() < 0.65) {
+    if (landmarkNames.length > 0 && Math.random() < 0.68) {
       const targetName = landmarkNames[Math.floor(Math.random() * landmarkNames.length)];
+      const placeMotives = [
+        `Checking odd lantern reflections around ${targetName}`,
+        `Following fresh footprints along ${targetName}`,
+        `Listening for rumors drifting past ${targetName}`,
+        `Searching ${targetName} for what vanished earlier`,
+      ];
       return {
         action: 'visit',
         targetName,
-        motive: `Heading toward ${targetName}: ${villager.plan.slice(0, 56)}`,
+        motive: placeMotives[Math.floor(Math.random() * placeMotives.length)],
       };
     }
+    const wanderMotives = [
+      `Watching the wind shift over Selo rooftops`,
+      `Tracing a hunch nobody else seems to notice`,
+      `Loitering near the lane to see who slips past next`,
+    ];
     return {
       action: 'explore',
-      motive: villager.plan,
+      motive: wanderMotives[Math.floor(Math.random() * wanderMotives.length)],
     };
   }
 
@@ -1045,45 +1144,148 @@ class BrainRouter {
   }
 }
 
+let dmBeatCursor = 0;
+
+const DM_ENCOUNTER_OPENINGS = [
+  (a: string, b: string, place: string) =>
+    `A brass key tumbles from a roof eaves gutter near ${place}, chiming sharply between ${a} and ${b} as both stop short.`,
+  (a: string, b: string, place: string) =>
+    `Woodsmoke curls sideways across ${place}, carrying the sting of cedar pitch; ${a} spots something folded inside ${b}'s sleeve.`,
+  (a: string, b: string, place: string) =>
+    `For three heartbeats the distant millwheel stops creaking above ${place}, and in that sudden hush ${a} locks eyes with ${b}.`,
+  (a: string, b: string, place: string) =>
+    `Someone has chalked an unfamiliar tally mark onto the stones beside ${place}; ${a} arrives just as ${b} kneels to inspect it.`,
+  (a: string, b: string, place: string) =>
+    `A stray gust scatters dried marigold petals past ${place}, catching ${a} mid-stride while ${b} tries to hide a half-sealed note.`,
+  (a: string, b: string, place: string) =>
+    `Frogs along the creek bank fall dead silent near ${place}, drawing a sharp glance between ${a} and ${b} before either speaks.`,
+];
+
+const DM_ENCOUNTER_CLOSINGS = [
+  (a: string, b: string, place: string) =>
+    `${a} glances toward the shadows beyond ${place}, leaving ${b} with more questions than answers as the breeze picks up again.`,
+  (a: string, b: string, place: string) =>
+    `With a wry look neither will quite forget, ${a} pockets an unspoken pact while ${b} turns back toward ${place}.`,
+  (a: string, b: string, place: string) =>
+    `Just beyond ${place}, a shutter clicks softly shut—proof someone else caught the tail end of what ${a} and ${b} traded.`,
+  (a: string, b: string, place: string) =>
+    `The tension loosens by a single degree, though ${a} and ${b} both know the rumor around ${place} is only half-buried.`,
+];
+
+function synthesizeDungeonMasterBeat(params: {
+  phase: 'opening' | 'closing';
+  villagerA: VillagerConfig;
+  runtimeA: VillagerRuntime;
+  villagerB: VillagerConfig;
+  runtimeB: VillagerRuntime;
+  landmarkName: string;
+}): string {
+  const { phase, villagerA, villagerB, landmarkName } = params;
+  const idx = dmBeatCursor++;
+  if (phase === 'opening') {
+    return DM_ENCOUNTER_OPENINGS[idx % DM_ENCOUNTER_OPENINGS.length](
+      villagerA.name,
+      villagerB.name,
+      landmarkName,
+    );
+  }
+  return DM_ENCOUNTER_CLOSINGS[idx % DM_ENCOUNTER_CLOSINGS.length](
+    villagerA.name,
+    villagerB.name,
+    landmarkName,
+  );
+}
+
 function synthesizeStorySimReply(
   villager: VillagerConfig,
   partnerName: string,
   history: ChatMessage[],
 ): string {
   const spokenHistory = history.filter((m) => m.kind !== 'narration');
+  const dmBeat = [...history].reverse().find((m) => m.kind === 'narration')?.text.toLowerCase() ?? '';
   const last = spokenHistory[spokenHistory.length - 1];
+  const turn = spokenHistory.length;
+
+  // React directly to concrete DM scene hooks when opening
   if (!last) {
-    return `Good day, ${partnerName}! I was just about to ${villager.plan.toLowerCase()}`;
+    if (dmBeat.includes('key')) {
+      return `Hold on, ${partnerName}—did that brass key just drop out of nowhere, or did somebody leave it on purpose?`;
+    }
+    if (dmBeat.includes('tally') || dmBeat.includes('chalk')) {
+      return `Tell me honestly, ${partnerName}: did you draw that mark on the stone, or is someone keeping score on us?`;
+    }
+    if (dmBeat.includes('note') || dmBeat.includes('sleeve')) {
+      return `Don't tuck that folded paper away on my account, ${partnerName}. Who sent word without signing it?`;
+    }
+    if (dmBeat.includes('millwheel') || dmBeat.includes('hush') || dmBeat.includes('silent')) {
+      return `Did you hear everything go dead quiet just now, ${partnerName}? Even the birds stopped mid-note.`;
+    }
+    if (dmBeat.includes('pitch') || dmBeat.includes('smoke')) {
+      return `That's juniper smoke, not ordinary hearth pine—someone down the lane is burning something they shouldn't be, ${partnerName}.`;
+    }
+    return `You look like you've been dodging half the village since morning, ${partnerName}. What are you actually up to?`;
   }
+
   const lower = last.text.toLowerCase();
-  if (lower.includes('hello') || lower.includes('hi') || lower.includes('greetings')) {
-    return `Well met, ${partnerName}! As ${villager.role.toLowerCase()}, today I'm focused on ${villager.plan.toLowerCase()}`;
+  if (lower.includes('key') || lower.includes('lock') || lower.includes('box')) {
+    return `If it fits the old cellar latch by the mill, we're not telling a soul until nightfall—agreed, ${partnerName}?`;
+  }
+  if (lower.includes('mark') || lower.includes('rumor') || lower.includes('note') || lower.includes('secret')) {
+    return `Keep your voice down, ${partnerName}. Half of Selo pretends not to watch the lanes, yet every door has ears.`;
   }
   if (lower.includes('?')) {
-    return `That reminds me of something in my work as ${villager.role.toLowerCase()}—every pattern in Selo connects if you watch closely, ${partnerName}.`;
+    const reactions = [
+      `I wouldn't bet coin on the harmless answer, ${partnerName}—look closely at who's been hanging near the square since dawn.`,
+      `Maybe, though I swear somebody shifted the lantern posts last night when the fog rolled in.`,
+      `Ask me again after sunset, ${partnerName}. Right now I'd rather see what turns up first.`,
+    ];
+    return reactions[(turn + villager.name.length) % reactions.length];
   }
-  const templates = [
-    `I hear you, ${partnerName}. Even while I ${villager.plan.toLowerCase().replace(/\.$/, '')}, I keep thinking about the village stories.`,
-    `True enough, ${partnerName}! Let's cross paths by the square later once I finish my rounds.`,
-    `Aye, ${partnerName}, the wind off the hills feels auspicious today—perfect weather for craft and good company.`,
+
+  const dynamicMoves = [
+    `Wait—say that last part again, ${partnerName}. Because if that's true, someone lied at the fire last night.`,
+    `You don't fool me for a second, ${partnerName}, though I'll play along if you watch my back near the river.`,
+    `Make me a wager then: by dusk we'll know who stirred up that dust behind the windmill.`,
+    `Fair enough, ${partnerName}. Meet me past the hearth before everyone else wakes up—I want a straight answer next time.`,
   ];
-  return templates[(spokenHistory.length + villager.name.length) % templates.length];
+  return dynamicMoves[(turn + villager.name.charCodeAt(0)) % dynamicMoves.length];
 }
+
+let dmNarrationCursor = 0;
 
 function synthesizeStorySimNarration(
   prompt: string,
   sceneContext: string,
   settings: ModelSettings,
 ): string {
-  const firstSceneLine = sceneContext.split('\n').filter(Boolean).slice(0, 2).join(' ');
   const cleanPrompt = prompt.replace(/@[\p{L}\p{N}_-]+/gu, '').trim();
+  const lines = sceneContext.split('\n').filter(Boolean);
+  const sampleActor =
+    lines.length > 0 ? lines[dmNarrationCursor % lines.length].replace(/^- /, '').split(' near ')[0] : 'Someone';
+  dmNarrationCursor += 1;
+
+  if (/secret|rumor|trouble|happen|what|describe|look|scene/i.test(cleanPrompt)) {
+    const twists = [
+      `Under calm eaves, a loose shutter rattles without wind while ${sampleActor} lingers too long over an ordinary errand—as if waiting for a signal.`,
+      `Lantern oil smells sharp along the cobbles; behind polite small talk, an unspoken bargain hangs in the air like storm static.`,
+      `Fresh mud prints skirt the well without reaching any doorway, while ${sampleActor} tracks every footstep out of the corner of an eye.`,
+    ];
+    return twists[dmNarrationCursor % twists.length];
+  }
+
   if (settings.narratorStyle === 'chronicler') {
-    return `${firstSceneLine || 'The village lane stirs quietly.'}${cleanPrompt ? ` Noted: "${cleanPrompt.slice(0, 64)}".` : ''}`;
+    return cleanPrompt
+      ? `A sudden turn in the tale ripples past Selo's fences: "${cleanPrompt.slice(0, 72)}" sets watchful glances darting down the lane.`
+      : `Even quiet afternoons in Selo carry hidden tallies; two shadows cross paths just out of earshot of the hearth.`;
   }
   if (settings.narratorStyle === 'storybook') {
-    return `A gentle hush sweeps across Selo. ${firstSceneLine || 'The folk tend their craft along the lane.'}`;
+    return cleanPrompt
+      ? `The wind turns at the prompt of "${cleanPrompt.slice(0, 68)}"—bells murmur in the rafters, nudging old truths to the surface.`
+      : `Twilight brushes copper across the roofs, and a faint whistle drifts up from the creek where no boat is moored.`;
   }
-  return `${firstSceneLine || 'Smoke curls from the hearth while footsteps pause along the lane.'}${cleanPrompt ? ` Every glance turns toward what was just asked.` : ''}`;
+  return cleanPrompt
+    ? `At those words—"${cleanPrompt.slice(0, 70)}"—the village air tightens with intrigue; loose floorboards creak and motives tilt in unexpected directions.`
+    : `A distant raven drops a tarnished coin onto the cobbles, daring someone nearby to claim it first.`;
 }
 
 export const brainRouter = new BrainRouter();
