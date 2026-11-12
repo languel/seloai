@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  BookmarkPlus,
   Check,
   Download,
   Eraser,
+  Hand,
   PaintBucket,
   Paintbrush,
   Pipette,
@@ -10,10 +12,12 @@ import {
   Trash2,
   Undo2,
   Upload,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { ANIMATION_CATALOG, TILESET_PRESETS } from '../data/defaultData';
 import { drawAnimatedSprites, drawTileGrid, getCachedImage } from '../engine/renderer';
-import type { TileGrid, VillageMap } from '../engine/types';
+import type { PointOfInterest, TileGrid, TileMacroStamp, VillageMap } from '../engine/types';
 
 interface LevelEditorViewProps {
   map: VillageMap;
@@ -27,9 +31,17 @@ type EditorLayer =
   | 'obj1'
   | 'collision'
   | 'animated'
-  | 'spawns';
+  | 'spawns'
+  | 'pois';
 
 type Tool = 'brush' | 'eraser' | 'fill' | 'eyedropper';
+
+interface PaletteSelection {
+  startX: number;
+  startY: number;
+  w: number;
+  h: number;
+}
 
 function cloneMap(m: VillageMap): VillageMap {
   return {
@@ -39,6 +51,8 @@ function cloneMap(m: VillageMap): VillageMap {
     collisionGrid: m.collisionGrid.map((c) => [...c]),
     animatedSprites: m.animatedSprites.map((s) => ({ ...s })),
     spawnPoints: m.spawnPoints.map((p) => ({ ...p })),
+    pointsOfInterest: (m.pointsOfInterest ?? []).map((p) => ({ ...p })),
+    stamps: (m.stamps ?? []).map((s) => ({ ...s, tiles: [...s.tiles] })),
   };
 }
 
@@ -47,17 +61,41 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
   const [undoStack, setUndoStack] = useState<VillageMap[]>([]);
   const [activeLayer, setActiveLayer] = useState<EditorLayer>('bg0');
   const [tool, setTool] = useState<Tool>('brush');
-  const [selectedTileIdx, setSelectedTileIdx] = useState<number>(271); // grass tile in gentle-obj
+  const [paletteSel, setPaletteSel] = useState<PaletteSelection>({
+    startX: 271 % Math.max(1, Math.floor(map.tileSetDimX / map.tileDim)),
+    startY: Math.floor(271 / Math.max(1, Math.floor(map.tileSetDimX / map.tileDim))),
+    w: 1,
+    h: 1,
+  });
+  const [brushSize, setBrushSize] = useState<number>(1);
+  const [activeStampId, setActiveStampId] = useState<string | null>(null);
+  const [newStampName, setNewStampName] = useState('House');
+  const [newStampBlocks, setNewStampBlocks] = useState(true);
   const [selectedAnimSheet, setSelectedAnimSheet] = useState<string>('campfire.json');
   const [newSpawnLabel, setNewSpawnLabel] = useState('Village Gathering');
+  const [newPoiTag, setNewPoiTag] = useState('Plaza');
+  const [newPoiLabel, setNewPoiLabel] = useState('Village Plaza');
+  const [newPoiNote, setNewPoiNote] = useState('');
   const [showGrid, setShowGrid] = useState(true);
   const [showCollision, setShowCollision] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [paletteZoom, setPaletteZoom] = useState(1);
+  const [palettePanMode, setPalettePanMode] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(340);
   const [appliedToast, setAppliedToast] = useState(false);
+  const [tilesetLoadTick, setTilesetLoadTick] = useState(0);
 
   const mapCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const paletteCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const paletteScrollRef = useRef<HTMLDivElement | null>(null);
   const paintingRef = useRef(false);
+  const paletteDragRef = useRef<{
+    mode: 'none' | 'select' | 'pan';
+    anchorX: number;
+    anchorY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  }>({ mode: 'none', anchorX: 0, anchorY: 0, scrollLeft: 0, scrollTop: 0 });
 
   useEffect(() => {
     setDraft(cloneMap(map));
@@ -65,6 +103,10 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
 
   const tilesetCols = Math.max(1, Math.floor(draft.tileSetDimX / draft.tileDim));
   const tilesetRows = Math.max(1, Math.floor(draft.tileSetDimY / draft.tileDim));
+  const selectedTileIdx = paletteSel.startX + paletteSel.startY * tilesetCols;
+  const activeStamp: TileMacroStamp | undefined = activeStampId
+    ? (draft.stamps ?? []).find((s) => s.id === activeStampId)
+    : undefined;
 
   const pushUndo = (snapshot: VillageMap) => {
     setUndoStack((prev) => [...prev.slice(-19), cloneMap(snapshot)]);
@@ -77,32 +119,49 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     setDraft(prev);
   };
 
+  // Preload/notify when tileset URL changes so switching tilesets renders immediately
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setTilesetLoadTick((t) => t + 1);
+    img.src = draft.tileSetUrl;
+  }, [draft.tileSetUrl]);
+
   // Render tileset palette
   useEffect(() => {
     const canvas = paletteCanvasRef.current;
     if (!canvas) return;
-    const img = getCachedImage(draft.tileSetUrl);
     const draw = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const img = getCachedImage(draft.tileSetUrl);
       if (img) {
         ctx.drawImage(img, 0, 0, draft.tileSetDimX, draft.tileSetDimY);
       }
-      // Highlight selected tile
-      if (selectedTileIdx >= 0) {
-        const tx = (selectedTileIdx % tilesetCols) * draft.tileDim;
-        const ty = Math.floor(selectedTileIdx / tilesetCols) * draft.tileDim;
-        ctx.strokeStyle = '#ff3b30';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(tx + 1.5, ty + 1.5, draft.tileDim - 3, draft.tileDim - 3);
-      }
+      // Highlight selected single or multi-tile rectangle
+      const rx = paletteSel.startX * draft.tileDim;
+      const ry = paletteSel.startY * draft.tileDim;
+      const rw = paletteSel.w * draft.tileDim;
+      const rh = paletteSel.h * draft.tileDim;
+      ctx.fillStyle = 'rgba(255, 59, 48, 0.18)';
+      ctx.fillRect(rx, ry, rw, rh);
+      ctx.strokeStyle = '#ff3b30';
+      ctx.lineWidth = Math.max(2, 2 / paletteZoom);
+      ctx.strokeRect(rx + 1, ry + 1, Math.max(2, rw - 2), Math.max(2, rh - 2));
     };
     draw();
-    const timer = setInterval(draw, 350);
+    const timer = setInterval(draw, 200);
     return () => clearInterval(timer);
-  }, [draft.tileSetUrl, draft.tileSetDimX, draft.tileSetDimY, draft.tileDim, selectedTileIdx, tilesetCols]);
+  }, [
+    draft.tileSetUrl,
+    draft.tileSetDimX,
+    draft.tileSetDimY,
+    draft.tileDim,
+    paletteSel,
+    paletteZoom,
+    tilesetLoadTick,
+  ]);
 
   // Render map editor canvas
   useEffect(() => {
@@ -180,6 +239,29 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
             ctx.fillText(sp.label, cx, cy - 13);
             ctx.restore();
           }
+
+          // Points of Interest (#Tag markers)
+          for (const poi of draft.pointsOfInterest ?? []) {
+            const cx = (poi.x + 0.5) * draft.tileDim;
+            const cy = (poi.y + 0.5) * draft.tileDim;
+            ctx.save();
+            ctx.fillStyle = '#d97706';
+            ctx.strokeStyle = '#fffbeb';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - 10);
+            ctx.lineTo(cx + 9, cy);
+            ctx.lineTo(cx, cy + 10);
+            ctx.lineTo(cx - 9, cy);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.font = '700 10px Inter, sans-serif';
+            ctx.fillStyle = '#fef3c7';
+            ctx.textAlign = 'center';
+            ctx.fillText(`#${poi.tag}`, cx, cy - 14);
+            ctx.restore();
+          }
         }
       }
       raf = requestAnimationFrame(render);
@@ -244,11 +326,43 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
       return;
     }
 
+    if (activeLayer === 'pois' && isInitialClick) {
+      pushUndo(draft);
+      const next = cloneMap(draft);
+      const pois: PointOfInterest[] = next.pointsOfInterest ?? [];
+      if (tool === 'eraser') {
+        next.pointsOfInterest = pois.filter((p) => p.x !== tx || p.y !== ty);
+      } else {
+        const cleanTag = newPoiTag.trim().replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '') || `POI${pois.length + 1}`;
+        next.pointsOfInterest = [
+          ...pois,
+          {
+            id: `poi-${Date.now()}`,
+            tag: cleanTag,
+            label: newPoiLabel.trim() || cleanTag,
+            x: tx,
+            y: ty,
+            description: newPoiNote.trim() || undefined,
+          },
+        ];
+      }
+      setDraft(next);
+      return;
+    }
+
     if (activeLayer === 'collision') {
       if (isInitialClick) pushUndo(draft);
       setDraft((prev) => {
         const next = cloneMap(prev);
-        next.collisionGrid[tx][ty] = tool !== 'eraser';
+        for (let dx = 0; dx < brushSize; dx++) {
+          for (let dy = 0; dy < brushSize; dy++) {
+            const gx = tx + dx;
+            const gy = ty + dy;
+            if (gx >= 0 && gy >= 0 && gx < next.width && gy < next.height) {
+              next.collisionGrid[gx][gy] = tool !== 'eraser';
+            }
+          }
+        }
         return next;
       });
       return;
@@ -260,7 +374,13 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     if (tool === 'eyedropper') {
       const picked = grid[tx]?.[ty] ?? -1;
       if (picked >= 0) {
-        setSelectedTileIdx(picked);
+        setPaletteSel({
+          startX: picked % tilesetCols,
+          startY: Math.floor(picked / tilesetCols),
+          w: 1,
+          h: 1,
+        });
+        setActiveStampId(null);
         setTool('brush');
       }
       return;
@@ -291,14 +411,71 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     }
 
     if (isInitialClick) pushUndo(draft);
-    const val = tool === 'eraser' ? -1 : selectedTileIdx;
     setDraft((prev) => {
       const next = cloneMap(prev);
       const targetGrid = getActiveTileGrid(next);
-      if (targetGrid) {
-        targetGrid[tx][ty] = val;
-        if (activeLayer.startsWith('obj')) {
-          next.collisionGrid[tx][ty] = val !== -1;
+      if (!targetGrid) return next;
+
+      if (tool === 'eraser') {
+        for (let dx = 0; dx < brushSize; dx++) {
+          for (let dy = 0; dy < brushSize; dy++) {
+            const gx = tx + dx;
+            const gy = ty + dy;
+            if (gx >= 0 && gy >= 0 && gx < next.width && gy < next.height) {
+              targetGrid[gx][gy] = -1;
+              if (activeLayer.startsWith('obj')) {
+                next.collisionGrid[gx][gy] = false;
+              }
+            }
+          }
+        }
+        return next;
+      }
+
+      if (activeStamp) {
+        for (let dy = 0; dy < activeStamp.height; dy++) {
+          for (let dx = 0; dx < activeStamp.width; dx++) {
+            const gx = tx + dx;
+            const gy = ty + dy;
+            const tileVal = activeStamp.tiles[dy * activeStamp.width + dx] ?? -1;
+            if (tileVal >= 0 && gx >= 0 && gy >= 0 && gx < next.width && gy < next.height) {
+              targetGrid[gx][gy] = tileVal;
+              if (activeStamp.blocksMovement || activeLayer.startsWith('obj')) {
+                next.collisionGrid[gx][gy] = true;
+              }
+            }
+          }
+        }
+        return next;
+      }
+
+      if (paletteSel.w > 1 || paletteSel.h > 1) {
+        for (let dy = 0; dy < paletteSel.h; dy++) {
+          for (let dx = 0; dx < paletteSel.w; dx++) {
+            const gx = tx + dx;
+            const gy = ty + dy;
+            if (gx >= 0 && gy >= 0 && gx < next.width && gy < next.height) {
+              const tileVal = paletteSel.startX + dx + (paletteSel.startY + dy) * tilesetCols;
+              targetGrid[gx][gy] = tileVal;
+              if (activeLayer.startsWith('obj')) {
+                next.collisionGrid[gx][gy] = true;
+              }
+            }
+          }
+        }
+        return next;
+      }
+
+      for (let dx = 0; dx < brushSize; dx++) {
+        for (let dy = 0; dy < brushSize; dy++) {
+          const gx = tx + dx;
+          const gy = ty + dy;
+          if (gx >= 0 && gy >= 0 && gx < next.width && gy < next.height) {
+            targetGrid[gx][gy] = selectedTileIdx;
+            if (activeLayer.startsWith('obj')) {
+              next.collisionGrid[gx][gy] = true;
+            }
+          }
         }
       }
       return next;
@@ -378,7 +555,11 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
         const parsed = JSON.parse(String(reader.result));
         if (Array.isArray(parsed.bgTiles) && typeof parsed.width === 'number') {
           pushUndo(draft);
-          setDraft(parsed);
+          setDraft(cloneMap({
+            ...parsed,
+            pointsOfInterest: Array.isArray(parsed.pointsOfInterest) ? parsed.pointsOfInterest : [],
+            stamps: Array.isArray(parsed.stamps) ? parsed.stamps : [],
+          }));
         }
       } catch {
         // ignore invalid json
@@ -393,10 +574,64 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     setTimeout(() => setAppliedToast(false), 2000);
   };
 
+  const getPaletteTileFromEvent = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = paletteCanvasRef.current!;
+    const rect = c.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * c.width;
+    const py = ((e.clientY - rect.top) / rect.height) * c.height;
+    return {
+      tx: Math.max(0, Math.min(tilesetCols - 1, Math.floor(px / draft.tileDim))),
+      ty: Math.max(0, Math.min(tilesetRows - 1, Math.floor(py / draft.tileDim))),
+    };
+  };
+
+  const handleSaveStamp = () => {
+    const tiles: number[] = [];
+    for (let dy = 0; dy < paletteSel.h; dy++) {
+      for (let dx = 0; dx < paletteSel.w; dx++) {
+        tiles.push(paletteSel.startX + dx + (paletteSel.startY + dy) * tilesetCols);
+      }
+    }
+    const stamp: TileMacroStamp = {
+      id: `stamp-${Date.now()}`,
+      name: newStampName.trim() || `Stamp ${(draft.stamps?.length ?? 0) + 1}`,
+      width: paletteSel.w,
+      height: paletteSel.h,
+      tiles,
+      blocksMovement: newStampBlocks,
+    };
+    pushUndo(draft);
+    setDraft((prev) => ({
+      ...prev,
+      stamps: [...(prev.stamps ?? []), stamp],
+    }));
+    setActiveStampId(stamp.id);
+    setTool('brush');
+  };
+
+  const handleStartSidebarResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.max(260, Math.min(680, startW + (ev.clientX - startX)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   return (
-    <div className="grid h-full grid-cols-1 lg:grid-cols-[310px_1fr] overflow-hidden">
+    <div
+      className="flex flex-col lg:flex-row h-full overflow-hidden"
+      style={{ '--editor-sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
+    >
       {/* Left Sidebar: Layers, Tools, Tileset Palette */}
-      <aside className="flex flex-col border-r border-borderFolk bg-surface overflow-hidden">
+      <aside className="flex flex-col border-b lg:border-b-0 lg:border-r border-borderFolk bg-surface overflow-hidden shrink-0 lg:w-[var(--editor-sidebar-w)]">
         <div className="border-b border-borderFolk bg-card p-3 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <label htmlFor="map-name-input" className="text-xs font-semibold uppercase tracking-wider text-muted">
@@ -461,6 +696,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
                 ['collision', 'Collision Mask'],
                 ['animated', 'Anim Sprites'],
                 ['spawns', 'Spawn Points'],
+                ['pois', 'POIs (#Tag)'],
               ] as Array<[EditorLayer, string]>
             ).map(([id, label]) => (
               <button
@@ -504,9 +740,33 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
               </button>
             ))}
           </div>
+          {/* Brush Size */}
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <span className="text-[11px] font-medium text-muted">Brush Size</span>
+            <div className="flex items-center gap-1">
+              {[1, 2, 3, 4].map((sz) => (
+                <button
+                  key={sz}
+                  type="button"
+                  onClick={() => {
+                    setBrushSize(sz);
+                    setActiveStampId(null);
+                  }}
+                  aria-pressed={brushSize === sz}
+                  className={`rounded border px-2 py-0.5 font-mono text-[11px] ${
+                    brushSize === sz
+                      ? 'border-indigoFolk bg-indigoFolk text-white'
+                      : 'border-borderFolk bg-card hover:bg-surface'
+                  }`}
+                >
+                  {sz}×{sz}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* Context Palette: Tileset / Animated / Spawns */}
+        {/* Context Palette: Tileset / Animated / Spawns / POIs */}
         <div className="flex-1 overflow-y-auto p-3 space-y-3 thin-scroll">
           {activeLayer === 'animated' ? (
             <div className="space-y-2">
@@ -569,6 +829,80 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
                 ))}
               </ul>
             </div>
+          ) : activeLayer === 'pois' ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-muted">
+                Place <code className="font-mono">#Tag</code> landmarks on the map to reference them in chat (e.g. <code className="font-mono">@Mara go to #Plaza</code>).
+              </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                <div>
+                  <label htmlFor="poi-tag" className="block text-[11px] font-medium">
+                    #Tag
+                  </label>
+                  <input
+                    id="poi-tag"
+                    type="text"
+                    value={newPoiTag}
+                    onChange={(e) => setNewPoiTag(e.target.value.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, ''))}
+                    placeholder="Plaza"
+                    className="w-full rounded border border-borderFolk bg-card px-2 py-1 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="poi-label" className="block text-[11px] font-medium">
+                    Label
+                  </label>
+                  <input
+                    id="poi-label"
+                    type="text"
+                    value={newPoiLabel}
+                    onChange={(e) => setNewPoiLabel(e.target.value)}
+                    placeholder="Village Plaza"
+                    className="w-full rounded border border-borderFolk bg-card px-2 py-1 text-xs"
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="poi-note" className="block text-[11px] font-medium">
+                  Lore / Note (optional)
+                </label>
+                <input
+                  id="poi-note"
+                  type="text"
+                  value={newPoiNote}
+                  onChange={(e) => setNewPoiNote(e.target.value)}
+                  placeholder="Stone fountain & market stalls"
+                  className="w-full rounded border border-borderFolk bg-card px-2 py-1 text-xs"
+                />
+              </div>
+              <ul className="space-y-1 pt-1">
+                {(draft.pointsOfInterest ?? []).map((poi) => (
+                  <li
+                    key={poi.id}
+                    className="flex items-center justify-between gap-2 rounded border border-borderFolk bg-card px-2 py-1 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-mono font-semibold text-amberFolk">#{poi.tag}</span>{' '}
+                      <span className="truncate">{poi.label}</span>{' '}
+                      <span className="font-mono text-[10px] text-muted">({poi.x},{poi.y})</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDraft((p) => ({
+                          ...p,
+                          pointsOfInterest: (p.pointsOfInterest ?? []).filter((x) => x.id !== poi.id),
+                        }))
+                      }
+                      aria-label={`Remove #${poi.tag}`}
+                      className="text-crimson hover:opacity-80 shrink-0"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -594,6 +928,8 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
                       tileSetDimX: preset.w,
                       tileSetDimY: preset.h,
                     }));
+                    setPaletteSel({ startX: 0, startY: 0, w: 1, h: 1 });
+                    setActiveStampId(null);
                   }
                 }}
                 className="w-full rounded border border-borderFolk bg-card px-2 py-1 text-xs"
@@ -604,41 +940,262 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
                   </option>
                 ))}
                 {!TILESET_PRESETS.some((t) => t.url === draft.tileSetUrl) && (
-                  <option value={draft.tileSetUrl}>Custom Embroidery Tileset</option>
+                  <option value={draft.tileSetUrl}>Custom Tileset</option>
                 )}
               </select>
 
-              <div className="text-[11px] font-mono text-muted">
-                Tile #{selectedTileIdx} ({selectedTileIdx % tilesetCols},{' '}
-                {Math.floor(selectedTileIdx / tilesetCols)}) · {tilesetCols}×{tilesetRows} grid
+              {/* Tile Resolution + Palette Zoom/Pan */}
+              <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
+                <div className="flex items-center gap-1">
+                  <label htmlFor="tile-res-select" className="text-muted">
+                    Tile px
+                  </label>
+                  <select
+                    id="tile-res-select"
+                    value={draft.tileDim}
+                    onChange={(e) => {
+                      const nextDim = Number(e.target.value);
+                      pushUndo(draft);
+                      setDraft((p) => ({ ...p, tileDim: nextDim }));
+                      setPaletteSel({ startX: 0, startY: 0, w: 1, h: 1 });
+                      setActiveStampId(null);
+                    }}
+                    className="rounded border border-borderFolk bg-card px-1.5 py-0.5 font-mono text-[11px]"
+                  >
+                    {[16, 24, 32, 48].map((dim) => (
+                      <option key={dim} value={dim}>
+                        {dim}px
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setPaletteZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                    aria-label="Zoom out palette"
+                    className="rounded border border-borderFolk bg-card p-1 hover:bg-surface"
+                  >
+                    <ZoomOut className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaletteZoom(1)}
+                    aria-label="Reset palette zoom"
+                    className="rounded border border-borderFolk bg-card px-1.5 py-0.5 font-mono text-[10px]"
+                  >
+                    {paletteZoom}×
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaletteZoom((z) => Math.min(4, Number((z + 0.25).toFixed(2))))}
+                    aria-label="Zoom in palette"
+                    className="rounded border border-borderFolk bg-card p-1 hover:bg-surface"
+                  >
+                    <ZoomIn className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPalettePanMode((v) => !v)}
+                    aria-pressed={palettePanMode}
+                    aria-label="Toggle palette pan mode"
+                    className={`rounded border p-1 ${
+                      palettePanMode
+                        ? 'border-indigoFolk bg-indigoFolk text-white'
+                        : 'border-borderFolk bg-card hover:bg-surface'
+                    }`}
+                  >
+                    <Hand className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-auto rounded border border-borderFolk bg-stone-900 max-h-80 thin-scroll">
+              <div className="text-[11px] font-mono text-muted flex items-center justify-between gap-2">
+                <span>
+                  {activeStamp
+                    ? `Stamp: ${activeStamp.name} (${activeStamp.width}×${activeStamp.height})`
+                    : paletteSel.w > 1 || paletteSel.h > 1
+                      ? `Block ${paletteSel.w}×${paletteSel.h} @ (${paletteSel.startX},${paletteSel.startY})`
+                      : `Tile #${selectedTileIdx} (${paletteSel.startX},${paletteSel.startY})`}
+                </span>
+                <span>
+                  {tilesetCols}×{tilesetRows}
+                </span>
+              </div>
+
+              <div
+                ref={paletteScrollRef}
+                className="overflow-auto rounded border border-borderFolk bg-stone-900 max-h-80 thin-scroll"
+                onWheel={(e) => {
+                  if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+                    setPaletteZoom((z) => Math.max(0.5, Math.min(4, Number((z + delta).toFixed(2)))));
+                  }
+                }}
+              >
                 <canvas
                   ref={paletteCanvasRef}
                   width={draft.tileSetDimX}
                   height={draft.tileSetDimY}
-                  onClick={(e) => {
-                    const c = paletteCanvasRef.current!;
-                    const rect = c.getBoundingClientRect();
-                    const px = ((e.clientX - rect.left) / rect.width) * c.width;
-                    const py = ((e.clientY - rect.top) / rect.height) * c.height;
-                    const tx = Math.floor(px / draft.tileDim);
-                    const ty = Math.floor(py / draft.tileDim);
-                    setSelectedTileIdx(tx + ty * tilesetCols);
+                  onPointerDown={(e) => {
+                    if (palettePanMode || e.button === 1 || e.altKey) {
+                      const sc = paletteScrollRef.current;
+                      paletteDragRef.current = {
+                        mode: 'pan',
+                        anchorX: e.clientX,
+                        anchorY: e.clientY,
+                        scrollLeft: sc?.scrollLeft ?? 0,
+                        scrollTop: sc?.scrollTop ?? 0,
+                      };
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      return;
+                    }
+                    const { tx, ty } = getPaletteTileFromEvent(e);
+                    paletteDragRef.current = {
+                      mode: 'select',
+                      anchorX: tx,
+                      anchorY: ty,
+                      scrollLeft: 0,
+                      scrollTop: 0,
+                    };
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    setPaletteSel({ startX: tx, startY: ty, w: 1, h: 1 });
+                    setActiveStampId(null);
                     setTool('brush');
                   }}
-                  className="pixel-canvas cursor-crosshair block"
-                  style={{ width: `${Math.min(280, draft.tileSetDimX)}px`, height: 'auto' }}
+                  onPointerMove={(e) => {
+                    const drag = paletteDragRef.current;
+                    if (drag.mode === 'pan') {
+                      const sc = paletteScrollRef.current;
+                      if (sc) {
+                        sc.scrollLeft = drag.scrollLeft - (e.clientX - drag.anchorX);
+                        sc.scrollTop = drag.scrollTop - (e.clientY - drag.anchorY);
+                      }
+                      return;
+                    }
+                    if (drag.mode === 'select') {
+                      const { tx, ty } = getPaletteTileFromEvent(e);
+                      const minX = Math.min(drag.anchorX, tx);
+                      const minY = Math.min(drag.anchorY, ty);
+                      const maxX = Math.max(drag.anchorX, tx);
+                      const maxY = Math.max(drag.anchorY, ty);
+                      setPaletteSel({
+                        startX: minX,
+                        startY: minY,
+                        w: maxX - minX + 1,
+                        h: maxY - minY + 1,
+                      });
+                    }
+                  }}
+                  onPointerUp={() => {
+                    paletteDragRef.current.mode = 'none';
+                  }}
+                  className={`pixel-canvas block ${palettePanMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
+                  style={{
+                    width: `${Math.round(draft.tileSetDimX * paletteZoom)}px`,
+                    height: `${Math.round(draft.tileSetDimY * paletteZoom)}px`,
+                  }}
                 />
+              </div>
+
+              {/* Macros / Stamps */}
+              <div className="rounded border border-borderFolk bg-card p-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    Macros / Stamps
+                  </span>
+                  <span className="text-[10px] font-mono text-muted">
+                    {paletteSel.w}×{paletteSel.h} selected
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={newStampName}
+                    onChange={(e) => setNewStampName(e.target.value)}
+                    placeholder="House, Bridge..."
+                    aria-label="Stamp name"
+                    className="min-w-0 flex-1 rounded border border-borderFolk bg-surface px-2 py-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveStamp}
+                    className="inline-flex shrink-0 items-center gap-1 rounded bg-indigoFolk px-2 py-1 text-[11px] font-medium text-white hover:opacity-95"
+                  >
+                    <BookmarkPlus className="h-3 w-3" />
+                    <span>Save</span>
+                  </button>
+                </div>
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-muted cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newStampBlocks}
+                    onChange={(e) => setNewStampBlocks(e.target.checked)}
+                  />
+                  <span>Stamp marks collision</span>
+                </label>
+
+                {(draft.stamps ?? []).length > 0 && (
+                  <ul className="space-y-1 max-h-32 overflow-y-auto thin-scroll">
+                    {(draft.stamps ?? []).map((st) => (
+                      <li
+                        key={st.id}
+                        className={`flex items-center justify-between gap-1 rounded border px-2 py-1 text-xs ${
+                          activeStampId === st.id
+                            ? 'border-crimson bg-crimson/10 font-semibold'
+                            : 'border-borderFolk bg-surface'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveStampId((cur) => (cur === st.id ? null : st.id));
+                            setTool('brush');
+                          }}
+                          className="min-w-0 flex-1 text-left truncate"
+                        >
+                          {st.name}{' '}
+                          <span className="font-mono text-[10px] text-muted">
+                            ({st.width}×{st.height})
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (activeStampId === st.id) setActiveStampId(null);
+                            setDraft((p) => ({
+                              ...p,
+                              stamps: (p.stamps ?? []).filter((x) => x.id !== st.id),
+                            }));
+                          }}
+                          aria-label={`Delete stamp ${st.name}`}
+                          className="text-crimson hover:opacity-80 shrink-0"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           )}
         </div>
       </aside>
 
+      {/* Resizable vertical divider */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize tileset palette panel"
+        onPointerDown={handleStartSidebarResize}
+        className="hidden lg:block w-1.5 cursor-col-resize bg-borderFolk/60 hover:bg-indigoFolk/70 transition-colors shrink-0"
+      />
+
       {/* Main Editor Canvas + Action Header */}
-      <section className="flex flex-col overflow-hidden bg-stone-950">
+      <section className="flex flex-1 flex-col overflow-hidden bg-stone-950 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borderFolk bg-card px-4 py-2">
           <div className="flex flex-wrap items-center gap-2">
             <button

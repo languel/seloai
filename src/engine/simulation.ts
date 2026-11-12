@@ -647,7 +647,7 @@ export class VillageSimulation {
   private async planNextVillagerAction(cfg: VillagerConfig, rt: VillagerRuntime) {
     const now = Date.now();
     const others = [...this.configs.values()].filter((v) => v.id !== cfg.id);
-    const landmarks = this.map.spawnPoints.map((s) => s.label);
+    const landmarks = this.getLandmarks().map((l) => (l.tag ? `#${l.tag} (${l.label})` : l.label));
 
     const decision = await brainRouter.decideVillagerNextAction({
       villager: cfg,
@@ -672,8 +672,12 @@ export class VillageSimulation {
         safeGoal = this.findAdjacentStandTile(targetRt.x, targetRt.y, rt.id);
       }
     } else if (decision.action === 'visit' && decision.targetName) {
-      const lm = this.map.spawnPoints.find(
-        (s) => s.label.toLowerCase() === decision.targetName!.toLowerCase(),
+      const targetNorm = decision.targetName.trim().replace(/^#/, '').toLowerCase();
+      const lm = this.getLandmarks().find(
+        (l) =>
+          (l.tag && l.tag.toLowerCase() === targetNorm) ||
+          l.label.toLowerCase() === targetNorm ||
+          l.label.toLowerCase().includes(targetNorm),
       );
       if (lm) {
         safeGoal = this.findAdjacentStandTile(lm.x, lm.y, rt.id);
@@ -790,18 +794,35 @@ export class VillageSimulation {
     this.notify(true);
   }
 
+  private getLandmarks(): Array<{ label: string; tag?: string; x: number; y: number; description?: string }> {
+    const pois = (this.map.pointsOfInterest ?? []).map((p) => ({
+      label: p.label,
+      tag: p.tag,
+      x: p.x,
+      y: p.y,
+      description: p.description,
+    }));
+    const spawns = this.map.spawnPoints.map((s) => ({
+      label: s.label,
+      x: s.x,
+      y: s.y,
+    }));
+    return [...pois, ...spawns];
+  }
+
   private getNearestLandmarkName(x: number, y: number): string {
-    if (this.map.spawnPoints.length === 0) return 'Village Square';
-    let best = this.map.spawnPoints[0];
+    const landmarks = this.getLandmarks();
+    if (landmarks.length === 0) return 'Village Square';
+    let best = landmarks[0];
     let bestDist = Infinity;
-    for (const sp of this.map.spawnPoints) {
-      const d = Math.hypot(sp.x - x, sp.y - y);
+    for (const lm of landmarks) {
+      const d = Math.hypot(lm.x - x, lm.y - y);
       if (d < bestDist) {
         bestDist = d;
-        best = sp;
+        best = lm;
       }
     }
-    return best.label;
+    return best.tag ? `#${best.tag} (${best.label})` : best.label;
   }
 
   private async emitNarrationTurn(
@@ -1098,6 +1119,12 @@ export class VillageSimulation {
     const focal = focus ?? { x: this.player.x, y: this.player.y };
     const focalLandmark = this.getNearestLandmarkName(focal.x, focal.y);
     const lines: string[] = [`Focal location: ${focalLandmark}`];
+    const pois = this.map.pointsOfInterest ?? [];
+    if (pois.length > 0) {
+      lines.push(
+        `Points of interest: ${pois.map((p) => `#${p.tag} (${p.label}${p.description ? `: ${p.description}` : ''})`).join(', ')}`,
+      );
+    }
 
     const entries = [...this.configs.values()]
       .map((cfg) => {
@@ -1150,8 +1177,8 @@ export class VillageSimulation {
     });
     const lower = userText.toLowerCase();
 
-    // Let natural language "@Character / @all go talk to Taras / visit windmill / scatter" steer motivation + movement
-    const directedMotion = /\b(go|head|walk|meet|find|talk|visit|check|gather|move|wander|scatter|roam|explore|disperse|come|patrol|spread)\b/i.test(
+    // Let natural language "@Character / @all go talk to Bram / visit #Plaza / scatter" steer motivation + movement
+    const directedMotion = /\b(go|head|walk|meet|find|talk|visit|check|gather|move|wander|scatter|roam|explore|disperse|come|patrol|spread)\b|#[a-z0-9_-]+/i.test(
       userText,
     );
     if (!directedMotion) return;
@@ -1179,10 +1206,22 @@ export class VillageSimulation {
       }
     }
 
-    const landmark = this.map.spawnPoints.find((sp) => {
-      const words = sp.label.toLowerCase().split(/\s+/);
-      return lower.includes(sp.label.toLowerCase()) || words.some((w) => w.length > 3 && lower.includes(w));
-    });
+    const pois = this.map.pointsOfInterest ?? [];
+    const hashTags = [...userText.matchAll(/#([a-z0-9_-]+)/gi)].map((m) => m[1].toLowerCase());
+    const poiByHash = hashTags
+      .map((tag) => pois.find((p) => p.tag.toLowerCase() === tag))
+      .find((p) => Boolean(p));
+
+    const landmark =
+      poiByHash ??
+      this.getLandmarks().find((lm) => {
+        const words = lm.label.toLowerCase().split(/\s+/);
+        return (
+          (lm.tag && lower.includes(`#${lm.tag.toLowerCase()}`)) ||
+          lower.includes(lm.label.toLowerCase()) ||
+          words.some((w) => w.length > 3 && lower.includes(w))
+        );
+      });
     if (landmark) {
       // Spread multi-character arrivals around the landmark so they don't collide on one tile
       const ringOffsets = [
@@ -1196,7 +1235,7 @@ export class VillageSimulation {
       const off = ringOffsets[slotIndex % ringOffsets.length];
       const goal = findNearestWalkableTile(this.map, landmark.x + off.dx, landmark.y + off.dy);
       const path = findBestPath(goal);
-      rt.currentIntention = `Headed to ${landmark.label}`;
+      rt.currentIntention = landmark.tag ? `Headed to #${landmark.tag} (${landmark.label})` : `Headed to ${landmark.label}`;
       rt.activityLabel = rt.currentIntention;
       if (path.length > 0) {
         rt.path = path;

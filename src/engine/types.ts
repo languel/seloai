@@ -23,6 +23,27 @@ export interface SpawnPoint {
   y: number;
 }
 
+export interface PointOfInterest {
+  id: string;
+  /** Short addressable tag without leading # (e.g. "Plaza", "OldBridge") */
+  tag: string;
+  label: string;
+  x: number;
+  y: number;
+  description?: string;
+}
+
+export interface TileMacroStamp {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  /** Row-major tile indices [dy * width + dx] from tileset (-1 = empty) */
+  tiles: number[];
+  layer?: 'bg0' | 'bg1' | 'obj0' | 'obj1';
+  blocksMovement?: boolean;
+}
+
 export interface VillageMap {
   name: string;
   tileDim: number;
@@ -37,6 +58,8 @@ export interface VillageMap {
   collisionGrid: boolean[][];
   animatedSprites: AnimatedSpritePlacement[];
   spawnPoints: SpawnPoint[];
+  pointsOfInterest?: PointOfInterest[];
+  stamps?: TileMacroStamp[];
 }
 
 export interface SpritesheetPreset {

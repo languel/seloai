@@ -283,20 +283,27 @@ export function createDefaultMap(): VillageMap {
       { id: 'spawn-well', label: 'River Crossing', x: 14, y: 14 },
       { id: 'spawn-hearth', label: 'Hearth Fire', x: 28, y: 11 },
     ],
+    pointsOfInterest: [
+      { id: 'poi-plaza', tag: 'Plaza', label: 'Village Square', x: 22, y: 16, description: 'Central cobble plaza where travelers gather' },
+      { id: 'poi-windmill', tag: 'Windmill', label: 'Windmill Meadow', x: 35, y: 20, description: 'Breezy meadow beneath the wooden windmill' },
+      { id: 'poi-crossing', tag: 'RiverCrossing', label: 'River Crossing', x: 14, y: 14, description: 'Stone ford beside the clear creek' },
+      { id: 'poi-hearth', tag: 'Hearth', label: 'Hearth Fire', x: 28, y: 11, description: 'Warm stone firepit for evening tales' },
+    ],
+    stamps: [],
   };
 }
 
 export const DEFAULT_VILLAGERS: VillagerConfig[] = [
   {
-    id: 'v-olena',
-    name: 'Olena',
-    role: 'Rushnyk Weaver',
+    id: 'v-mara',
+    name: 'Mara',
+    role: 'Tapestry Weaver',
     accentColor: '#b42828',
     spritesheetId: 'f1',
     identity:
-      'Olena is a spirited embroidery weaver who encodes village stories into red-and-black cross-stitch patterns on linen rushnyky. She is warm, observant, and fiercely proud of craft.',
-    plan: 'Gather madder root dyes near the meadow and compare geometric motifs with neighbors.',
-    voiceStyle: 'Warm, melodic, unhurried village storyteller.',
+      'Mara is a spirited weaver who stitches village legends and star-charts into crimson-and-indigo tapestries. She is warm, observant, and fiercely proud of her craft.',
+    plan: 'Gather madder root dyes near the meadow and compare woven motifs with neighbors.',
+    voiceStyle: 'Warm, melodic, unhurried storyteller.',
     voice: {
       gender: 'female',
       language: 'British English',
@@ -308,13 +315,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
     speed: 0.78,
   },
   {
-    id: 'v-taras',
-    name: 'Taras',
+    id: 'v-bram',
+    name: 'Bram',
     role: 'Clockwork Blacksmith',
     accentColor: '#c98a2c',
     spritesheetId: 'f4',
     identity:
-      'Taras tends the village forge and repairs the wooden windmill gears. Blunt yet deeply generous, he prefers practical fixes over idle philosophy.',
+      'Bram tends the village forge and repairs the wooden windmill gears. Blunt yet deeply generous, he prefers practical fixes over idle philosophy.',
     plan: 'Inspect the southern windmill blades and trade iron hinges for fresh bread.',
     voiceStyle: 'Grounded, rhythmic baritone, concise sentences.',
     voice: {
@@ -328,13 +335,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
     speed: 0.72,
   },
   {
-    id: 'v-marusia',
-    name: 'Marusia',
+    id: 'v-lyra',
+    name: 'Lyra',
     role: 'Herbalist & Apothecary',
     accentColor: '#2f6b47',
     spritesheetId: 'f3',
     identity:
-      'Marusia studies wild thyme, chamomile, and river reeds. She speaks in gentle nature metaphors and remembers every villager’s seasonal ailments.',
+      'Lyra studies wild thyme, chamomile, and river reeds. She speaks in gentle nature metaphors and remembers every villager’s seasonal ailments.',
     plan: 'Check the riverbank herbs near the waterfall and brew evening tea for the square.',
     voiceStyle: 'Soft, curious, lyrical tone.',
     voice: {
@@ -348,13 +355,13 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
     speed: 0.75,
   },
   {
-    id: 'v-bogdan',
-    name: 'Bogdan',
+    id: 'v-corin',
+    name: 'Corin',
     role: 'Lantern Astronomer',
     accentColor: '#23436b',
     spritesheetId: 'f7',
     identity:
-      'Bogdan maps the stars above the Carpathian ridge and keeps the village almanac. He asks quirky questions about time, memory, and how minds work.',
+      'Corin maps the constellations above the ridge and keeps the village almanac. He asks quirky questions about time, memory, and how minds work.',
     plan: 'Stroll toward the campfire to record evening weather notes and debate big ideas.',
     voiceStyle: 'Thoughtful, inquisitive, slight dry humor.',
     voice: {
@@ -368,14 +375,14 @@ export const DEFAULT_VILLAGERS: VillagerConfig[] = [
     speed: 0.7,
   },
   {
-    id: 'v-kalyna',
-    name: 'Kalyna',
+    id: 'v-sera',
+    name: 'Sera',
     role: 'Traveling Chronicler',
     accentColor: '#7c3aed',
     spritesheetId: 'f6',
     identity:
-      'Kalyna just arrived from neighboring valleys with songs, gossip, and sketches of folk ornaments. She loves sparking lively debates at the village square.',
-    plan: 'Interview every villager to compile a living oral history of the settlement.',
+      'Sera just arrived from neighboring valleys with songs, rumors, and sketches of ancient stonework. She loves sparking lively debates at the plaza.',
+    plan: 'Interview every resident to compile a living chronicle of the settlement.',
     voiceStyle: 'Energetic, expressive, playful.',
     voice: {
       gender: 'female',

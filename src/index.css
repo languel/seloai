@@ -15,7 +15,7 @@
 }
 
 :root {
-  /* Light: unbleached linen parchment & vyshyvanka madder/indigo/ochre */
+  /* Light: warm parchment, madder crimson, indigo & ochre */
   --linen-light: #f6f0e4;
   --surface-light: #efe6d5;
   --card-light: #fbf7ef;
@@ -118,7 +118,7 @@ body,
   font-family: 'VCR OSD Mono', ui-monospace, monospace;
 }
 
-/* Eastern European vyshyvanka cross-stitch geometric accent ribbon */
+/* Woven geometric accent ribbon */
 .rushnyk-ribbon {
   height: 6px;
   background-image: repeating-linear-gradient(

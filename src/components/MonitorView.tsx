@@ -287,7 +287,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
     try {
       const v = villagers[0] ?? {
         id: 'test',
-        name: 'Olena',
+        name: 'Mara',
         role: 'Weaver',
         accentColor: '#a82424',
         spritesheetId: 'f1',

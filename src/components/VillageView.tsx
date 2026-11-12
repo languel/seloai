@@ -45,6 +45,7 @@ interface MentionCandidate {
   name: string;
   role: string;
   accentColor: string;
+  prefix?: '@' | '#';
   statusHint?: string;
   searchAliases?: string;
 }
@@ -52,12 +53,13 @@ interface MentionCandidate {
 function findActiveMention(
   text: string,
   caret: number,
-): { start: number; query: string } | null {
+): { trigger: '@' | '#'; start: number; query: string } | null {
   const before = text.slice(0, caret);
-  const match = before.match(/(?:^|\s)@([^\s\n@]*)$/);
+  const match = before.match(/(?:^|\s)([@#])([^\s\n@#]*)$/);
   if (!match) return null;
-  const atIndex = before.lastIndexOf('@');
-  return { start: atIndex, query: match[1] };
+  const trigger = match[1] as '@' | '#';
+  const idx = before.lastIndexOf(trigger);
+  return { trigger, start: idx, query: match[2] };
 }
 
 export const VillageView: React.FC<VillageViewProps> = ({
@@ -75,7 +77,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [followSelected, setFollowSelected] = useState(false);
   const [feedMode, setFeedMode] = useState<'focused' | 'village'>('focused');
   const [chatInput, setChatInput] = useState('');
-  const [mentionMatch, setMentionMatch] = useState<{ start: number; query: string } | null>(null);
+  const [mentionMatch, setMentionMatch] = useState<{ trigger: '@' | '#'; start: number; query: string } | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -392,8 +394,19 @@ export const VillageView: React.FC<VillageViewProps> = ({
     })),
   ];
 
+  const poiCandidates: MentionCandidate[] = (sim.map.pointsOfInterest ?? []).map((p) => ({
+    id: `poi-${p.id}`,
+    name: p.tag,
+    role: p.description ? `${p.label} — ${p.description}` : p.label,
+    accentColor: '#d97706',
+    prefix: '#',
+    statusHint: `(${p.x}, ${p.y})`,
+    searchAliases: `${p.tag} ${p.label} ${p.description ?? ''}`,
+  }));
+
+  const activePool = mentionMatch?.trigger === '#' ? poiCandidates : mentionCandidates;
   const filteredMentions = mentionMatch
-    ? mentionCandidates.filter((c) => {
+    ? activePool.filter((c) => {
         const q = mentionMatch.query.toLowerCase();
         return (
           c.name.toLowerCase().includes(q) ||
@@ -411,7 +424,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     const caret = textareaRef.current?.selectionStart ?? chatInput.length;
     const before = chatInput.slice(0, start);
     const after = chatInput.slice(caret);
-    const inserted = `@${cand.name} `;
+    const inserted = `${cand.prefix ?? '@'}${cand.name} `;
     const nextText = `${before}${inserted}${after}`;
     setChatInput(nextText);
     setMentionMatch(null);
@@ -433,22 +446,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
     setMentionIdx(0);
   };
 
-  const handleTriggerAtMention = () => {
+  const insertTriggerChar = (trigger: '@' | '#') => {
     const el = textareaRef.current;
     const caret = el?.selectionStart ?? chatInput.length;
     const needsSpace = caret > 0 && !/\s$/.test(chatInput.slice(0, caret));
-    const inserted = `${needsSpace ? ' ' : ''}@`;
+    const inserted = `${needsSpace ? ' ' : ''}${trigger}`;
     const nextText = `${chatInput.slice(0, caret)}${inserted}${chatInput.slice(caret)}`;
     const nextCaret = caret + inserted.length;
     setChatInput(nextText);
     setMentionMatch(findActiveMention(nextText, nextCaret));
     setMentionIdx(0);
     requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(nextCaret, nextCaret);
+      el?.focus();
+      el?.setSelectionRange(nextCaret, nextCaret);
     });
   };
+
+  const handleTriggerAtMention = () => insertTriggerChar('@');
+  const handleTriggerHashMention = () => insertTriggerChar('#');
 
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1035,7 +1050,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                               className="h-2.5 w-2.5 shrink-0 rounded-full"
                               style={{ backgroundColor: active ? '#fff' : cand.accentColor }}
                             />
-                            <span className="font-semibold truncate">@{cand.name}</span>
+                            <span className="font-semibold truncate">
+                              {cand.prefix ?? '@'}
+                              {cand.name}
+                            </span>
                             <span className={`truncate text-[11px] ${active ? 'text-white/80' : 'text-muted'}`}>
                               {cand.role}
                             </span>
@@ -1121,6 +1139,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   @
                 </button>
 
+                <button
+                  type="button"
+                  onClick={handleTriggerHashMention}
+                  aria-label="Reference a Point of Interest with #"
+                  className="inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-md border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-amberFolk"
+                >
+                  #
+                </button>
+
                 {!isScribeSelected && (
                   <button
                     type="button"
@@ -1148,7 +1175,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 </button>
               </form>
               <p id="chat-mention-hint" className="text-[10px] text-muted">
-                Tip: use <code className="font-mono">@Name</code> or <code className="font-mono">@{narratorName}</code> to address or direct characters (e.g. &ldquo;@Olena meet Taras at the windmill&rdquo;).
+                Tip: use <code className="font-mono">@Name</code>, <code className="font-mono">@{narratorName}</code>, or <code className="font-mono">#POI</code> to direct characters (e.g. &ldquo;@Mara meet Bram at #Windmill&rdquo;).
               </p>
             </div>
           </>

@@ -59,7 +59,7 @@ describe('SeloAI core engine', () => {
     expect(sim.tickCount).toBe(20);
 
     const target = DEFAULT_VILLAGERS[0];
-    await sim.sendUserTextToVillager(target.id, 'Hello Olena, what are you weaving today?', false);
+    await sim.sendUserTextToVillager(target.id, 'Hello Mara, what are you weaving today?', false);
 
     const conv = sim.conversations.find((c) => c.participantIds.includes(target.id));
     expect(conv).toBeDefined();
@@ -107,8 +107,8 @@ describe('SeloAI core engine', () => {
   it('provides effective Omni voice profiles and documented speech locales', () => {
     expect(OMNI_SPEECH_LANGUAGES).toContain('British English');
     expect(OMNI_SPEECH_LANGUAGES).toContain('Polish');
-    const taras = DEFAULT_VILLAGERS.find((v) => v.name === 'Taras')!;
-    const v = getEffectiveVoice(taras);
+    const bram = DEFAULT_VILLAGERS.find((v) => v.name === 'Bram')!;
+    const v = getEffectiveVoice(bram);
     expect(v.gender).toBe('male');
     expect(v.pitchSemitones).toBeLessThan(0);
 
@@ -138,18 +138,18 @@ describe('SeloAI core engine', () => {
 
   it('strips NPC self-name prefixes and separates stage narration for the Scribe', () => {
     const parsed = parseDialogueAndNarration(
-      'Olena: *adjusts her shawl by the loom* "Good morning, neighbor!" [smiles warmly]',
-      'Olena',
+      'Mara: *adjusts her shawl by the loom* "Good morning, neighbor!" [smiles warmly]',
+      'Mara',
     );
     expect(parsed.spoken).toBe('"Good morning, neighbor!"');
-    expect(parsed.spoken.toLowerCase().startsWith('olena:')).toBe(false);
+    expect(parsed.spoken.toLowerCase().startsWith('mara:')).toBe(false);
     expect(parsed.narration).toEqual([
       'Adjusts her shawl by the loom',
       'Smiles warmly',
     ]);
 
-    const quoted = parseDialogueAndNarration('**Taras**: "The flour is freshly milled."', 'Taras');
-    expect(quoted.spoken).toBe('The flour is freshly milled.');
+    const quoted = parseDialogueAndNarration('**Bram**: "The gears are freshly oiled."', 'Bram');
+    expect(quoted.spoken).toBe('The gears are freshly oiled.');
   });
 
   it('interleaves Scribe narration and alternate NPC turns in strict sequence without self-names', async () => {
@@ -192,9 +192,9 @@ describe('SeloAI core engine', () => {
       enableWebSpeechFallback: false,
     });
 
-    const olena = DEFAULT_VILLAGERS[0];
-    const rt = sim.runtimes.get(olena.id)!;
-    // Place the player directly left of Olena on a walkable tile and try to walk straight through her.
+    const mara = DEFAULT_VILLAGERS[0];
+    const rt = sim.runtimes.get(mara.id)!;
+    // Place the player directly left of Mara on a walkable tile and try to walk straight through her.
     sim.player.x = rt.x - 1.2;
     sim.player.y = rt.y;
     rt.path = [];
@@ -225,21 +225,21 @@ describe('SeloAI core engine', () => {
     expect(targetsCustomNarrator.map((t) => t.id)).toEqual(['narrator']);
 
     const targetsSingle = parseMentionTargets(
-      'Hey @Taras how is the mill?',
+      'Hey @Bram how is the forge?',
       DEFAULT_VILLAGERS,
       DEFAULT_MODEL_SETTINGS,
     );
-    expect(targetsSingle.map((t) => t.id)).toEqual(['v-taras']);
+    expect(targetsSingle.map((t) => t.id)).toEqual(['v-bram']);
 
     const targetsMulti = parseMentionTargets(
-      '@Scribe @Olena @Taras discuss the harvest',
+      '@Scribe @Mara @Bram discuss the festival',
       DEFAULT_VILLAGERS,
       DEFAULT_MODEL_SETTINGS,
     );
-    expect(targetsMulti.map((t) => t.id)).toEqual(['narrator', 'v-olena', 'v-taras']);
+    expect(targetsMulti.map((t) => t.id)).toEqual(['narrator', 'v-mara', 'v-bram']);
   });
 
-  it('routes @Scribe narration, @Target replies, multi-target turn order, and @Olena world directions', async () => {
+  it('routes @Scribe narration, @Target replies, multi-target turn order, and @Mara world directions', async () => {
     const map = createDefaultMap();
     const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
       ...DEFAULT_MODEL_SETTINGS,
@@ -259,22 +259,22 @@ describe('SeloAI core engine', () => {
     const latestAfterScribe = sim.conversations[sim.conversations.length - 1];
     expect(latestAfterScribe.messages.some((m) => m.senderId === 'narrator' && m.kind === 'narration')).toBe(true);
 
-    // 2. Direct @Taras reply switches focused target and invokes Taras
-    const tarasRes = await sim.sendUserAddressedMessage(
+    // 2. Direct @Bram reply switches focused target and invokes Bram
+    const bramRes = await sim.sendUserAddressedMessage(
       'narrator',
-      '@Taras tell me about the flour mill',
+      '@Bram tell me about the clockwork forge',
       false,
     );
-    expect(tarasRes.focusedTargetId).toBe('v-taras');
-    const tarasConv = sim.conversations.find(
-      (c) => c.participantIds.includes('v-taras') && c.messages.some((m) => m.senderId === 'v-taras'),
+    expect(bramRes.focusedTargetId).toBe('v-bram');
+    const bramConv = sim.conversations.find(
+      (c) => c.participantIds.includes('v-bram') && c.messages.some((m) => m.senderId === 'v-bram'),
     );
-    expect(tarasConv).toBeDefined();
+    expect(bramConv).toBeDefined();
 
-    // 3. Multi-target @Scribe @Olena @Taras turn order
+    // 3. Multi-target @Scribe @Mara @Bram turn order
     const multiRes = await sim.sendUserAddressedMessage(
       undefined,
-      '@Scribe @Olena @Taras gather and share your thoughts',
+      '@Scribe @Mara @Bram gather and share your thoughts',
       false,
     );
     expect(multiRes.focusedTargetId).toBe('narrator');
@@ -288,17 +288,17 @@ describe('SeloAI core engine', () => {
       .slice(promptIdx + 1)
       .filter((m) => m.senderId !== 'human-visitor')
       .map((m) => m.senderId);
-    expect(replySenders).toEqual(['narrator', 'v-olena', 'v-taras']);
+    expect(replySenders).toEqual(['narrator', 'v-mara', 'v-bram']);
 
-    // 4. World direction "@Olena walk to Windmill Meadow" updates intention & path
+    // 4. World direction "@Mara walk to Windmill Meadow" updates intention & path
     await sim.sendUserAddressedMessage(
       undefined,
-      '@Olena walk to Windmill Meadow',
+      '@Mara walk to Windmill Meadow',
       false,
     );
-    const olenaRt = sim.runtimes.get('v-olena')!;
-    expect(olenaRt.currentIntention?.toLowerCase()).toContain('windmill meadow');
-    expect(olenaRt.path.length).toBeGreaterThan(0);
+    const maraRt = sim.runtimes.get('v-mara')!;
+    expect(maraRt.currentIntention?.toLowerCase()).toContain('windmill');
+    expect(maraRt.path.length).toBeGreaterThan(0);
   });
 
   it('auto-generates distinct 128x128 pixel spritesheets across independent visual traits', () => {
@@ -423,7 +423,7 @@ describe('SeloAI core engine', () => {
 
     const speech1 = c1!.messages.filter((m) => m.kind === 'speech');
     for (const msg of speech1) {
-      expect(msg.text.toLowerCase()).not.toContain('rushnyk weaver');
+      expect(msg.text.toLowerCase()).not.toContain('tapestry weaver');
       expect(msg.text.toLowerCase()).not.toContain('lantern astronomer');
     }
   });
@@ -548,17 +548,17 @@ describe('SeloAI core engine', () => {
     expect(DEFAULT_MODEL_SETTINGS.speakReasoning).toBe(false);
 
     const parsed = parseDialogueAndNarration(
-      '<think>I need to respond in character as Olena.</think><thought>Did Taras hide the brass key?</thought>*glances at the lantern* Olena: Who left the gate unlatched?',
-      'Olena',
+      '<think>I need to respond in character as Mara.</think><thought>Did Bram hide the brass key?</thought>*glances at the lantern* Mara: Who left the gate unlatched?',
+      'Mara',
     );
-    expect(parsed.reasoning).toEqual(['I need to respond in character as Olena.']);
-    expect(parsed.thoughts).toEqual(['Did Taras hide the brass key?']);
+    expect(parsed.reasoning).toEqual(['I need to respond in character as Mara.']);
+    expect(parsed.thoughts).toEqual(['Did Bram hide the brass key?']);
     expect(parsed.narration).toEqual(['Glances at the lantern']);
     expect(parsed.spoken).toBe('Who left the gate unlatched?');
     expect(parsed.display).not.toContain('I need to respond in character');
 
     // Unclosed streaming <think> must never leak into story display
-    const streaming = parseDialogueAndNarration('<think>I need to stay in character', 'Olena');
+    const streaming = parseDialogueAndNarration('<think>I need to stay in character', 'Mara');
     expect(streaming.spoken).toBe('');
     expect(streaming.display).toBe('');
     expect(streaming.reasoning).toEqual(['I need to stay in character']);
@@ -583,6 +583,56 @@ describe('SeloAI core engine', () => {
     expect(narConv).toBeDefined();
     const reply = narConv!.messages.find((m) => m.senderId === 'narrator');
     expect(reply?.senderName).toBe('Scribe');
-    expect(reply?.text).toContain('Windmill Meadow');
+    expect(reply?.text).toContain('Windmill');
+  });
+
+  it('routes @Character go to #POI and preserves POIs and macro stamps in map JSON', async () => {
+    const map = createDefaultMap();
+    map.stamps = [
+      {
+        id: 'stamp-house',
+        name: 'Cottage',
+        width: 2,
+        height: 2,
+        tiles: [10, 11, 42, 43],
+        blocksMovement: true,
+      },
+    ];
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityRadiusTiles: 0,
+      enableWebSpeechFallback: false,
+      narratorEnabled: true,
+    });
+
+    await sim.sendUserAddressedMessage(undefined, '@Mara go to #Plaza', false);
+    const maraRt = sim.runtimes.get('v-mara')!;
+    expect(maraRt.currentIntention).toContain('#Plaza');
+    expect(maraRt.path.length).toBeGreaterThan(0);
+
+    const json = exportVillageJson({
+      map,
+      villagers: DEFAULT_VILLAGERS,
+      modelSettings: DEFAULT_MODEL_SETTINGS,
+      conversations: [],
+      savedAt: 2000,
+    });
+    const parsed = parseImportedVillageJson(json);
+    expect(parsed.map?.pointsOfInterest?.some((p) => p.tag === 'Plaza')).toBe(true);
+    expect(parsed.map?.stamps?.[0].name).toBe('Cottage');
+    expect(parsed.map?.stamps?.[0].tiles).toEqual([10, 11, 42, 43]);
+  });
+
+  it('generates generic fantasy names without regional-locked defaults', () => {
+    const batch = createAutomatedVillagerBatch(6, { rng: createSeededRng(99) });
+    expect(batch).toHaveLength(6);
+    const banned = ['rushnyk', 'vyshyvanka', 'bandura', 'olena', 'taras', 'marusia', 'bogdan', 'kalyna'];
+    for (const v of batch) {
+      const hay = `${v.name} ${v.role} ${v.identity}`.toLowerCase();
+      for (const word of banned) {
+        expect(hay).not.toContain(word);
+      }
+    }
   });
 });

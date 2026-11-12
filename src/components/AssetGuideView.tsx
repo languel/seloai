@@ -14,10 +14,10 @@ const PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'img-character',
     category: 'image',
-    title: 'Character Spritesheet (Vyshyvanka Folk Art)',
+    title: 'Character Spritesheet (Cozy Fantasy RPG)',
     attachmentNote: 'Attach character-spritesheet-template-384x512.png as image reference',
     prompt: `Create a top-down 2D pixel-art RPG character spritesheet strictly matching the attached 3x4 grid template (384x512 px, 3 columns x 4 rows of 128x128 cells representing 32x32 pixel blocks).
-Subject: An Eastern European village weaver wearing an embroidered white linen vyshyvanka tunic with geometric crimson and indigo cross-stitch patterns, dark wool vest, and boots.
+Subject: A fantasy village weaver wearing a tailored linen tunic with crimson and indigo trim, dark wool vest, and leather boots.
 Layout rules:
 - Row 1 (top): facing DOWN (front view), 3 walking animation frames (left foot, neutral, right foot).
 - Row 2: facing LEFT, 3 walking animation frames.
@@ -28,17 +28,17 @@ Style: Crisp 16-bit/32-bit pixel art, clean dark outlines, flat solid #00FF00 ch
   {
     id: 'img-tileset',
     category: 'image',
-    title: 'Village Tileset (Eastern European Embroidery Theme)',
+    title: 'Village Tileset (Fantasy & Medieval Craft Theme)',
     attachmentNote: 'Attach tileset-template-512x512.png as image reference',
     prompt: `Create a seamless 2D top-down RPG pixel-art tileset strictly aligned to the attached 16x16 grid of 32x32 pixel tiles (512x512 px total).
-Visual theme: Eastern European folk embroidery (vyshyvanka & rushnyk) blended with cozy pastoral pixel art — warm unbleached linen ground tones, madder crimson, indigo blue, golden ochre, and forest sage.
+Visual theme: Cozy fantasy and medieval craft pixel art — warm parchment stone tones, madder crimson, indigo blue, golden ochre, and forest sage.
 Zone layout matching the reference colors:
-- Rows 1-3 (green zone): seamless meadow grass, clover, wildflower patches, embroidered border grass.
+- Rows 1-3 (green zone): seamless meadow grass, clover, wildflower patches, mossy border grass.
 - Rows 4-6 (tan zone): cobblestone plaza tiles, dirt footpath edges, wooden bridge planks.
 - Rows 7-8 (blue zone): clear creek water, shoreline edges, river reeds.
-- Rows 9-12 (cream zone): whitewashed village cottage walls, thatched roofs, carved timber doors and window frames.
-- Rows 13-14 (dark green zone): birch trees, rowanberry bushes, woven wattle fences.
-- Rows 15-16 (crimson zone): wooden weaving loom, hearth firepit, clay jugs, folk lanterns, decorative cross-stitch rug tiles.
+- Rows 9-12 (cream zone): half-timbered cottage walls, thatched roofs, carved timber doors and window frames.
+- Rows 13-14 (dark green zone): oak trees, berry bushes, wooden fences.
+- Rows 15-16 (crimson zone): wooden weaving loom, hearth firepit, earthenware jugs, lanterns, decorative woven rug tiles.
 Rules: Orthographic top-down 3/4 RPG perspective, crisp pixel edges, NO anti-aliasing blur, NO visible black grid lines in the output, transparent background around object tiles.`,
   },
   {
@@ -47,7 +47,7 @@ Rules: Orthographic top-down 3/4 RPG perspective, crisp pixel edges, NO anti-ali
     title: 'Animated Village Prop Strip (4 Frames)',
     attachmentNote: 'Output 128x32 px horizontal 4-frame strip (32x32 per frame)',
     prompt: `Create a 128x32 pixel-art 4-frame horizontal sprite strip (four 32x32 frames side by side) on a transparent background.
-Subject: A cozy Carpathian stone hearth / clay oven with glowing embers and gentle flickering sparks, styled with subtle folk craft motifs.
+Subject: A cozy medieval stone hearth / clay oven with glowing embers and gentle flickering sparks.
 Frames 1 to 4 must animate smoothly in a seamless loop at the exact same pixel baseline with zero horizontal drift.`,
   },
   {
@@ -56,7 +56,7 @@ Frames 1 to 4 must animate smoothly in a seamless loop at the exact same pixel b
     title: 'LLM Prompt: Generate Villager Roster JSON',
     attachmentNote: 'Attach villager-character-template.json for exact schema',
     prompt: `Generate a JSON array of 4 villagers for SeloAI matching the schema in villager-character-template.json.
-Theme: An Eastern European craft village inspired by folk embroidery, woodworking, astronomy, and herbalism.
+Theme: A fantasy and medieval craft village inspired by weaving, blacksmithing, astronomy, alchemy, and herbalism.
 Requirements:
 - Fields per villager: id, name, role, accentColor (hex), spritesheetId ("f1".."f8"), identity (2 vivid sentences), plan (1 current goal), voiceStyle (tone for TTS), homeTile ({x, y} within 12..38, 10..30), speed (0.65..0.9).
 - Return ONLY valid JSON with no markdown commentary.`,
@@ -109,7 +109,7 @@ const DOWNLOAD_FILES = [
 
 export const AssetGuideView: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [genConcept, setGenConcept] = useState('A blind bandura folk musician who remembers every valley ballad');
+  const [genConcept, setGenConcept] = useState('A wandering lute minstrel who remembers every tavern ballad');
   const [genOutput, setGenOutput] = useState('');
   const [generating, setGenerating] = useState(false);
 
@@ -152,8 +152,8 @@ export const AssetGuideView: React.FC = () => {
           JSON.stringify(
             {
               id: `v-${Date.now()}`,
-              name: 'Ostap',
-              role: 'Bandura Minstrel',
+              name: 'Alden',
+              role: 'Wandering Minstrel',
               accentColor: '#23436b',
               spritesheetId: 'f2',
               identity: genConcept.trim(),

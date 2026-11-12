@@ -103,7 +103,7 @@ export const FACIAL_HAIR_OPTIONS: TraitOption<FacialHairId>[] = [
 ];
 
 export const CLOTHING_STYLE_OPTIONS: TraitOption<ClothingStyleId>[] = [
-  { id: 'rushnyk-tunic', label: 'Rushnyk Tunic' },
+  { id: 'rushnyk-tunic', label: 'Embroidered Tunic' },
   { id: 'herbalist-dress', label: 'Herbalist Dress' },
   { id: 'blacksmith-apron', label: 'Smith Apron' },
   { id: 'scholar-robe', label: 'Scholar Robe' },
@@ -157,7 +157,7 @@ export const ACCESSORY_OPTIONS: TraitOption<AccessoryId>[] = [
   { id: 'straw-hat', label: 'Harvest Hat' },
   { id: 'hood', label: 'Traveler Hood' },
   { id: 'bandana', label: 'Headband' },
-  { id: 'headscarf', label: 'Khustka Scarf' },
+  { id: 'headscarf', label: 'Woven Headscarf' },
   { id: 'feather-cap', label: 'Feather Cap' },
 ];
 
@@ -399,66 +399,66 @@ export function inferAppearanceFromPreset(spritesheetId: string): CharacterAppea
 }
 
 const FEMININE_NAMES = [
-  'Solomiya',
-  'Zoryana',
-  'Daryna',
-  'Halyna',
-  'Lesya',
-  'Ivanka',
-  'Kvitoslava',
-  'Marta',
-  'Oksana',
-  'Roksana',
-  'Svitlana',
-  'Vira',
+  'Elena',
+  'Freya',
+  'Iris',
+  'Nadia',
+  'Tessa',
+  'Clara',
+  'Maren',
+  'Sable',
+  'Vera',
+  'Anya',
+  'Gwen',
+  'Nora',
 ];
 
 const MASCULINE_NAMES = [
-  'Danylo',
-  'Ostap',
-  'Yarema',
-  'Levko',
-  'Maksym',
-  'Stepan',
-  'Petro',
-  'Roman',
-  'Kuzma',
-  'Borys',
-  'Marko',
-  'Nazar',
+  'Alden',
+  'Caspian',
+  'Dorian',
+  'Garrick',
+  'Julian',
+  'Lucian',
+  'Miles',
+  'Orin',
+  'Ronan',
+  'Soren',
+  'Theron',
+  'Victor',
 ];
 
 const NEUTRAL_NAMES = [
-  'Yar',
-  'Sasha',
-  'Veles',
-  'Zorian',
-  'Lira',
-  'Slava',
-  'Tymko',
-  'Oris',
-  'Rada',
+  'Rowan',
+  'Wren',
+  'Briar',
+  'Avery',
+  'Quinn',
+  'Sage',
+  'Linden',
+  'Eden',
+  'Morgan',
 ];
 
 const PERSONA_TEMPLATES = [
   {
     role: 'Ceramicist & Kiln Keeper',
     identity:
-      'Shapes glazed Kosiv jugs and whistles by morning, listening closely to travellers for stories worthy of painting onto clay.',
-    plan: 'Inspect the riverbank clay pits and glaze bowls near the square.',
+      'Shapes glazed stoneware jugs and ocarinas by morning, listening closely to travelers for tales worthy of carving into clay.',
+    plan: 'Inspect the riverbank clay pits and glaze bowls near the plaza.',
     voiceStyle: 'Earthy, warm, observant.',
   },
   {
     role: 'Apiarist & Mead Brewer',
     identity:
-      'Tends oak hives at the meadow edge and greets everyone with jars of buckwheat honey and cheerful folk proverbs.',
+      'Tends oak hives at the meadow edge and greets everyone with jars of wildflower honey and cheerful proverbs.',
     plan: 'Check blossoms around Windmill Meadow and trade honey for baked loaves.',
     voiceStyle: 'Upbeat, bright, neighborly.',
   },
   {
     role: 'Woodcarver & Toymaker',
     identity:
-      'Carves cedar owls, spoons, and spinning tops on porch steps while humming mountain tunes and quizzing friends with riddles.',
+      'Carves cedar owls, spoons, and clockwork tops on porch steps while humming old tunes and quizzing friends with riddles.',
     plan: 'Whittle at Village Square and swap wooden whistles with passersby.',
     voiceStyle: 'Playful, wry, measured.',
   },
@@ -472,14 +472,14 @@ const PERSONA_TEMPLATES = [
   {
     role: 'Bakery Hearth Keeper',
     identity:
-      'Bakes braided kolach and sourdough loaves before dawn, pulling chilly villagers toward the fire for warm slices and gossip.',
+      'Bakes braided loaves and spiced tarts before dawn, pulling chilly neighbors toward the fire for warm slices and gossip.',
     plan: 'Warm stones at the Hearth Fire and offer loaves to early risers.',
     voiceStyle: 'Hearty, animated, generous.',
   },
   {
     role: 'Botanical Dyer',
     identity:
-      'Steeps marigold, walnut husk, and onion-skin dye baths to tint linen threads in luminous village shades.',
+      'Steeps marigold, walnut husk, and indigo baths to tint linen threads in luminous shades.',
     plan: 'Collect bark and wild herbs and compare color palettes with weavers.',
     voiceStyle: 'Curious, gentle, vivid.',
   },
@@ -491,9 +491,9 @@ const PERSONA_TEMPLATES = [
     voiceStyle: 'Eager, melodic, inquisitive.',
   },
   {
-    role: 'Folklore Bandurist',
+    role: 'Wandering Minstrel',
     identity:
-      'Collects ballads, dances, and forgotten proverbs on strings of birch and gut, stitching local gossip into verse.',
+      'Collects ballads, dances, and forgotten rumors on lute strings, stitching local gossip into verse.',
     plan: 'Gather at the Hearth Fire to hear what happened today.',
     voiceStyle: 'Lyrical, warm, teasing.',
   },

@@ -781,7 +781,7 @@ class BrainRouter {
               content: [
                 `You are ${narratorName}, creative Dungeon Master of Selo (${params.settings.narratorStyle} style).`,
                 `Write crisp third-person English prose under 40 words.`,
-                `FORBIDDEN clichés: NEVER list job titles like "the rushnyk weaver", NEVER say "steps close to speak", and NEVER say "part ways, carrying their thoughts".`,
+                `FORBIDDEN clichés: NEVER list job titles like "the tapestry weaver", NEVER say "steps close to speak", and NEVER say "part ways, carrying their thoughts".`,
               ].join('\n'),
             },
             { role: 'user', content: `${contextNotes}\n\n${taskInstruction}` },
