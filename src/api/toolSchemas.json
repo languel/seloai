@@ -48,6 +48,7 @@
             "village",
             "observatory",
             "level",
+            "tapestry",
             "characters",
             "monitor",
             "guides"
@@ -74,10 +75,18 @@
   },
   {
     "name": "create_world",
-    "description": "Create a new blank or customized world map with dimensions, optional tileset URL, spawn points, and Points of Interest (#POIs), optionally clearing the story DB.",
+    "description": "Create a new blank, Bulgarian Shevitsa, or customized world map with dimensions, optional tileset URL, spawn points, and Points of Interest (#POIs), optionally clearing the story DB.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "preset": {
+          "type": "string",
+          "enum": [
+            "blank",
+            "shevitsa"
+          ],
+          "description": "Optional starter template preset ('shevitsa' loads the Bulgarian Shevitsa embroidery world & tileset)."
+        },
         "name": {
           "type": "string"
         },
@@ -136,7 +145,7 @@
   },
   {
     "name": "edit_world_map",
-    "description": "Autonomously edit the active world level: paint ground/object tiles, set collision blockers, add or remove #POI landmarks, add spawn points, or resize/rename the map.",
+    "description": "Autonomously edit the active world level: paint ground/object tiles, set collision blockers, register or place multi-tile macro stamps, add or remove #POI landmarks, add spawn points, or update tileset dimensions/name.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -145,6 +154,12 @@
         },
         "tileSetUrl": {
           "type": "string"
+        },
+        "tileSetDimX": {
+          "type": "number"
+        },
+        "tileSetDimY": {
+          "type": "number"
         },
         "tileDim": {
           "type": "number"
@@ -242,6 +257,88 @@
               },
               "y": {
                 "type": "number"
+              }
+            }
+          }
+        },
+        "addStamps": {
+          "type": "array",
+          "description": "Register multi-tile macro stamps on the map.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "tiles"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              },
+              "tiles": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "layer": {
+                "type": "string",
+                "enum": [
+                  "bg0",
+                  "bg1",
+                  "obj0",
+                  "obj1"
+                ]
+              },
+              "blocksMovement": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "placeStamps": {
+          "type": "array",
+          "description": "Place registered macro stamps onto the map at tile coordinates (x, y).",
+          "items": {
+            "type": "object",
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "stampId": {
+                "type": "string"
+              },
+              "stampName": {
+                "type": "string"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "layer": {
+                "type": "string",
+                "enum": [
+                  "bg0",
+                  "bg1",
+                  "obj0",
+                  "obj1"
+                ]
+              },
+              "blocksMovement": {
+                "type": "boolean"
               }
             }
           }
@@ -353,6 +450,13 @@
       "properties": {
         "worldName": {
           "type": "string"
+        },
+        "worldPreset": {
+          "type": "string",
+          "enum": [
+            "blank",
+            "shevitsa"
+          ]
         },
         "width": {
           "type": "number"
@@ -637,6 +741,98 @@
         },
         "applyToVillager": {
           "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "compose_pixel_pattern",
+    "description": "Create a crisp indexed pixel-art pattern (from integer grid + hex palette OR ASCII pixel rows + symbol map), compose it into the Output Tileset at a non-overlapping or specified tile slot, register a TileMacroStamp, and optionally place it onto the live world map.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "gridWidth": {
+          "type": "number",
+          "description": "Grid width when passing indexed `grid`."
+        },
+        "gridHeight": {
+          "type": "number",
+          "description": "Grid height when passing indexed `grid`."
+        },
+        "palette": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Hex color swatches when passing indexed `grid`."
+        },
+        "grid": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Row-major palette indices (-1 = transparent)."
+        },
+        "asciiRows": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Alternative to indexed grid: rows of characters (e.g. ['..##..', '.#@@#.'])."
+        },
+        "paletteMap": {
+          "type": "object",
+          "description": "Maps non-transparent ASCII symbols in asciiRows to hex colors (e.g. { '#': '#be1e2d', '@': '#e6a117' })."
+        },
+        "outCols": {
+          "type": "number",
+          "description": "Output width in tile columns (default 1)."
+        },
+        "outRows": {
+          "type": "number",
+          "description": "Output height in tile rows (default 1)."
+        },
+        "targetCol": {
+          "type": "number",
+          "description": "Optional explicit tileset column; omits to auto-find first non-overlapping slot."
+        },
+        "targetRow": {
+          "type": "number",
+          "description": "Optional explicit tileset row."
+        },
+        "layer": {
+          "type": "string",
+          "enum": [
+            "bg0",
+            "bg1",
+            "obj0",
+            "obj1"
+          ]
+        },
+        "blocksMovement": {
+          "type": "boolean"
+        },
+        "applyToMap": {
+          "type": "boolean",
+          "description": "Update live map tileSetUrl and stamps (default true)."
+        },
+        "placeAt": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          },
+          "description": "Optional map tile coordinates to immediately stamp the pattern."
         }
       }
     }

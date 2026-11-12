@@ -799,6 +799,12 @@ export function renderPixelGridToCanvases(
   rows: number,
   tileDim: number = 32,
 ): { canvases: HTMLCanvasElement[]; previewDataUrl: string } {
+  if (typeof document === 'undefined') {
+    return {
+      canvases: Array.from({ length: Math.max(1, cols * rows) }, () => ({}) as HTMLCanvasElement),
+      previewDataUrl: 'data:image/png;base64,mockGridPattern',
+    };
+  }
   const crispSmall = document.createElement('canvas');
   crispSmall.width = gridW;
   crispSmall.height = gridH;
@@ -1680,5 +1686,98 @@ export function findOpenSlotForOutputBox(
     x: 0,
     y: safeRows * tileDim,
     requiredRows: safeRows + rowsSpan,
+  };
+}
+
+/**
+ * Converts ASCII pixel rows (e.g. `['..##..', '.#@@#.']`) + symbol-to-hex map into
+ * an indexed grid (-1 for transparent/unmapped characters like `.` or space) and palette array.
+ */
+export function parseAsciiPatternToGrid(
+  asciiRows: ReadonlyArray<string>,
+  paletteMap: Record<string, string>,
+): { gridWidth: number; gridHeight: number; palette: string[]; grid: number[] } {
+  const gridHeight = Math.max(1, asciiRows.length);
+  const gridWidth = Math.max(1, ...asciiRows.map((r) => r.length));
+  const palette: string[] = [];
+  const hexToIdx = new Map<string, number>();
+
+  for (const [, rawHex] of Object.entries(paletteMap)) {
+    const hex = rawHex.trim();
+    if (!hex || /^transparent$/i.test(hex)) continue;
+    if (!hexToIdx.has(hex)) {
+      hexToIdx.set(hex, palette.length);
+      palette.push(hex);
+    }
+  }
+
+  const grid = new Array<number>(gridWidth * gridHeight).fill(-1);
+  for (let y = 0; y < asciiRows.length; y++) {
+    const row = asciiRows[y];
+    for (let x = 0; x < row.length; x++) {
+      const ch = row[x];
+      const rawHex = paletteMap[ch];
+      if (!rawHex || /^transparent$/i.test(rawHex.trim())) continue;
+      const idx = hexToIdx.get(rawHex.trim());
+      if (idx !== undefined) {
+        grid[y * gridWidth + x] = idx;
+      }
+    }
+  }
+
+  return { gridWidth, gridHeight, palette, grid };
+}
+
+/**
+ * Stamps a multi-tile `TileMacroStamp` immutably onto `map` at `(startX, startY)`.
+ */
+export function applyMacroStampToMap(
+  map: VillageMap,
+  stamp: TileMacroStamp,
+  startX: number,
+  startY: number,
+  layerOverride?: 'bg0' | 'bg1' | 'obj0' | 'obj1',
+  blocksOverride?: boolean,
+): VillageMap {
+  const nextBg = map.bgTiles.map((l) => l.map((colArr) => [...colArr]));
+  const nextObj = map.objectTiles.map((l) => l.map((colArr) => [...colArr]));
+  const nextCol = map.collisionGrid.map((colArr) => [...colArr]);
+  while (nextBg.length < 2) {
+    nextBg.push(Array.from({ length: map.width }, () => Array<number>(map.height).fill(-1)));
+  }
+  while (nextObj.length < 2) {
+    nextObj.push(Array.from({ length: map.width }, () => Array<number>(map.height).fill(-1)));
+  }
+
+  const tgtLayer = layerOverride ?? stamp.layer ?? 'bg1';
+  const grid =
+    tgtLayer === 'bg0'
+      ? nextBg[0]
+      : tgtLayer === 'bg1'
+        ? nextBg[1]
+        : tgtLayer === 'obj0'
+          ? nextObj[0]
+          : nextObj[1];
+  const shouldBlock = blocksOverride ?? stamp.blocksMovement ?? false;
+
+  for (let r = 0; r < stamp.height; r++) {
+    for (let c = 0; c < stamp.width; c++) {
+      const mx = Math.round(startX) + c;
+      const my = Math.round(startY) + r;
+      const idx = stamp.tiles[r * stamp.width + c];
+      if (mx >= 0 && my >= 0 && mx < map.width && my < map.height && idx !== undefined) {
+        grid[mx][my] = idx;
+        if (shouldBlock) {
+          nextCol[mx][my] = true;
+        }
+      }
+    }
+  }
+
+  return {
+    ...map,
+    bgTiles: nextBg,
+    objectTiles: nextObj,
+    collisionGrid: nextCol,
   };
 }

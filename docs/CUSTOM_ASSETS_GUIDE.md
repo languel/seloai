@@ -92,3 +92,16 @@ Empty cells use `-1`. When asking an LLM to generate a map, provide `village-map
 3. **Upload in SeloAI**:
    - **Characters tab** → **Upload Custom Sprite PNG** (preview all 4 walk directions live!).
    - **Level Editor tab** → **Custom PNG** in the Tileset panel (paint & click **Apply to Live Village**).
+
+---
+
+## 6. Tapestry Studio (In-App Digitizer & Output Composer) & `compose_pixel_pattern`
+
+Instead of preparing pixel sheets solely in external tools, you can author tiles and multi-tile **Macro Stamps** directly inside SeloAI:
+
+1. Open the **Tapestry Studio** tab in the top bar:
+   - **Create Mode**: Upload any reference illustration or textile motif, pinch-zoom & two-finger pan around details, quantize or trace onto an indexed pixel canvas, paint with the **Sample** palette brush (eyedroppers the reference image underneath into the closest palette color per pixel), remove flat backgrounds via **Chroma-Key** / edge fill, auto-slice motifs, and save patterns into your **Pattern Library** (with live procedural Canvas2D code export).
+   - **Preview Output Composer**: Start from a **Blank** tileset or click **Import Cur Tileset** to inspect and extend the live map's tileset safely in a draft view. Click or drag items from the **Pattern Library** directly onto the output grid—each lands in an open non-overlapping slot and can be freely dragged and resized via its 8-handle transform box (`Shift` locks aspect ratio; grid snap aligns to `tileDim`). Click **+ Row** to expand sheet height, **Export** for PNG download, **Apply to Map** to update the map's tileset & stamps, or **Apply & Place** to paint directly onto the map.
+2. **Programmatic / Agent Asset Synthesis (`compose_pixel_pattern` & `scripts/generateShevitsaTileset.mjs`)**:
+   - Agents connected over WebMCP, `window.seloAI`, or stdio MCP (`pnpm mcp`) can call `compose_pixel_pattern` with either indexed `grid` + `palette` or human-readable `asciiRows` + `paletteMap`, optionally setting `outCols`/`outRows`, `targetCol`/`targetRow`, `layer` (`bg0`/`bg1`/`obj0`/`obj1`), and `placeAt` (`{ x, y }`).
+   - Run `node scripts/generateShevitsaTileset.mjs` to regenerate the built-in 512×512 `public/assets/shevitsa-tileset.png` programmatically.

@@ -42,6 +42,7 @@ import {
 import {
   appendTilesToTileset,
   applyChromaKeyToPixelGrid,
+  applyMacroStampToMap,
   createBlankTilesetDataUrl,
   createMacroStampFromIndices,
   detectMotifRegions,
@@ -50,6 +51,7 @@ import {
   floodFillTransparent,
   getOpaqueBounds,
   hitTestBoxAction,
+  parseAsciiPatternToGrid,
   parseHexColor,
   placeTilesInTilesetAt,
   processTilePixels,
@@ -1445,5 +1447,177 @@ describe('SeloAI core engine', () => {
     const fullRowOccupied = [{ x: 0, y: 0, w: 128, h: 64 }];
     const expandedSlot = findOpenSlotForOutputBox(fullRowOccupied, 4, 2, 32, 64, 32);
     expect(expandedSlot).toEqual({ x: 0, y: 64, requiredRows: 3 });
+  });
+
+  it('parses ASCII pixel art grids and applies macro stamps cleanly to world maps', () => {
+    const parsed = parseAsciiPatternToGrid(
+      ['.R.', 'RGR', '.R.'],
+      { R: '#c2272d', G: '#3c6e47' },
+    );
+    expect(parsed.gridWidth).toBe(3);
+    expect(parsed.gridHeight).toBe(3);
+    expect(parsed.palette).toEqual(['#c2272d', '#3c6e47']);
+    expect(parsed.grid).toEqual([-1, 0, -1, 0, 1, 0, -1, 0, -1]);
+
+    const blankMap = createBlankWorldMap('Stamp Test', 12, 10);
+    const stamp = createMacroStampFromIndices('Diamond', 2, 2, [10, 11, 12, 13], 'obj0', true);
+    const stamped = applyMacroStampToMap(blankMap, stamp, 4, 5);
+    expect(stamped.objectTiles[0][4][5]).toBe(10);
+    expect(stamped.objectTiles[0][5][5]).toBe(11);
+    expect(stamped.objectTiles[0][4][6]).toBe(12);
+    expect(stamped.objectTiles[0][5][6]).toBe(13);
+    expect(stamped.collisionGrid[4][5]).toBe(true);
+    expect(stamped.collisionGrid[5][6]).toBe(true);
+  });
+
+  it('supports all 19 SeloAI tools including tapestry tab, stamps, ASCII pattern composition, and headless MCP parity', async () => {
+    let map = createBlankWorldMap('Tool Test', 24, 18);
+    let villagers = structuredClone(DEFAULT_VILLAGERS.slice(0, 1));
+    let settings = { ...DEFAULT_MODEL_SETTINGS };
+    let activeTab = 'village';
+    const sim = new VillageSimulation(map, villagers, [], settings);
+
+    const host = new SeloToolHost({
+      getSimulation: () => sim,
+      getMap: () => map,
+      getVillagers: () => villagers,
+      getSettings: () => settings,
+      applyMap: (next) => {
+        map = next;
+        sim.updateMap(next);
+      },
+      applyVillagers: (next) => {
+        villagers = next;
+        sim.syncVillagers(next);
+      },
+      updateSettings: (patch) => {
+        settings = { ...settings, ...patch };
+        sim.updateSettings(settings);
+      },
+      setTab: (tab) => {
+        activeTab = tab;
+      },
+    });
+
+    const tools = host.listTools();
+    expect(tools).toHaveLength(19);
+    expect(tools.some((t) => t.name === 'compose_pixel_pattern')).toBe(true);
+
+    // Switch to Tapestry Studio tab + run Shevitsa scenario preset
+    const tabRes = await host.callTool('control_simulation', { tab: 'tapestry' });
+    expect(tabRes.ok).toBe(true);
+    expect(activeTab).toBe('tapestry');
+
+    const shevRes = await host.callTool('run_scenario', {
+      worldPreset: 'shevitsa',
+      worldName: 'Shevitsa Loom Square',
+    });
+    expect(shevRes.ok).toBe(true);
+    expect(map.name).toBe('Shevitsa Loom Square');
+    expect(map.tileSetUrl).toContain('shevitsa-tileset.png');
+
+    // Add + place a macro stamp via edit_world_map
+    const editRes = await host.callTool('edit_world_map', {
+      addStamps: [
+        {
+          id: 'custom-rug-runner',
+          name: 'Rug Runner',
+          width: 2,
+          height: 1,
+          layer: 'bg0',
+          tiles: [14, 15],
+        },
+      ],
+      placeStamps: [{ stampId: 'custom-rug-runner', x: 3, y: 3, layer: 'bg0' }],
+    });
+    expect(editRes.ok).toBe(true);
+    expect(map.bgTiles[0][3][3]).toBe(14);
+    expect(map.bgTiles[0][4][3]).toBe(15);
+
+    // Compose crisp ASCII pixel art into the tileset and place onto the map
+    const composeRes = await host.callTool('compose_pixel_pattern', {
+      name: 'Rose Diamond',
+      asciiRows: ['.RR.', 'RYYR', 'RYYR', '.RR.'],
+      paletteMap: { R: '#c2272d', Y: '#d9a441' },
+      outCols: 2,
+      outRows: 1,
+      targetCol: 0,
+      targetRow: 2,
+      layer: 'obj0',
+      blocksMovement: true,
+      applyToMap: true,
+      placeAt: { x: 6, y: 7 },
+    });
+    expect(composeRes.ok).toBe(true);
+    expect(composeRes.stamp.width).toBe(2);
+    expect(composeRes.stamp.height).toBe(1);
+    expect(composeRes.placedAt).toEqual({ x: 6, y: 7 });
+    expect(composeRes.proceduralCode).toContain('drawRoseDiamondPalette');
+    const sheetCols = Math.floor((map.tileSetDimX ?? 512) / (map.tileDim ?? 32));
+    expect(map.objectTiles[0][6][7]).toBe(2 * sheetCols);
+    expect(map.objectTiles[0][7][7]).toBe(2 * sheetCols + 1);
+    expect(map.collisionGrid[6][7]).toBe(true);
+
+    // Verify stdio MCP headless parity for new tools & arguments
+    const mcpResponses = await new Promise<any[]>((resolve, reject) => {
+      const child = spawn('node', ['mcp/seloai-mcp-server.mjs'], {
+        cwd: process.cwd(),
+        env: { ...process.env, SELOAI_BRIDGE_URL: 'http://127.0.0.1:1/closed' },
+      });
+      const out: any[] = [];
+      let buf = '';
+      child.stdout.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const l of lines) {
+          if (l.trim()) out.push(JSON.parse(l));
+        }
+        if (out.length >= 4) {
+          child.kill();
+          resolve(out);
+        }
+      });
+      child.on('error', reject);
+      setTimeout(() => {
+        child.kill();
+        reject(new Error(`MCP headless parity timeout, got ${out.length} responses`));
+      }, 4000);
+
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n');
+      child.stdin.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'control_simulation', arguments: { tab: 'tapestry' } },
+        }) + '\n',
+      );
+      child.stdin.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'create_world', arguments: { preset: 'shevitsa' } },
+        }) + '\n',
+      );
+      child.stdin.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 4,
+          method: 'tools/call',
+          params: {
+            name: 'compose_pixel_pattern',
+            arguments: { name: 'MCP Motif', outCols: 2, outRows: 1, targetCol: 1, targetRow: 1, placeAt: { x: 2, y: 3 } },
+          },
+        }) + '\n',
+      );
+    });
+    expect(mcpResponses[0].result.tools).toHaveLength(19);
+    expect(JSON.parse(mcpResponses[1].result.content[0].text).tab).toBe('tapestry');
+    expect(JSON.parse(mcpResponses[2].result.content[0].text).preset).toBe('shevitsa');
+    const mcpCompose = JSON.parse(mcpResponses[3].result.content[0].text);
+    expect(mcpCompose.ok).toBe(true);
+    expect(mcpCompose.placedAt).toEqual({ x: 2, y: 3 });
   });
 });

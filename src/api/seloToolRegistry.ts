@@ -12,14 +12,25 @@ import { buildPsychophysicalGraph, buildWorldDatabase, queryWorldDatabase } from
 import { findNearestWalkableTile, findPath } from '../engine/pathfinding';
 import type { VillageSimulation } from '../engine/simulation';
 import { ensureVillagerAppearanceSprite } from '../engine/spriteGenerator';
+import {
+  applyMacroStampToMap,
+  createMacroStampFromIndices,
+  findFirstEmptyTileBlock,
+  generateProceduralCodeFromGrid,
+  parseAsciiPatternToGrid,
+  placeTilesInTilesetAt,
+  renderPixelGridToCanvases,
+} from '../engine/tapestrySampler';
 import type {
   ApiBrainProvider,
   CharacterAppearance,
   ModelSettings,
   PointOfInterest,
+  TileMacroStamp,
   VillageMap,
   VillagerConfig,
 } from '../engine/types';
+import { resolvePublicUrl } from '../utils/assetUrl';
 import {
   createBlankWorldMap,
   createBulgarianShevitsaMap,
@@ -183,17 +194,17 @@ export class SeloToolHost {
       }
 
       case 'create_world': {
-        const width = Math.max(12, Math.min(80, Number(args.width ?? (args.preset === 'shevitsa' || args.preset === 'bulgaria' ? 64 : 36))));
-        const height = Math.max(12, Math.min(64, Number(args.height ?? (args.preset === 'shevitsa' || args.preset === 'bulgaria' ? 48 : 28))));
         const isShevitsa =
           String(args.preset || '').toLowerCase() === 'shevitsa' ||
           String(args.preset || '').toLowerCase() === 'bulgaria' ||
           String(args.name || '').toLowerCase().includes('shevitsa') ||
           String(args.name || '').toLowerCase().includes('bulgaria');
+        const width = Math.max(isShevitsa ? 64 : 12, Math.min(80, Number(args.width ?? (isShevitsa ? 64 : 36))));
+        const height = Math.max(isShevitsa ? 48 : 12, Math.min(64, Number(args.height ?? (isShevitsa ? 48 : 28))));
         const nextMap = isShevitsa
           ? createBulgarianShevitsaMap(width, height)
           : createBlankWorldMap(args.name || 'Agent World', width, height);
-        if (args.name && !isShevitsa) nextMap.name = args.name;
+        if (args.name) nextMap.name = String(args.name);
         if (typeof args.tileDim === 'number' && args.tileDim >= 8) nextMap.tileDim = args.tileDim;
         if (typeof args.tileSetUrl === 'string' && args.tileSetUrl.trim()) {
           nextMap.tileSetUrl = args.tileSetUrl.trim();
@@ -224,10 +235,16 @@ export class SeloToolHost {
       }
 
       case 'edit_world_map': {
-        const nextMap: VillageMap = structuredClone(map);
+        let nextMap: VillageMap = structuredClone(map);
         if (typeof args.name === 'string' && args.name.trim()) nextMap.name = args.name.trim();
         if (typeof args.tileSetUrl === 'string' && args.tileSetUrl.trim()) {
           nextMap.tileSetUrl = args.tileSetUrl.trim();
+        }
+        if (typeof args.tileSetDimX === 'number' && args.tileSetDimX >= 16) {
+          nextMap.tileSetDimX = Math.round(args.tileSetDimX);
+        }
+        if (typeof args.tileSetDimY === 'number' && args.tileSetDimY >= 16) {
+          nextMap.tileSetDimY = Math.round(args.tileSetDimY);
         }
         if (typeof args.tileDim === 'number' && args.tileDim >= 8) {
           nextMap.tileDim = args.tileDim;
@@ -256,6 +273,44 @@ export class SeloToolHost {
               if (grid?.[x]) {
                 grid[x][y] = typeof op.tileIndex === 'number' ? op.tileIndex : -1;
               }
+            }
+          }
+        }
+        if (Array.isArray(args.addStamps) && args.addStamps.length > 0) {
+          const existing = [...(nextMap.stamps ?? [])];
+          for (const raw of args.addStamps) {
+            const st: TileMacroStamp = {
+              id: raw.id || `stamp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+              name: String(raw.name || 'Stamp'),
+              width: Math.max(1, Math.round(Number(raw.width ?? 1))),
+              height: Math.max(1, Math.round(Number(raw.height ?? 1))),
+              tiles: Array.isArray(raw.tiles) ? raw.tiles.map(Number) : [0],
+              layer: raw.layer ?? 'bg1',
+              blocksMovement: Boolean(raw.blocksMovement),
+            };
+            const idx = existing.findIndex((s) => s.id === st.id);
+            if (idx >= 0) existing[idx] = st;
+            else existing.push(st);
+          }
+          nextMap.stamps = existing;
+        }
+        if (Array.isArray(args.placeStamps) && args.placeStamps.length > 0) {
+          const stampsList = nextMap.stamps ?? [];
+          for (const req of args.placeStamps) {
+            const stampMatch =
+              (req.stampId ? stampsList.find((s) => s.id === req.stampId) : undefined) ??
+              (req.stampName
+                ? stampsList.find((s) => s.name.toLowerCase() === String(req.stampName).toLowerCase())
+                : undefined);
+            if (stampMatch) {
+              nextMap = applyMacroStampToMap(
+                nextMap,
+                stampMatch,
+                Number(req.x ?? 0),
+                Number(req.y ?? 0),
+                req.layer,
+                req.blocksMovement,
+              );
             }
           }
         }
@@ -291,7 +346,12 @@ export class SeloToolHost {
           nextMap.spawnPoints = spawns;
         }
         this.hooks.applyMap(nextMap);
-        return { ok: true, name: nextMap.name, pointsOfInterest: nextMap.pointsOfInterest };
+        return {
+          ok: true,
+          name: nextMap.name,
+          stampsCount: nextMap.stamps?.length ?? 0,
+          pointsOfInterest: nextMap.pointsOfInterest,
+        };
       }
 
       case 'create_character': {
@@ -383,11 +443,13 @@ export class SeloToolHost {
         if (args.clearDatabase) {
           sim.clearDatabase();
         }
-        if (args.worldName || args.width || args.height || Array.isArray(args.pois)) {
+        if (args.worldName || args.worldPreset || args.preset || args.width || args.height || Array.isArray(args.pois)) {
+          const explicitPreset = args.worldPreset ?? args.preset;
           await this.callTool('create_world', {
-            name: args.worldName ?? map.name,
-            width: args.width ?? map.width,
-            height: args.height ?? map.height,
+            preset: explicitPreset,
+            name: args.worldName ?? (explicitPreset ? undefined : map.name),
+            width: args.width ?? (explicitPreset ? undefined : map.width),
+            height: args.height ?? (explicitPreset ? undefined : map.height),
             pois: args.pois,
             clearDatabase: false,
           });
@@ -585,6 +647,149 @@ export class SeloToolHost {
           durationMs: res.durationMs,
           dataUrlPreview: `${res.dataUrl.slice(0, 64)}…`,
           dataUrl: res.dataUrl,
+        };
+      }
+
+      case 'compose_pixel_pattern': {
+        const name = String(args.name || 'Pixel Pattern').trim();
+        const outCols = Math.max(1, Math.min(8, Math.round(Number(args.outCols ?? 1))));
+        const outRows = Math.max(1, Math.min(8, Math.round(Number(args.outRows ?? 1))));
+        const layer = (args.layer ?? 'bg1') as 'bg0' | 'bg1' | 'obj0' | 'obj1';
+        const blocksMovement = Boolean(args.blocksMovement);
+        const tileDim = Math.max(8, map.tileDim || 32);
+
+        let gridWidth: number;
+        let gridHeight: number;
+        let palette: string[];
+        let grid: number[];
+
+        if (Array.isArray(args.asciiRows) && args.asciiRows.length > 0) {
+          const parsed = parseAsciiPatternToGrid(args.asciiRows.map(String), args.paletteMap ?? {});
+          gridWidth = parsed.gridWidth;
+          gridHeight = parsed.gridHeight;
+          palette = parsed.palette;
+          grid = parsed.grid;
+        } else {
+          gridWidth = Math.max(1, Math.min(128, Math.round(Number(args.gridWidth ?? 16))));
+          gridHeight = Math.max(1, Math.min(128, Math.round(Number(args.gridHeight ?? 16))));
+          palette = Array.isArray(args.palette) ? args.palette.map(String) : [];
+          grid = Array.isArray(args.grid)
+            ? args.grid.map((n: any) => Math.round(Number(n)))
+            : new Array<number>(gridWidth * gridHeight).fill(-1);
+        }
+
+        if (palette.length === 0) {
+          throw new Error('compose_pixel_pattern requires non-empty palette + grid or asciiRows + paletteMap.');
+        }
+
+        const rendered = renderPixelGridToCanvases(
+          grid,
+          gridWidth,
+          gridHeight,
+          palette,
+          outCols,
+          outRows,
+          tileDim,
+        );
+        const proceduralCode = generateProceduralCodeFromGrid(
+          grid,
+          gridWidth,
+          gridHeight,
+          palette,
+          name,
+        );
+
+        let existingTilesetCanvas: HTMLCanvasElement | null = null;
+        if (typeof document !== 'undefined' && typeof Image !== 'undefined' && map.tileSetUrl) {
+          const loadedImg = await new Promise<HTMLImageElement | null>((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
+            img.src = resolvePublicUrl(map.tileSetUrl);
+          });
+          if (loadedImg) {
+            const c = document.createElement('canvas');
+            c.width = Math.max(tileDim, map.tileSetDimX || loadedImg.naturalWidth);
+            c.height = Math.max(tileDim, map.tileSetDimY || loadedImg.naturalHeight);
+            const ctx = c.getContext('2d');
+            if (ctx) {
+              ctx.imageSmoothingEnabled = false;
+              ctx.drawImage(loadedImg, 0, 0);
+              existingTilesetCanvas = c;
+            }
+          }
+        }
+
+        const curDimX = Math.max(tileDim * outCols, map.tileSetDimX || 256);
+        const curDimY = Math.max(tileDim * outRows, map.tileSetDimY || 128);
+        const autoSlot = existingTilesetCanvas
+          ? findFirstEmptyTileBlock(existingTilesetCanvas, tileDim, outCols, outRows)
+          : { col: 0, row: Math.floor(curDimY / tileDim) };
+
+        const targetCol =
+          typeof args.targetCol === 'number' ? Math.max(0, Math.round(args.targetCol)) : autoSlot.col;
+        const targetRow =
+          typeof args.targetRow === 'number' ? Math.max(0, Math.round(args.targetRow)) : autoSlot.row;
+
+        const placed = await placeTilesInTilesetAt(
+          existingTilesetCanvas,
+          curDimX,
+          curDimY,
+          tileDim,
+          rendered.canvases,
+          targetCol,
+          targetRow,
+          outCols,
+          outRows,
+        );
+        const stamp = createMacroStampFromIndices(
+          name,
+          outCols,
+          outRows,
+          placed.tileIndices,
+          layer,
+          blocksMovement,
+        );
+
+        let placedOnMap = false;
+        let placedAt: { x: number; y: number } | null = null;
+        if (args.applyToMap !== false) {
+          const nextStamps = [
+            ...(map.stamps ?? []).filter(
+              (s) => !(s.tiles[0] === stamp.tiles[0] && s.width === stamp.width && s.height === stamp.height),
+            ),
+            stamp,
+          ];
+          let nextMap: VillageMap = {
+            ...map,
+            tileSetUrl: placed.newTilesetUrl,
+            tileSetDimX: placed.newDimX,
+            tileSetDimY: placed.newDimY,
+            stamps: nextStamps,
+          };
+          if (args.placeAt && typeof args.placeAt.x === 'number' && typeof args.placeAt.y === 'number') {
+            const px = Math.round(args.placeAt.x);
+            const py = Math.round(args.placeAt.y);
+            nextMap = applyMacroStampToMap(nextMap, stamp, px, py, layer, blocksMovement);
+            placedOnMap = true;
+            placedAt = { x: px, y: py };
+          }
+          this.hooks.applyMap(nextMap);
+        }
+
+        return {
+          ok: true,
+          name,
+          stamp,
+          startTileIndex: placed.startTileIndex,
+          tileIndices: placed.tileIndices,
+          tileSetDimX: placed.newDimX,
+          tileSetDimY: placed.newDimY,
+          placedOnMap,
+          placedAt,
+          previewDataUrl: rendered.previewDataUrl,
+          proceduralCode,
         };
       }
 
