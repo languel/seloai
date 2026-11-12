@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   Conversation,
   Direction,
+  MemoryEntry,
   ModelSettings,
   VillageMap,
   VillagerConfig,
@@ -250,6 +251,74 @@ export class VillageSimulation {
           animFrame: 0,
         });
       }
+    }
+    this.notify(true);
+  }
+
+  exportCharacterHistories(): Record<
+    string,
+    { memories: MemoryEntry[]; currentIntention?: string; worldFeed?: string[] }
+  > {
+    const out: Record<
+      string,
+      { memories: MemoryEntry[]; currentIntention?: string; worldFeed?: string[] }
+    > = {};
+    for (const [id, rt] of this.runtimes.entries()) {
+      out[id] = {
+        memories: structuredClone(rt.memories),
+        currentIntention: rt.currentIntention,
+        worldFeed: [...(rt.worldFeed ?? [])],
+      };
+    }
+    return out;
+  }
+
+  applyCharacterHistories(
+    histories: Record<
+      string,
+      { memories: MemoryEntry[]; currentIntention?: string; worldFeed?: string[] }
+    >,
+  ) {
+    for (const [id, hist] of Object.entries(histories)) {
+      const rt = this.runtimes.get(id);
+      if (!rt) continue;
+      if (Array.isArray(hist.memories)) {
+        rt.memories = structuredClone(hist.memories);
+      }
+      if (typeof hist.currentIntention === 'string' && hist.currentIntention.trim()) {
+        rt.currentIntention = hist.currentIntention;
+      }
+      if (Array.isArray(hist.worldFeed)) {
+        rt.worldFeed = [...hist.worldFeed];
+      }
+    }
+    this.notify(true);
+  }
+
+  replaceConversations(conversations: Conversation[]) {
+    this.conversations = structuredClone(conversations);
+    this.notify(true);
+  }
+
+  clearDatabase() {
+    this.conversations = [];
+    this.focalWorldlineId = 'scribe';
+    for (const [id, rt] of this.runtimes.entries()) {
+      const cfg = this.configs.get(id);
+      rt.activeConversationId = undefined;
+      rt.state = 'idle';
+      rt.worldFeed = cfg ? [`Fresh story started: ${cfg.plan}`] : [];
+      rt.memories = cfg
+        ? [
+            {
+              id: `mem-init-${id}-${Date.now()}`,
+              timestamp: Date.now(),
+              importance: 5,
+              kind: 'observation',
+              summary: cfg.plan,
+            },
+          ]
+        : [];
     }
     this.notify(true);
   }

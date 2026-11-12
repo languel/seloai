@@ -15,29 +15,29 @@
 }
 
 :root {
-  /* Light: warm parchment, madder crimson, indigo & ochre */
-  --linen-light: #f6f0e4;
-  --surface-light: #efe6d5;
-  --card-light: #fbf7ef;
-  --ink-light: #1e1a17;
-  --muted-light: #5c534a;
-  --border-light: #d6c7b0;
-  --crimson-light: #a82424;
-  --indigo-light: #23436b;
-  --ochre-light: #a86b18;
-  --sage-light: #2f6b47;
+  /* Light: neutral cool-gray surfaces, strategic desaturated accents */
+  --linen-light: #f0f0f2;
+  --surface-light: #e5e5e8;
+  --card-light: #f8f8f9;
+  --ink-light: #18181b;
+  --muted-light: #62626a;
+  --border-light: #d0d0d6;
+  --crimson-light: #a33a3a;
+  --indigo-light: #355880;
+  --ochre-light: #9a6d24;
+  --sage-light: #346b4b;
 
-  /* Dark: midnight indigo & warm hearthlight */
-  --linen-dark: #131720;
-  --surface-dark: #1a202c;
-  --card-dark: #212838;
-  --ink-dark: #f2ece1;
-  --muted-dark: #a69d91;
-  --border-dark: #353f54;
-  --crimson-dark: #e05a5a;
-  --indigo-dark: #7aa7e0;
-  --ochre-dark: #e6a945;
-  --sage-dark: #5fc288;
+  /* Dark: neutral charcoal/zinc backdrops, strategic desaturated accents */
+  --linen-dark: #111113;
+  --surface-dark: #18181b;
+  --card-dark: #1f1f23;
+  --ink-dark: #e4e4e7;
+  --muted-dark: #8c8c94;
+  --border-dark: #2e2e34;
+  --crimson-dark: #c95b5b;
+  --indigo-dark: #6c93bf;
+  --ochre-dark: #c79646;
+  --sage-dark: #54a375;
 
   /* Default fallback tokens */
   --bg-linen: var(--linen-light);
@@ -136,7 +136,6 @@ body,
 .rushnyk-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-folk);
-  box-shadow: 0 2px 0 var(--border-folk);
 }
 
 .pixel-canvas {

@@ -5,17 +5,30 @@ import {
 } from '../data/defaultData';
 import { EAVESDROP_WHOLE_MAP_RADIUS } from '../ai/audioPipeline';
 import { ensureVillagerAppearanceSprite } from '../engine/spriteGenerator';
-import type { Conversation, ModelSettings, VillageMap, VillagerConfig } from '../engine/types';
+import type {
+  Conversation,
+  MemoryEntry,
+  ModelSettings,
+  VillageMap,
+  VillagerConfig,
+} from '../engine/types';
 
 const DB_NAME = 'seloai-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'state';
+
+export type CharacterHistoriesMap = Record<
+  string,
+  { memories: MemoryEntry[]; currentIntention?: string; worldFeed?: string[] }
+>;
 
 export interface PersistedVillageState {
   map: VillageMap;
   villagers: VillagerConfig[];
   modelSettings: ModelSettings;
   conversations: Conversation[];
+  characterHistories?: CharacterHistoriesMap;
+  focalWorldlineId?: string;
   savedAt: number;
 }
 
@@ -89,6 +102,11 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
           },
         },
         conversations: Array.isArray(stored.conversations) ? stored.conversations : [],
+        characterHistories:
+          stored.characterHistories && typeof stored.characterHistories === 'object'
+            ? stored.characterHistories
+            : undefined,
+        focalWorldlineId: typeof stored.focalWorldlineId === 'string' ? stored.focalWorldlineId : undefined,
         savedAt: stored.savedAt ?? Date.now(),
       };
     }
@@ -125,34 +143,151 @@ export async function resetPersistedState(): Promise<PersistedVillageState> {
   return fresh;
 }
 
-export function exportVillageJson(state: PersistedVillageState): string {
+export function createBlankWorldMap(name = 'New World', width = 36, height = 28): VillageMap {
+  const base = createDefaultMap();
+  const emptyBg = () => Array.from({ length: width }, () => Array(height).fill(0));
+  const emptyObj = () => Array.from({ length: width }, () => Array(height).fill(-1));
+  return {
+    ...base,
+    name,
+    width,
+    height,
+    bgTiles: [emptyBg(), emptyObj()],
+    objectTiles: [emptyObj(), emptyObj()],
+    collisionGrid: Array.from({ length: width }, () => Array(height).fill(false)),
+    animatedSprites: [],
+    spawnPoints: [
+      { id: 'spawn-center', x: Math.floor(width / 2), y: Math.floor(height / 2), label: 'Center' },
+    ],
+    pointsOfInterest: [
+      {
+        id: 'poi-center',
+        tag: 'Center',
+        label: 'Center',
+        x: Math.floor(width / 2),
+        y: Math.floor(height / 2),
+        description: 'Starting gathering point',
+      },
+    ],
+    stamps: [],
+  };
+}
+
+export function exportProjectJson(state: PersistedVillageState): string {
   return JSON.stringify(
     {
-      format: 'seloai-village-v1',
+      format: 'seloai-project-v1',
       exportedAt: new Date().toISOString(),
       map: state.map,
       villagers: state.villagers,
       modelSettings: state.modelSettings,
+      conversations: state.conversations,
+      characterHistories: state.characterHistories ?? {},
+      focalWorldlineId: state.focalWorldlineId ?? 'scribe',
     },
     null,
     2,
   );
 }
 
-export function parseImportedVillageJson(raw: string): {
+export function exportVillageJson(state: PersistedVillageState): string {
+  return exportProjectJson(state);
+}
+
+export function exportLevelJson(map: VillageMap): string {
+  return JSON.stringify(
+    {
+      format: 'seloai-level-v1',
+      exportedAt: new Date().toISOString(),
+      map,
+    },
+    null,
+    2,
+  );
+}
+
+export function exportCharactersJson(villagers: VillagerConfig[]): string {
+  return JSON.stringify(
+    {
+      format: 'seloai-characters-v1',
+      exportedAt: new Date().toISOString(),
+      villagers,
+    },
+    null,
+    2,
+  );
+}
+
+export function exportCharactersWithHistoriesJson(
+  villagers: VillagerConfig[],
+  characterHistories: CharacterHistoriesMap,
+): string {
+  return JSON.stringify(
+    {
+      format: 'seloai-characters-history-v1',
+      exportedAt: new Date().toISOString(),
+      villagers,
+      characterHistories,
+    },
+    null,
+    2,
+  );
+}
+
+export function exportDatabaseJson(
+  conversations: Conversation[],
+  characterHistories: CharacterHistoriesMap,
+  focalWorldlineId = 'scribe',
+): string {
+  return JSON.stringify(
+    {
+      format: 'seloai-db-v1',
+      exportedAt: new Date().toISOString(),
+      conversations,
+      characterHistories,
+      focalWorldlineId,
+    },
+    null,
+    2,
+  );
+}
+
+export interface ParsedImportBundle {
+  format?: string;
   map?: VillageMap;
   villagers?: VillagerConfig[];
   modelSettings?: Partial<ModelSettings>;
-} {
+  conversations?: Conversation[];
+  characterHistories?: CharacterHistoriesMap;
+  focalWorldlineId?: string;
+}
+
+export function parseImportedVillageJson(raw: string): ParsedImportBundle {
   const data = JSON.parse(raw);
   if (!data || typeof data !== 'object') {
     throw new Error('Invalid JSON payload.');
   }
-  const result: {
-    map?: VillageMap;
-    villagers?: VillagerConfig[];
-    modelSettings?: Partial<ModelSettings>;
-  } = {};
+
+  // Support bare array of villagers
+  if (Array.isArray(data)) {
+    if (data.length === 0) throw new Error('Imported villager array is empty.');
+    return {
+      format: 'seloai-characters-v1',
+      villagers: (data as VillagerConfig[]).map(ensureVillagerAppearanceSprite),
+    };
+  }
+
+  // Support bare VillageMap JSON
+  if (Array.isArray(data.bgTiles) && typeof data.width === 'number') {
+    return {
+      format: 'seloai-level-v1',
+      map: data as VillageMap,
+    };
+  }
+
+  const result: ParsedImportBundle = {
+    format: typeof data.format === 'string' ? data.format : undefined,
+  };
 
   if (data.map && Array.isArray(data.map.bgTiles) && typeof data.map.width === 'number') {
     result.map = data.map as VillageMap;
@@ -163,8 +298,23 @@ export function parseImportedVillageJson(raw: string): {
   if (data.modelSettings && typeof data.modelSettings === 'object') {
     result.modelSettings = data.modelSettings as Partial<ModelSettings>;
   }
-  if (!result.map && !result.villagers) {
-    throw new Error('JSON must contain a valid "map" and/or "villagers" array.');
+  if (Array.isArray(data.conversations)) {
+    result.conversations = data.conversations as Conversation[];
+  }
+  if (data.characterHistories && typeof data.characterHistories === 'object') {
+    result.characterHistories = data.characterHistories as CharacterHistoriesMap;
+  }
+  if (typeof data.focalWorldlineId === 'string') {
+    result.focalWorldlineId = data.focalWorldlineId;
+  }
+
+  if (
+    !result.map &&
+    !result.villagers &&
+    !result.conversations &&
+    !result.characterHistories
+  ) {
+    throw new Error('JSON must contain a valid map, villagers, conversations, or characterHistories.');
   }
   return result;
 }

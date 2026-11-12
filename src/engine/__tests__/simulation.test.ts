@@ -28,7 +28,16 @@ import {
   SPRITE_SHEET_HEIGHT,
   SPRITE_SHEET_WIDTH,
 } from '../spriteGenerator';
-import { exportVillageJson, parseImportedVillageJson } from '../../storage/villageStore';
+import {
+  createBlankWorldMap,
+  exportCharactersJson,
+  exportCharactersWithHistoriesJson,
+  exportDatabaseJson,
+  exportLevelJson,
+  exportProjectJson,
+  exportVillageJson,
+  parseImportedVillageJson,
+} from '../../storage/villageStore';
 
 describe('SeloAI core engine', () => {
   it('creates default map and finds walkable paths around collisions', () => {
@@ -718,5 +727,92 @@ describe('SeloAI core engine', () => {
     expect(res.partners.some((p) => p.id === bram.id)).toBe(true);
     expect(res.matchingRecords.some((r) => r.text.toLowerCase().includes('artifact'))).toBe(true);
     expect(res.answerSummary).toContain(bram.name);
+  });
+
+  it('exports/imports project, level, characters, characters+histories, and database, and clears DB for new story', () => {
+    const map = createDefaultMap();
+    const villagers = structuredClone(DEFAULT_VILLAGERS.slice(0, 2));
+    const sim = new VillageSimulation(map, villagers, [], DEFAULT_MODEL_SETTINGS);
+    const v0 = villagers[0]!;
+    const rt0 = sim.runtimes.get(v0.id)!;
+    rt0.memories.push({
+      id: 'mem-portable-1',
+      timestamp: Date.now(),
+      importance: 9,
+      kind: 'reflection',
+      summary: 'Remembers the secret passphrase from the old town.',
+    });
+    sim.conversations.push({
+      id: 'conv-export-1',
+      participantIds: [v0.id, 'player'],
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      active: false,
+      messages: [
+        {
+          id: 'msg-exp-1',
+          senderId: v0.id,
+          senderName: v0.name,
+          text: 'Remembering the old town.',
+          timestamp: Date.now(),
+          kind: 'speech',
+          source: 'story-sim',
+        },
+      ],
+    });
+
+    const histories = sim.exportCharacterHistories();
+
+    // Whole project
+    const proj = parseImportedVillageJson(
+      exportProjectJson({
+        map,
+        villagers,
+        modelSettings: DEFAULT_MODEL_SETTINGS,
+        conversations: sim.conversations,
+        characterHistories: histories,
+        focalWorldlineId: v0.id,
+        savedAt: Date.now(),
+      }),
+    );
+    expect(proj.map?.name).toBe(map.name);
+    expect(proj.villagers?.length).toBe(2);
+    expect(proj.conversations?.length).toBe(1);
+    expect(proj.characterHistories?.[v0.id]?.memories.some((m) => m.id === 'mem-portable-1')).toBe(true);
+    expect(proj.focalWorldlineId).toBe(v0.id);
+
+    // Level only
+    const lvl = parseImportedVillageJson(exportLevelJson(map));
+    expect(lvl.map?.name).toBe(map.name);
+    expect(lvl.villagers).toBeUndefined();
+
+    // Characters only
+    const chars = parseImportedVillageJson(exportCharactersJson(villagers));
+    expect(chars.villagers?.length).toBe(2);
+    expect(chars.map).toBeUndefined();
+    expect(chars.characterHistories).toBeUndefined();
+
+    // Characters + histories without world
+    const charsHist = parseImportedVillageJson(exportCharactersWithHistoriesJson(villagers, histories));
+    expect(charsHist.map).toBeUndefined();
+    expect(charsHist.villagers?.length).toBe(2);
+    expect(charsHist.characterHistories?.[v0.id]?.memories.some((m) => m.id === 'mem-portable-1')).toBe(true);
+
+    // Database only
+    const dbOnly = parseImportedVillageJson(exportDatabaseJson(sim.conversations, histories, v0.id));
+    expect(dbOnly.map).toBeUndefined();
+    expect(dbOnly.conversations?.length).toBe(1);
+    expect(dbOnly.characterHistories?.[v0.id]?.memories.some((m) => m.id === 'mem-portable-1')).toBe(true);
+
+    // Clear DB for new story
+    sim.clearDatabase();
+    expect(sim.conversations.length).toBe(0);
+    expect(sim.runtimes.get(v0.id)?.memories.some((m) => m.id === 'mem-portable-1')).toBe(false);
+
+    // Blank world map creation
+    const blank = createBlankWorldMap('Empty Stage', 24, 20);
+    expect(blank.width).toBe(24);
+    expect(blank.height).toBe(20);
+    expect(blank.pointsOfInterest?.length).toBe(1);
   });
 });

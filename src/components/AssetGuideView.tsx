@@ -175,7 +175,7 @@ export const AssetGuideView: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-linen p-5 thin-scroll">
+    <div className="h-full overflow-y-auto bg-linen p-3 thin-scroll">
       <div className="mx-auto max-w-6xl space-y-6">
         <div className="border-b border-borderFolk pb-3">
           <div className="flex items-center gap-2">
@@ -192,8 +192,8 @@ export const AssetGuideView: React.FC = () => {
         </div>
 
         {/* Visual Reference Grid Previews & Downloads */}
-        <section aria-label="Downloadable Reference Templates" className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rushnyk-card rounded-lg p-4 space-y-3">
+        <section aria-label="Downloadable Reference Templates" className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+          <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-bold">Character Spritesheet Grid (3×4 · 32×32 cells)</h2>
               <a
@@ -205,7 +205,7 @@ export const AssetGuideView: React.FC = () => {
                 <span>384×512 PNG</span>
               </a>
             </div>
-            <div className="flex flex-col sm:flex-row gap-4 items-start">
+            <div className="flex flex-col sm:flex-row gap-2.5 items-start">
               <img
                 src="/templates/character-spritesheet-template-384x512.png"
                 alt="3 by 4 character walk-cycle spritesheet template grid for Down, Left, Right, and Up directions"
@@ -230,7 +230,7 @@ export const AssetGuideView: React.FC = () => {
             </div>
           </div>
 
-          <div className="rushnyk-card rounded-lg p-4 space-y-3">
+          <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-bold">Tileset Reference Grid (16×16 · 512×512 px)</h2>
               <a
@@ -242,7 +242,7 @@ export const AssetGuideView: React.FC = () => {
                 <span>512×512 PNG</span>
               </a>
             </div>
-            <div className="flex flex-col sm:flex-row gap-4 items-start">
+            <div className="flex flex-col sm:flex-row gap-2.5 items-start">
               <img
                 src="/templates/tileset-template-512x512.png"
                 alt="16 by 16 tileset template grid organized by terrain, paths, water, cottages, trees, and folk props"
@@ -261,7 +261,7 @@ export const AssetGuideView: React.FC = () => {
         </section>
 
         {/* All Downloadable Files Bar */}
-        <section aria-label="Template File Downloads" className="rushnyk-card rounded-lg p-4">
+        <section aria-label="Template File Downloads" className="rushnyk-card rounded-sm p-2.5">
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
             All Template Files (docs/CUSTOM_ASSETS_GUIDE.md &amp; public/templates/)
           </h2>
@@ -291,11 +291,11 @@ export const AssetGuideView: React.FC = () => {
           <h2 className="text-sm font-bold">
             Ready-to-Send Prompts for Image Models &amp; Generative LLMs
           </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
             {PROMPT_TEMPLATES.map((tpl) => {
               const copied = copiedId === tpl.id;
               return (
-                <article key={tpl.id} className="rushnyk-card rounded-lg p-4 flex flex-col gap-2.5">
+                <article key={tpl.id} className="rushnyk-card rounded-sm p-2.5 flex flex-col gap-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <span
@@ -338,7 +338,7 @@ export const AssetGuideView: React.FC = () => {
         </section>
 
         {/* Local LFM3-1.7B Character JSON Draft Helper */}
-        <section aria-label="Local Villager Draft Generator" className="rushnyk-card rounded-lg p-4 space-y-3">
+        <section aria-label="Local Villager Draft Generator" className="rushnyk-card rounded-sm p-2.5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-ochre" />

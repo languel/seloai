@@ -251,7 +251,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
             type="button"
             onClick={() => sim.setFocalWorldline('traveler')}
             aria-pressed={sim.focalWorldlineId === 'traveler'}
-            className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition ${
+            className={`rounded-sm border px-2.5 py-0.5 text-xs font-medium transition ${
               sim.focalWorldlineId === 'traveler'
                 ? 'border-indigoFolk bg-indigoFolk text-white'
                 : 'border-borderFolk bg-surface text-ink hover:border-indigoFolk'
@@ -267,7 +267,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
                 type="button"
                 onClick={() => sim.setFocalWorldline(v.id)}
                 aria-pressed={active}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition ${
+                className={`inline-flex items-center gap-1 rounded-sm border px-2.5 py-0.5 text-xs font-medium transition ${
                   active
                     ? 'border-crimson bg-crimson text-white'
                     : 'border-borderFolk bg-surface text-ink hover:border-crimson/60'
@@ -287,7 +287,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
         </div>
 
         {/* Sub-navigation */}
-        <div className="flex items-center gap-1 rounded-lg border border-borderFolk bg-surface p-0.5">
+        <div className="flex items-center gap-1 rounded-sm border border-borderFolk bg-surface p-0.5">
           {(
             [
               ['graph', Network, 'Psychophysical Graph'],
@@ -354,7 +354,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto flex items-center justify-center p-4">
+            <div className="flex-1 overflow-auto flex items-center justify-center p-2.5">
               <svg
                 viewBox="0 0 820 480"
                 className="w-full h-full max-w-[960px] select-none"
@@ -480,7 +480,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
                     <p className="text-xs text-muted">{selectedNode.subtitle}</p>
                   </div>
                   {selectedNode.type === 'character' && (
-                    <span className="rounded-full border border-borderFolk bg-surface px-2 py-0.5 font-mono text-[11px] capitalize">
+                    <span className="rounded-sm border border-borderFolk bg-surface px-2 py-0.5 font-mono text-[11px] capitalize">
                       {selectedNode.state}
                     </span>
                   )}
@@ -593,7 +593,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
 
       {/* Mode 2: World DB & Query */}
       {subTab === 'database' && (
-        <div className="flex flex-1 flex-col overflow-hidden p-4 gap-3">
+        <div className="flex flex-1 flex-col overflow-hidden p-2.5 gap-3">
           <form onSubmit={handleRunQuery} className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[260px]">
               <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted" />
@@ -637,7 +637,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
                   setActiveQuery(q);
                   setScribeSynthesis(null);
                 }}
-                className="rounded-full border border-borderFolk bg-card px-2.5 py-0.5 hover:border-indigoFolk truncate max-w-xs"
+                className="rounded-sm border border-borderFolk bg-card px-2.5 py-0.5 hover:border-indigoFolk truncate max-w-xs"
               >
                 {q}
               </button>
@@ -645,7 +645,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
           </div>
 
           {queryResult && (
-            <div className="rounded-lg border border-indigoFolk/40 bg-card p-3 space-y-2">
+            <div className="rounded-sm border border-indigoFolk/40 bg-card p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs font-semibold text-ink">{queryResult.answerSummary}</div>
                 <button
@@ -717,7 +717,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
           </div>
 
           {/* Raw Table */}
-          <div className="flex-1 overflow-auto rounded-lg border border-borderFolk bg-card thin-scroll">
+          <div className="flex-1 overflow-auto rounded-sm border border-borderFolk bg-card thin-scroll">
             <table className="w-full border-collapse text-left text-xs">
               <thead className="sticky top-0 bg-surface border-b border-borderFolk text-[11px] uppercase tracking-wider text-muted">
                 <tr>
@@ -759,7 +759,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
       {/* Mode 3: Scribe Narrative Loom */}
       {subTab === 'loom' && (
         <div className="grid flex-1 grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
-          <div className="flex flex-col overflow-hidden p-4 gap-3">
+          <div className="flex flex-col overflow-hidden p-2.5 gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs">
                 <label htmlFor="loom-worldline" className="font-semibold text-muted">
@@ -802,7 +802,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
               {loomRecords.map((r) => (
                 <div
                   key={r.id}
-                  className="rounded-lg border border-borderFolk bg-card px-3 py-2 text-xs"
+                  className="rounded-sm border border-borderFolk bg-card px-3 py-2 text-xs"
                 >
                   <div className="flex items-center justify-between text-[11px] text-muted mb-0.5">
                     <span>
@@ -817,7 +817,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
             </div>
           </div>
 
-          <aside className="flex flex-col border-l border-borderFolk bg-card p-4 gap-3 overflow-y-auto thin-scroll">
+          <aside className="flex flex-col border-l border-borderFolk bg-card p-2.5 gap-3 overflow-y-auto thin-scroll">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Eye className="h-4 w-4 text-ochre" />
@@ -833,7 +833,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
               </button>
             </div>
             {chronicleText ? (
-              <div className="rounded-lg border border-ochre/30 bg-surface p-3 text-xs leading-relaxed whitespace-pre-wrap">
+              <div className="rounded-sm border border-ochre/30 bg-surface p-3 text-xs leading-relaxed whitespace-pre-wrap">
                 {chronicleText}
               </div>
             ) : (

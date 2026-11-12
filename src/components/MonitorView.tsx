@@ -312,24 +312,24 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   const runtimes = [...sim.runtimes.values()];
 
   return (
-    <div className="h-full overflow-y-auto bg-linen p-5 thin-scroll">
+    <div className="h-full overflow-y-auto bg-linen p-3 thin-scroll">
       <div className="mx-auto max-w-6xl space-y-6">
         {/* Top Metrics Bar */}
         <section aria-label="Live Telemetry Summary" className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <div className="rushnyk-card rounded-lg p-3">
+          <div className="rushnyk-card rounded-sm p-3">
             <div className="text-[11px] uppercase tracking-wider text-muted">Sim FPS / Ticks</div>
             <div className="mt-1 font-mono text-lg font-bold">
               {sim.fps} <span className="text-xs font-normal text-muted">/ {sim.tickCount}</span>
             </div>
           </div>
-          <div className="rushnyk-card rounded-lg p-3">
+          <div className="rushnyk-card rounded-sm p-3">
             <div className="text-[11px] uppercase tracking-wider text-muted">LFM3-1.7B Speed</div>
             <div className="mt-1 font-mono text-lg font-bold text-indigoFolk">
               {brainRouter.lastMetrics.avgTokensPerSec || '—'}{' '}
               <span className="text-xs font-normal text-muted">tok/s</span>
             </div>
           </div>
-          <div className="rushnyk-card rounded-lg p-3">
+          <div className="rushnyk-card rounded-sm p-3">
             <div className="text-[11px] uppercase tracking-wider text-muted">Omni Latency</div>
             <div className="mt-1 font-mono text-lg font-bold text-crimson">
               {brainRouter.lastMetrics.lastOmniLatencyMs
@@ -337,22 +337,22 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                 : '—'}
             </div>
           </div>
-          <div className="rushnyk-card rounded-lg p-3">
+          <div className="rushnyk-card rounded-sm p-3">
             <div className="text-[11px] uppercase tracking-wider text-muted">Active Chats</div>
             <div className="mt-1 font-mono text-lg font-bold">
               {sim.conversations.filter((c) => c.active).length}
             </div>
           </div>
-          <div className="rushnyk-card rounded-lg p-3">
+          <div className="rushnyk-card rounded-sm p-3">
             <div className="text-[11px] uppercase tracking-wider text-muted">WebGPU Device</div>
             <div className="mt-1 truncate text-xs font-semibold">{omniEngine.deviceLabel}</div>
           </div>
         </section>
 
         {/* Model Loaders & Local Finetune Endpoints */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4" aria-label="WebGPU Model Loaders">
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-2.5" aria-label="WebGPU Model Loaders">
           {/* Village Brain Card (LFM3 / Omni / Qwen3.5 / Gemma4 / Bonsai / MiniCPM5) */}
-          <div className="rushnyk-card rounded-lg p-4 space-y-3">
+          <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-indigoFolk" />
@@ -540,7 +540,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
           </div>
 
           {/* LFM3-Omni-2B Card */}
-          <div className="rushnyk-card rounded-lg p-4 space-y-3">
+          <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Volume2 className="h-4 w-4 text-crimson" />
@@ -685,7 +685,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
         </section>
 
         {/* Ollama / LM Studio Local API Fallback */}
-        <section className="rushnyk-card rounded-lg p-4 space-y-3" aria-label="Ollama and LM Studio Fallback">
+        <section className="rushnyk-card rounded-sm p-2.5 space-y-3" aria-label="Ollama and LM Studio Fallback">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Server className="h-4 w-4 text-ochre" />
@@ -827,8 +827,8 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
         </section>
 
         {/* Inference Policy & Audio Routing */}
-        <section className="rushnyk-card rounded-lg p-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <section className="rushnyk-card rounded-sm p-2.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
             <fieldset className="space-y-2">
               <legend className="text-xs font-semibold uppercase tracking-wider text-muted">
                 Village Inference Mode
@@ -1014,7 +1014,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
               </button>
             </div>
 
-            <div className="flex flex-wrap gap-4 text-xs">
+            <div className="flex flex-wrap gap-2.5 text-xs">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -1196,9 +1196,9 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
         </section>
 
         {/* Villager State Matrix + Live Telemetry Log */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
           {/* NPC Matrix */}
-          <div className="rushnyk-card rounded-lg p-4 overflow-hidden">
+          <div className="rushnyk-card rounded-sm p-2.5 overflow-hidden">
             <div className="mb-3 flex items-center gap-2">
               <Activity className="h-4 w-4 text-ochre" />
               <h2 className="text-sm font-bold">Villager Runtime Matrix</h2>
@@ -1238,7 +1238,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
           </div>
 
           {/* Trace Log */}
-          <div className="rushnyk-card rounded-lg p-4 flex flex-col max-h-96">
+          <div className="rushnyk-card rounded-sm p-2.5 flex flex-col max-h-96">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Terminal className="h-4 w-4 text-sage" />
@@ -1311,7 +1311,7 @@ const StatusBadge: React.FC<{ status: ModelProgress['status'] }> = ({ status }) 
     error: 'border-crimson bg-crimson/15 text-crimson',
   };
   return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${styles[status]}`}>
+    <span className={`rounded-sm border px-2 py-0.5 text-[10px] font-semibold uppercase ${styles[status]}`}>
       {status}
     </span>
   );

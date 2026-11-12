@@ -309,7 +309,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                 }`}
               >
                 <span
-                  className="h-3 w-3 shrink-0 rounded-full border border-black/20"
+                  className="h-3 w-3 shrink-0 rounded-sm border border-black/20"
                   style={{ backgroundColor: v.accentColor }}
                 />
                 <div className="min-w-0 flex-1">
@@ -341,7 +341,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
       </aside>
 
       {/* Main Character Form & Sprite Preview */}
-      <section className="overflow-y-auto bg-linen p-5 thin-scroll">
+      <section className="overflow-y-auto bg-linen p-3 thin-scroll">
         {current ? (
           <div className="mx-auto max-w-3xl space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borderFolk pb-3">
@@ -373,7 +373,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
             </div>
 
             {/* Live Animation Preview */}
-            <div className="rushnyk-card rounded-lg p-4">
+            <div className="rushnyk-card rounded-sm p-2.5">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted">
                   Walk Cycle Preview (4 Directions)
@@ -409,7 +409,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
             </div>
 
             {/* Identity & Prompt Fields */}
-            <div className="rushnyk-card rounded-lg p-4 space-y-4">
+            <div className="rushnyk-card rounded-sm p-2.5 space-y-2.5">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label htmlFor="char-name" className="block text-xs font-medium mb-1">
@@ -532,7 +532,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
             {(() => {
               const voice = getEffectiveVoice(current);
               return (
-                <div className="rushnyk-card rounded-lg p-4 space-y-4">
+                <div className="rushnyk-card rounded-sm p-2.5 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
@@ -556,7 +556,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <fieldset className="space-y-1.5">
                       <legend className="text-xs font-medium">Omni Voice Gender</legend>
-                      <div className="flex items-center gap-4 text-xs pt-1">
+                      <div className="flex items-center gap-2.5 text-xs pt-1">
                         {(['female', 'male'] as VoiceGender[]).map((g) => (
                           <label key={g} className="inline-flex items-center gap-1.5 cursor-pointer capitalize">
                             <input
@@ -667,7 +667,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
             })()}
 
             {/* Spritesheet Picker + Modular Auto-Sprite Creator + Custom Upload */}
-            <div className="rushnyk-card rounded-lg p-4 space-y-4">
+            <div className="rushnyk-card rounded-sm p-2.5 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">

@@ -1447,11 +1447,11 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
             role="dialog"
             aria-modal="true"
             aria-labelledby="new-level-title"
-            className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 p-4"
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 p-2.5"
           >
             <form
               onSubmit={handleCreateNewLevel}
-              className="w-full max-w-sm rounded-lg border border-borderFolk bg-card p-4 shadow-2xl space-y-3"
+              className="w-full max-w-sm rounded-sm border border-borderFolk bg-card p-2.5 shadow-2xl space-y-3"
             >
               <div className="flex items-center justify-between">
                 <h2 id="new-level-title" className="text-sm font-semibold">

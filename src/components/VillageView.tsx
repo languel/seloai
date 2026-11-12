@@ -145,6 +145,40 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [recording, setRecording] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('seloai:sidebar-width'));
+      if (Number.isFinite(saved) && saved >= 260 && saved <= 760) return saved;
+    } catch {
+      // ignore storage errors
+    }
+    return 360;
+  });
+
+  const handleSidebarResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: PointerEvent) => {
+      const maxW = Math.max(360, Math.min(760, window.innerWidth - 260));
+      const next = Math.max(260, Math.min(maxW, startW + (startX - ev.clientX)));
+      setSidebarWidth(next);
+    };
+    const onUp = (ev: PointerEvent) => {
+      const maxW = Math.max(360, Math.min(760, window.innerWidth - 260));
+      const finalW = Math.max(260, Math.min(maxW, startW + (startX - ev.clientX)));
+      setSidebarWidth(finalW);
+      try {
+        localStorage.setItem('seloai:sidebar-width', String(Math.round(finalW)));
+      } catch {
+        // ignore storage errors
+      }
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   const cameraRef = useRef({ x: 0, y: 0, zoom: 1.15 });
   const dragRef = useRef<{ active: boolean; moved: boolean; lastX: number; lastY: number }>({
@@ -689,9 +723,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
   void tick;
 
   return (
-    <div className="grid h-full grid-cols-1 lg:grid-cols-[1fr_390px] overflow-hidden">
+    <div
+      className="flex h-full flex-col lg:flex-row overflow-hidden"
+      style={{ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
+    >
       {/* Left: Interactive Village World */}
-      <section className="relative flex flex-col overflow-hidden bg-stone-900" aria-label="Village Canvas">
+      <section className="relative flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-neutral-900" aria-label="Village Canvas">
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
@@ -705,7 +742,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         <div
           role="toolbar"
           aria-label="Village simulation controls"
-          className="absolute left-3 top-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-borderFolk bg-card/90 px-2.5 py-1.5 shadow-md backdrop-blur"
+          className="absolute left-2 top-2 flex flex-wrap items-center gap-1 rounded-sm border border-borderFolk bg-card/95 px-1.5 py-1 backdrop-blur"
         >
           <button
             type="button"
@@ -918,15 +955,28 @@ export const VillageView: React.FC<VillageViewProps> = ({
         </div>
 
         {/* Bottom-left quick controls hint */}
-        <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-borderFolk bg-card/85 px-3 py-1.5 text-xs text-muted backdrop-blur">
+        <div className="pointer-events-none absolute bottom-2 left-2 rounded-sm border border-borderFolk bg-card/90 px-2 py-1 text-[11px] text-muted backdrop-blur">
           Click villager to inspect · Click ground or <kbd className="font-mono">WASD</kbd> to walk · Drag to pan · Scroll to zoom
         </div>
       </section>
 
+      {/* Draggable Sidebar Resize Handle */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector sidebar"
+        onPointerDown={handleSidebarResizeStart}
+        title="Drag to resize sidebar"
+        className="hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center border-l border-borderFolk bg-surface hover:bg-ink/20 active:bg-ink/30 transition-colors"
+      />
+
       {/* Right: Villager Inspector + Voice & Chat */}
-      <aside className="flex flex-col border-l border-borderFolk bg-surface overflow-hidden" aria-label="Villager Inspector">
+      <aside
+        className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col bg-surface overflow-hidden max-h-[52vh] lg:max-h-none"
+        aria-label="Villager Inspector"
+      >
         {/* Villager Quick Roster */}
-        <div className="border-b border-borderFolk bg-card p-3">
+        <div className="border-b border-borderFolk bg-card p-2">
           <div className={`flex items-center justify-between gap-2 ${rosterCollapsed ? '' : 'mb-2'}`}>
             <button
               type="button"
@@ -964,7 +1014,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
           </div>
 
           {!rosterCollapsed && (rosterView === 'cards' ? (
-            <div className="max-h-44 overflow-y-auto thin-scroll space-y-1.5 pr-0.5">
+            <div className="max-h-40 overflow-y-auto thin-scroll space-y-1 pr-0.5">
               {villagers.map((v) => {
                 const rt = sim.runtimes.get(v.id);
                 const active = v.id === selectedId;
@@ -975,13 +1025,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     key={v.id}
                     type="button"
                     onClick={() => setSelectedId(v.id)}
-                    className={`flex w-full items-center gap-2.5 rounded-lg border px-2 py-1.5 text-left transition ${
+                    className={`flex w-full items-center gap-2 rounded-sm border px-1.5 py-1 text-left transition ${
                       active
-                        ? 'border-crimson bg-crimson/10 ring-1 ring-crimson/40'
-                        : 'border-borderFolk bg-surface hover:border-crimson/60'
+                        ? 'border-ink/50 bg-linen'
+                        : 'border-borderFolk bg-surface hover:border-ink/30'
                     }`}
                   >
-                    <VillagerAvatarThumb villager={v} size={28} />
+                    <VillagerAvatarThumb villager={v} size={24} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span
@@ -990,9 +1040,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         />
                         <span className="truncate text-xs font-semibold text-ink">{v.name}</span>
                       </div>
-                      <p className="truncate text-[11px] text-muted">{v.role}</p>
+                      <p className="truncate text-[10px] text-muted">{v.role}</p>
                     </div>
-                    <span className="shrink-0 rounded bg-card px-1.5 py-0.5 font-mono text-[10px] capitalize text-muted border border-borderFolk/60">
+                    <span className="shrink-0 rounded-sm bg-card px-1 py-0.5 font-mono text-[10px] capitalize text-muted border border-borderFolk">
                       {rt?.state ?? 'idle'}
                     </span>
                   </button>
@@ -1001,13 +1051,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedId('narrator')}
-                className={`flex w-full items-center gap-2.5 rounded-lg border px-2 py-1.5 text-left transition ${
+                className={`flex w-full items-center gap-2 rounded-sm border px-1.5 py-1 text-left transition ${
                   isScribeSelected
-                    ? 'border-ochre bg-ochre/10 ring-1 ring-ochre/40'
+                    ? 'border-ochre bg-linen'
                     : 'border-borderFolk bg-surface hover:border-ochre/60'
                 }`}
               >
-                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-borderFolk/70 bg-ochre/20 font-serif text-xs font-bold text-ochre">
+                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-card font-serif text-[11px] font-bold text-ochre">
                   S
                 </span>
                 <div className="min-w-0 flex-1">
@@ -1015,17 +1065,17 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     <span className="h-2 w-2 shrink-0 rounded-full bg-ochre" />
                     <span className="truncate text-xs font-semibold text-ink">{narratorName}</span>
                   </div>
-                  <p className="truncate text-[11px] text-muted">
+                  <p className="truncate text-[10px] text-muted">
                     Village Scribe · {settings.narratorStyle}
                   </p>
                 </div>
-                <span className="shrink-0 rounded bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted border border-borderFolk/60">
+                <span className="shrink-0 rounded-sm bg-card px-1 py-0.5 font-mono text-[10px] text-muted border border-borderFolk">
                   DM
                 </span>
               </button>
             </div>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1">
               {villagers.map((v) => {
                 const rt = sim.runtimes.get(v.id);
                 const active = v.id === selectedId;
@@ -1036,15 +1086,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     key={v.id}
                     type="button"
                     onClick={() => setSelectedId(v.id)}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                    className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition ${
                       active
-                        ? 'border-crimson bg-crimson text-white'
-                        : 'border-borderFolk bg-surface text-ink hover:border-crimson/60'
+                        ? 'border-ink/50 bg-ink text-linen'
+                        : 'border-borderFolk bg-surface text-ink hover:border-ink/40'
                     }`}
                   >
                     <span
-                      className={`h-2 w-2 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
-                      style={{ backgroundColor: active ? '#fff' : v.accentColor }}
+                      className={`h-1.5 w-1.5 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
+                      style={{ backgroundColor: v.accentColor }}
                     />
                     <span>{v.name}</span>
                     {rt?.state === 'thinking' && <span className="text-[10px] opacity-80">…</span>}
@@ -1054,15 +1104,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedId('narrator')}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition ${
                   isScribeSelected
                     ? 'border-ochre bg-ochre text-white'
                     : 'border-borderFolk bg-surface text-ink hover:border-ochre/60'
                 }`}
               >
                 <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: isScribeSelected ? '#fff' : '#c98a3b' }}
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: isScribeSelected ? '#fff' : '#c79646' }}
                 />
                 <span>{narratorName}</span>
               </button>
@@ -1074,7 +1124,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         {(selectedCfg && selectedRt) || isScribeSelected ? (
           <>
             {isScribeSelected ? (
-              <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
+              <div className="border-b border-borderFolk bg-card/80 p-2 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
@@ -1088,16 +1138,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
                     )}
                     <div className="min-w-0">
-                      <h3 className="text-sm font-bold leading-tight truncate">{narratorName}</h3>
-                      <p className="text-[11px] text-muted truncate">Village Scribe · {settings.narratorStyle}</p>
+                      <h3 className="text-xs font-bold leading-tight truncate">{narratorName}</h3>
+                      <p className="text-[10px] text-muted truncate">Village Scribe · {settings.narratorStyle}</p>
                     </div>
                   </button>
-                  <span className="rounded-full border border-ochre/40 bg-ochre/10 px-2 py-0.5 text-[11px] font-medium text-ink shrink-0">
+                  <span className="rounded-sm border border-ochre/50 bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ochre shrink-0">
                     {settings.narratorEnabled ? 'Voiced' : 'Muted'}
                   </span>
                 </div>
                 {!detailCollapsed && (
-                  <p className="text-xs leading-relaxed text-ink/90">
+                  <p className="text-[11px] leading-snug text-ink/90">
                     Chronicler of Selo. Reads non-dialogue scene beats in turn, and answers directly
                     when addressed with <code className="font-mono">@{narratorName}</code>.
                   </p>
@@ -1106,7 +1156,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             ) : (
               selectedCfg &&
               selectedRt && (
-                <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
+                <div className="border-b border-borderFolk bg-card/80 p-2 space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
@@ -1120,11 +1170,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
                       )}
                       <div className="min-w-0">
-                        <h3 className="text-sm font-bold leading-tight truncate">{selectedCfg.name}</h3>
-                        <p className="text-[11px] text-muted truncate">{selectedCfg.role}</p>
+                        <h3 className="text-xs font-bold leading-tight truncate">{selectedCfg.name}</h3>
+                        <p className="text-[10px] text-muted truncate">{selectedCfg.role}</p>
                       </div>
                     </button>
-                    <span className="rounded-full border border-borderFolk bg-surface px-2 py-0.5 text-[11px] font-medium capitalize shrink-0">
+                    <span className="rounded-sm border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] font-medium capitalize shrink-0">
                       {selectedRt.state}
                     </span>
                   </div>
@@ -1304,9 +1354,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         type="button"
                         onClick={() => setter((v) => !v)}
                         aria-pressed={active}
-                        className={`rounded-full border px-2 py-0.5 font-medium ${
+                        className={`rounded-sm border px-1.5 py-0.5 font-medium ${
                           active
-                            ? 'border-indigoFolk/60 bg-indigoFolk/15 text-ink'
+                            ? 'border-ink/40 bg-surface text-ink'
                             : 'border-borderFolk bg-card text-muted line-through'
                         }`}
                       >
@@ -1341,9 +1391,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
               </div>
 
               {!scriptCollapsed && (
-                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 thin-scroll">
+                <div className="flex-1 overflow-y-auto p-2 space-y-1.5 thin-scroll">
                   {activeSpeech && (
-                    <div className="rounded-lg border border-sage/60 bg-sage/10 px-2.5 py-1.5 text-xs flex items-start justify-between gap-2">
+                    <div className="rounded-sm border border-sage/60 bg-card px-2 py-1 text-xs flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sage">
                           <Volume2 className="h-3 w-3 animate-pulse" aria-hidden="true" />
@@ -1358,7 +1408,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                           <button
                             type="button"
                             onClick={() => setSelectedId(activeSpeech.speakerId)}
-                            className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] hover:border-indigoFolk"
+                            className="rounded-sm border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] hover:border-ink/40"
                           >
                             Focus
                           </button>
@@ -1366,7 +1416,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         <button
                           type="button"
                           onClick={() => brainRouter.flushAudioQueue()}
-                          className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] hover:text-crimson"
+                          className="rounded-sm border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] hover:text-crimson"
                         >
                           Flush
                         </button>
@@ -1375,13 +1425,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   )}
 
                   {displayedMessages.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-borderFolk p-4 text-center text-xs text-muted">
+                    <div className="rounded-sm border border-dashed border-borderFolk p-3 text-center text-xs text-muted">
                       Type a message below or use <code className="font-mono">@Name</code>,{' '}
                       <code className="font-mono">@all</code> / <code className="font-mono">@world</code>, or{' '}
                       <code className="font-mono">@{narratorName}</code> to guide one or many characters.
                     </div>
                   ) : (
-                    <ul className="space-y-2">
+                    <ul className="space-y-1.5">
                       {displayedMessages.map((msg) => {
                         const isHuman = msg.senderId === sim.player.id;
                         const isNarration = msg.kind === 'narration' || msg.senderId === 'narrator';
@@ -1393,15 +1443,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         return (
                           <li
                             key={msg.id}
-                            className={`rounded-lg border px-3 py-2 text-xs ${
+                            className={`rounded-sm border px-2 py-1.5 text-xs ${
                               isNowSpeaking
-                                ? 'border-sage bg-sage/15 ring-1 ring-sage/50'
+                                ? 'border-sage bg-card ring-1 ring-sage/50'
                                 : isNarration
-                                  ? 'border-ochre/40 bg-ochre/10 italic'
+                                  ? 'border-borderFolk border-l-2 border-l-ochre bg-card italic'
                                   : isThought
-                                    ? 'mr-2 border-dashed border-sage/60 bg-sage/10 italic text-ink/90'
+                                    ? 'mr-2 border-dashed border-borderFolk bg-card/70 italic text-ink/90'
                                     : isHuman
-                                      ? 'ml-4 border-indigoFolk/40 bg-indigoFolk/10'
+                                      ? 'ml-3 border-borderFolk border-l-2 border-l-indigoFolk bg-card'
                                       : 'mr-2 border-borderFolk bg-card'
                             }`}
                           >
@@ -1571,7 +1621,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         ? `Ask @${narratorName}, or broadcast with @all / @world / @Name…`
                         : `Talk to ${selectedCfg?.name ?? ''} or use @all, @world, @${narratorName}, @Name…`
                     }
-                    className="w-full resize-none rounded-md border border-borderFolk bg-surface px-2.5 py-1.5 text-xs text-ink placeholder:text-muted"
+                    className="w-full resize-none rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs text-ink placeholder:text-muted"
                   />
                 </div>
 
@@ -1579,7 +1629,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   type="button"
                   onClick={handleTriggerAtMention}
                   aria-label="Address a character with @"
-                  className="inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-md border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-indigoFolk"
+                  className="inline-flex h-8 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
                 >
                   @
                 </button>
@@ -1588,7 +1638,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   type="button"
                   onClick={handleTriggerHashMention}
                   aria-label="Reference a Point of Interest with #"
-                  className="inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-md border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-amberFolk"
+                  className="inline-flex h-8 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
                 >
                   #
                 </button>
@@ -1599,13 +1649,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     onClick={toggleVoiceRecording}
                     aria-pressed={recording}
                     aria-label={recording ? 'Stop voice recording and send' : 'Talk with microphone'}
-                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border transition ${
+                    className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border transition ${
                       recording
                         ? 'border-crimson bg-crimson text-white'
                         : 'border-borderFolk bg-surface text-ink hover:border-crimson'
                     }`}
                   >
-                    {recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    {recording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                   </button>
                 )}
 
@@ -1613,9 +1663,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   type="submit"
                   disabled={sending || !chatInput.trim()}
                   aria-label="Send message"
-                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md bg-crimson px-3 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-45"
+                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-sm border border-ink/30 bg-ink px-2.5 text-xs font-semibold text-linen hover:opacity-90 disabled:opacity-45"
                 >
-                  <Send className="h-3.5 w-3.5" />
+                  <Send className="h-3 w-3" />
                   <span>Send</span>
                 </button>
               </form>
