@@ -10,7 +10,7 @@ import {
 import { computeSpatialMix } from '../../ai/audioPipeline';
 import { parseDialogueAndNarration } from '../../ai/brainRouter';
 import { findNearestWalkableTile, findPath, isTileWalkable } from '../pathfinding';
-import { VillageSimulation } from '../simulation';
+import { CHAR_COLLISION_RADIUS, parseMentionTargets, VillageSimulation } from '../simulation';
 import { exportVillageJson, parseImportedVillageJson } from '../../storage/villageStore';
 
 describe('SeloAI core engine', () => {
@@ -165,5 +165,123 @@ describe('SeloAI core engine', () => {
 
     expect(msgs[msgs.length - 1].kind).toBe('narration');
     expect(msgs[msgs.length - 1].senderId).toBe('narrator');
+  });
+
+  it('prevents the player from walking through a villager via collision radius', () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityAudioEnabled: false,
+      enableWebSpeechFallback: false,
+    });
+
+    const olena = DEFAULT_VILLAGERS[0];
+    const rt = sim.runtimes.get(olena.id)!;
+    // Place the player directly left of Olena on a walkable tile and try to walk straight through her.
+    sim.player.x = rt.x - 1.2;
+    sim.player.y = rt.y;
+    rt.path = [];
+    rt.state = 'idle';
+
+    for (let i = 0; i < 40; i++) {
+      sim.nudgePlayer(1, 0, 0.05);
+    }
+
+    const dist = Math.hypot(sim.player.x - rt.x, sim.player.y - rt.y);
+    expect(dist).toBeGreaterThanOrEqual(CHAR_COLLISION_RADIUS - 0.15);
+    expect(sim.player.x).toBeLessThan(rt.x);
+  });
+
+  it('parses @Scribe, custom narratorName, and multi-target @mentions cleanly', () => {
+    const targetsScribe = parseMentionTargets(
+      '@Scribe describe the square',
+      DEFAULT_VILLAGERS,
+      DEFAULT_MODEL_SETTINGS,
+    );
+    expect(targetsScribe.map((t) => t.id)).toEqual(['narrator']);
+
+    const targetsCustomNarrator = parseMentionTargets(
+      '@Chronicle what happens next?',
+      DEFAULT_VILLAGERS,
+      { ...DEFAULT_MODEL_SETTINGS, narratorName: 'Chronicle' },
+    );
+    expect(targetsCustomNarrator.map((t) => t.id)).toEqual(['narrator']);
+
+    const targetsSingle = parseMentionTargets(
+      'Hey @Taras how is the mill?',
+      DEFAULT_VILLAGERS,
+      DEFAULT_MODEL_SETTINGS,
+    );
+    expect(targetsSingle.map((t) => t.id)).toEqual(['v-taras']);
+
+    const targetsMulti = parseMentionTargets(
+      '@Scribe @Olena @Taras discuss the harvest',
+      DEFAULT_VILLAGERS,
+      DEFAULT_MODEL_SETTINGS,
+    );
+    expect(targetsMulti.map((t) => t.id)).toEqual(['narrator', 'v-olena', 'v-taras']);
+  });
+
+  it('routes @Scribe narration, @Target replies, multi-target turn order, and @Olena world directions', async () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityAudioEnabled: false,
+      enableWebSpeechFallback: false,
+      narratorEnabled: true,
+    });
+
+    // 1. Direct @Scribe narration
+    const scribeRes = await sim.sendUserAddressedMessage(
+      undefined,
+      '@Scribe describe what is happening in the village right now',
+      false,
+    );
+    expect(scribeRes.focusedTargetId).toBe('narrator');
+    const latestAfterScribe = sim.conversations[sim.conversations.length - 1];
+    expect(latestAfterScribe.messages.some((m) => m.senderId === 'narrator' && m.kind === 'narration')).toBe(true);
+
+    // 2. Direct @Taras reply switches focused target and invokes Taras
+    const tarasRes = await sim.sendUserAddressedMessage(
+      'narrator',
+      '@Taras tell me about the flour mill',
+      false,
+    );
+    expect(tarasRes.focusedTargetId).toBe('v-taras');
+    const tarasConv = sim.conversations.find(
+      (c) => c.participantIds.includes('v-taras') && c.messages.some((m) => m.senderId === 'v-taras'),
+    );
+    expect(tarasConv).toBeDefined();
+
+    // 3. Multi-target @Scribe @Olena @Taras turn order
+    const multiRes = await sim.sendUserAddressedMessage(
+      undefined,
+      '@Scribe @Olena @Taras gather and share your thoughts',
+      false,
+    );
+    expect(multiRes.focusedTargetId).toBe('narrator');
+    const multiConv = sim.conversations.find((c) =>
+      c.messages.some((m) => m.text.includes('gather and share your thoughts')),
+    )!;
+    const promptIdx = multiConv.messages.findIndex((m) =>
+      m.text.includes('gather and share your thoughts'),
+    );
+    const replySenders = multiConv.messages
+      .slice(promptIdx + 1)
+      .filter((m) => m.senderId !== 'human-visitor')
+      .map((m) => m.senderId);
+    expect(replySenders).toEqual(['narrator', 'v-olena', 'v-taras']);
+
+    // 4. World direction "@Olena walk to Windmill Meadow" updates intention & path
+    await sim.sendUserAddressedMessage(
+      undefined,
+      '@Olena walk to Windmill Meadow',
+      false,
+    );
+    const olenaRt = sim.runtimes.get('v-olena')!;
+    expect(olenaRt.currentIntention?.toLowerCase()).toContain('windmill meadow');
+    expect(olenaRt.path.length).toBeGreaterThan(0);
   });
 });

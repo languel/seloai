@@ -271,12 +271,17 @@ class BrainRouter {
       .slice(-4)
       .map((m) => `- ${m.summary}`)
       .join('\n');
+    const worldEvents = (runtime.worldFeed ?? [])
+      .slice(-4)
+      .map((ev) => `- ${ev}`)
+      .join('\n');
 
     const systemPrompt = [
       `You are ${villager.name}, the ${villager.role} in the village of Selo.`,
       `Identity: ${villager.identity}`,
-      `Current plan: ${villager.plan}`,
+      `Current motivation: ${runtime.currentIntention || villager.plan}`,
       memories ? `Recent memories:\n${memories}` : '',
+      worldEvents ? `Recent world events & impressions:\n${worldEvents}` : '',
       `Respond in character to ${partnerName} in 1 to 2 natural, spoken sentences (under 45 words).`,
       `Speak ONLY plain dialogue in first person. NEVER start with or utter your own name (never write "${villager.name}:"), avoid stage directions, and never break character.`,
     ]
@@ -408,91 +413,162 @@ class BrainRouter {
       }
     }
 
-    // 2. MiniCPM5-2B GGUF WebGPU Brain
+    // Shared fallback chain across WebGPU GGUF/ONNX and local Ollama/LM Studio
+    const routed = await this.runTextBrain(chatMessages, settings, {
+      maxTokens: 110,
+      temperature: 0.45,
+      onChunk: params.onChunk,
+      logLabel: `${villager.name} → ${partnerName}`,
+      sanitizeName: villager.name,
+      allowOmniFallback: false,
+    });
+    if (routed) {
+      return routed;
+    }
+
+    // Story-Sim deterministic persona fallback (instant, zero VRAM)
+    const started = performance.now();
+    await new Promise((r) => setTimeout(r, 180));
+    const reply = synthesizeStorySimReply(villager, partnerName, history);
+    const durationMs = Math.round(performance.now() - started);
+    this.log({
+      channel: 'sim',
+      level: 'info',
+      title: `${villager.name} → ${partnerName} (Story Sim)`,
+      detail: reply,
+      durationMs,
+    });
+    return { text: reply, source: 'story-sim', durationMs };
+  }
+
+  private async runTextBrain(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    settings: ModelSettings,
+    opts: {
+      maxTokens: number;
+      temperature: number;
+      onChunk?: (chunk: string) => void;
+      logLabel?: string;
+      sanitizeName?: string;
+      allowOmniFallback?: boolean;
+    },
+  ): Promise<{ text: string; source: ChatMessage['source']; durationMs: number } | null> {
+    if (settings.inferenceMode === 'story-sim') return null;
+
+    if (
+      opts.allowOmniFallback &&
+      (settings.inferenceMode === 'lfm3-omni-brain' ||
+        settings.brainEngine === 'lfm3-omni' ||
+        (!this.isTextModelReady() && !minicpmEngine.isReady() && !bonsaiEngine.isReady())) &&
+      omniEngine.isReady()
+    ) {
+      try {
+        const res = await omniEngine.generateChatReply({
+          messages,
+          voice: false,
+          maxNewTokens: opts.maxTokens,
+          onTextChunk: opts.onChunk,
+        });
+        const cleanText = parseDialogueAndNarration(res.text, opts.sanitizeName).display;
+        this.lastMetrics.lastOmniLatencyMs = res.durationMs;
+        this.lastMetrics.lastTextLatencyMs = res.durationMs;
+        this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
+        this.lastMetrics.totalCalls += 1;
+        return { text: cleanText, source: 'lfm3-omni', durationMs: res.durationMs };
+      } catch (err: any) {
+        if (settings.inferenceMode === 'lfm3-omni-brain' || settings.inferenceMode === 'strict-webgpu') {
+          throw err;
+        }
+      }
+    }
+
     if (
       (settings.inferenceMode === 'auto' || settings.inferenceMode === 'strict-webgpu') &&
       settings.brainEngine === 'minicpm5-gguf' &&
       minicpmEngine.isReady()
     ) {
       try {
-        const res = await minicpmEngine.generateText(chatMessages, {
-          maxNewTokens: 110,
-          onChunk: params.onChunk,
+        const res = await minicpmEngine.generateText(messages, {
+          maxNewTokens: opts.maxTokens,
+          onChunk: opts.onChunk,
         });
-        const cleanText = parseDialogueAndNarration(res.text, villager.name).display;
+        const cleanText = parseDialogueAndNarration(res.text, opts.sanitizeName).display;
         this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
-        this.log({
-          channel: 'lfm3-1.7b',
-          level: 'success',
-          title: `${villager.name} → ${partnerName} (MiniCPM5-2B)`,
-          detail: cleanText,
-          durationMs: res.durationMs,
-          tokensPerSec: res.tokensPerSec,
-        });
+        if (opts.logLabel) {
+          this.log({
+            channel: 'lfm3-1.7b',
+            level: 'success',
+            title: `${opts.logLabel} (MiniCPM5-2B)`,
+            detail: cleanText,
+            durationMs: res.durationMs,
+            tokensPerSec: res.tokensPerSec,
+          });
+        }
         return { text: cleanText, source: 'minicpm5', durationMs: res.durationMs };
       } catch (err: any) {
         if (settings.inferenceMode === 'strict-webgpu') throw err;
       }
     }
 
-    // 2b. Ternary Bonsai-2 27B GGUF WebGPU Brain
     if (
       (settings.inferenceMode === 'auto' || settings.inferenceMode === 'strict-webgpu') &&
       settings.brainEngine === 'bonsai2-gguf' &&
       bonsaiEngine.isReady()
     ) {
       try {
-        const res = await bonsaiEngine.generateText(chatMessages, {
-          maxNewTokens: 110,
-          onChunk: params.onChunk,
+        const res = await bonsaiEngine.generateText(messages, {
+          maxNewTokens: opts.maxTokens,
+          onChunk: opts.onChunk,
         });
-        const cleanText = parseDialogueAndNarration(res.text, villager.name).display;
+        const cleanText = parseDialogueAndNarration(res.text, opts.sanitizeName).display;
         this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
-        this.log({
-          channel: 'lfm3-1.7b',
-          level: 'success',
-          title: `${villager.name} → ${partnerName} (Bonsai-2 27B)`,
-          detail: cleanText,
-          durationMs: res.durationMs,
-          tokensPerSec: res.tokensPerSec,
-        });
+        if (opts.logLabel) {
+          this.log({
+            channel: 'lfm3-1.7b',
+            level: 'success',
+            title: `${opts.logLabel} (Bonsai-2 27B)`,
+            detail: cleanText,
+            durationMs: res.durationMs,
+            tokensPerSec: res.tokensPerSec,
+          });
+        }
         return { text: cleanText, source: 'bonsai2', durationMs: res.durationMs };
       } catch (err: any) {
         if (settings.inferenceMode === 'strict-webgpu') throw err;
       }
     }
 
-    // 3. Transformers.js ONNX WebGPU Brain (LFM3-1.7B, Qwen3.5, Gemma 4, Bonsai)
-    const useOnnxWebGpu =
+    if (
       (settings.inferenceMode === 'auto' || settings.inferenceMode === 'strict-webgpu') &&
-      this.isTextModelReady();
-
-    if (useOnnxWebGpu) {
+      this.isTextModelReady()
+    ) {
       try {
-        const res = await this.generateText(chatMessages, {
-          maxNewTokens: 110,
-          temperature: 0.45,
-          onChunk: params.onChunk,
+        const res = await this.generateText(messages, {
+          maxNewTokens: opts.maxTokens,
+          temperature: opts.temperature,
+          onChunk: opts.onChunk,
         });
-        const cleanText = parseDialogueAndNarration(res.text, villager.name).display;
+        const cleanText = parseDialogueAndNarration(res.text, opts.sanitizeName).display;
         const source: ChatMessage['source'] = settings.textModelId.toLowerCase().includes('lfm3')
           ? 'lfm3-1.7b'
           : 'webgpu-onnx';
         this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
-        this.log({
-          channel: 'lfm3-1.7b',
-          level: 'success',
-          title: `${villager.name} → ${partnerName}`,
-          detail: cleanText,
-          durationMs: res.durationMs,
-          tokensPerSec: res.tokensPerSec,
-        });
+        if (opts.logLabel) {
+          this.log({
+            channel: 'lfm3-1.7b',
+            level: 'success',
+            title: opts.logLabel,
+            detail: cleanText,
+            durationMs: res.durationMs,
+            tokensPerSec: res.tokensPerSec,
+          });
+        }
         return { text: cleanText, source, durationMs: res.durationMs };
       } catch (err: any) {
         this.log({
@@ -509,7 +585,6 @@ class BrainRouter {
       throw new Error('Strict WebGPU mode enabled, but no WebGPU brain model is loaded yet.');
     }
 
-    // Ollama / LM Studio HTTP fallback (or primary when inferenceMode === 'local-api')
     const useLocalApi =
       settings.inferenceMode === 'local-api' ||
       (settings.inferenceMode === 'auto' && settings.localApiEnabled && Boolean(settings.localApiUrl.trim()));
@@ -519,23 +594,25 @@ class BrainRouter {
         const res = await chatWithLocalApi({
           baseUrl: settings.localApiUrl,
           model: settings.localApiModel.trim(),
-          messages: chatMessages,
-          maxTokens: 110,
-          temperature: 0.5,
-          onChunk: params.onChunk,
+          messages,
+          maxTokens: opts.maxTokens,
+          temperature: opts.temperature,
+          onChunk: opts.onChunk,
         });
-        const cleanText = parseDialogueAndNarration(res.text, villager.name).display;
+        const cleanText = parseDialogueAndNarration(res.text, opts.sanitizeName).display;
         const src: ChatMessage['source'] =
           settings.localApiProvider === 'lmstudio' ? 'lmstudio' : 'ollama';
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
-        this.log({
-          channel: 'local-api',
-          level: 'success',
-          title: `${villager.name} → ${partnerName} (${src})`,
-          detail: cleanText,
-          durationMs: res.durationMs,
-        });
+        if (opts.logLabel) {
+          this.log({
+            channel: 'local-api',
+            level: 'success',
+            title: `${opts.logLabel} (${src})`,
+            detail: cleanText,
+            durationMs: res.durationMs,
+          });
+        }
         return { text: cleanText, source: src, durationMs: res.durationMs };
       } catch (err: any) {
         this.log({
@@ -548,15 +625,70 @@ class BrainRouter {
       }
     }
 
-    // Story-Sim deterministic persona fallback (instant, zero VRAM)
+    return null;
+  }
+
+  /**
+   * Direct response when the user addresses @Scribe / @Narrator.
+   */
+  async generateNarratorReply(params: {
+    prompt: string;
+    sceneContext: string;
+    history: ChatMessage[];
+    settings: ModelSettings;
+    onChunk?: (chunk: string) => void;
+  }): Promise<{ text: string; source: ChatMessage['source']; durationMs: number }> {
+    const narratorName = params.settings.narratorName.trim() || 'Scribe';
+    const toneHint =
+      params.settings.narratorStyle === 'dungeon-master'
+        ? 'vivid dungeon-master cadence describing atmosphere, motives, and physical action'
+        : params.settings.narratorStyle === 'chronicler'
+          ? 'crisp village chronicler tone'
+          : 'warm fireside storybook tone';
+
+    const msgs: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      {
+        role: 'system',
+        content: [
+          `You are ${narratorName}, the invisible Scribe and narrator of Selo village.`,
+          `Speak in a ${toneHint} in third-person narrative (1 to 3 concise sentences, under 55 words).`,
+          `Never prefix your own name like "${narratorName}:" or break character.`,
+          params.sceneContext ? `Current village scene:\n${params.sceneContext}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+      ...params.history.slice(-4).map((m) => ({
+        role: (m.senderId === 'narrator' ? 'assistant' : 'user') as 'assistant' | 'user',
+        content: m.senderId === 'narrator' ? m.text : `${m.senderName}: ${m.text}`,
+      })),
+      { role: 'user', content: params.prompt },
+    ];
+
+    try {
+      const routed = await this.runTextBrain(msgs, params.settings, {
+        maxTokens: 110,
+        temperature: 0.5,
+        onChunk: params.onChunk,
+        logLabel: `Narration (${narratorName})`,
+        sanitizeName: narratorName,
+        allowOmniFallback: true,
+      });
+      if (routed) return routed;
+    } catch (err) {
+      if (params.settings.inferenceMode === 'strict-webgpu' || params.settings.inferenceMode === 'local-api') {
+        throw err;
+      }
+    }
+
     const started = performance.now();
-    await new Promise((r) => setTimeout(r, 180));
-    const reply = synthesizeStorySimReply(villager, partnerName, history);
+    await new Promise((r) => setTimeout(r, 120));
+    const reply = synthesizeStorySimNarration(params.prompt, params.sceneContext, params.settings);
     const durationMs = Math.round(performance.now() - started);
     this.log({
       channel: 'sim',
       level: 'info',
-      title: `${villager.name} → ${partnerName} (Story Sim)`,
+      title: `Narration (${narratorName} · Story Sim)`,
       detail: reply,
       durationMs,
     });
@@ -575,39 +707,122 @@ class BrainRouter {
       },
       { role: 'user' as const, content: params.transcript },
     ];
-    if (params.settings.inferenceMode !== 'story-sim') {
-      try {
-        if (
-          (params.settings.inferenceMode === 'lfm3-omni-brain' ||
-            params.settings.brainEngine === 'lfm3-omni' ||
-            (!this.isTextModelReady() && !minicpmEngine.isReady() && !bonsaiEngine.isReady())) &&
-          omniEngine.isReady()
-        ) {
-          const res = await omniEngine.generateChatReply({
-            messages: msgs,
-            voice: false,
-            maxNewTokens: 55,
-          });
-          return res.text;
-        }
-        if (params.settings.brainEngine === 'minicpm5-gguf' && minicpmEngine.isReady()) {
-          const res = await minicpmEngine.generateText(msgs, { maxNewTokens: 55 });
-          return res.text;
-        }
-        if (params.settings.brainEngine === 'bonsai2-gguf' && bonsaiEngine.isReady()) {
-          const res = await bonsaiEngine.generateText(msgs, { maxNewTokens: 55 });
-          return res.text;
-        }
-        if (this.isTextModelReady()) {
-          const res = await this.generateText(msgs, { maxNewTokens: 55, temperature: 0.25 });
-          return res.text;
-        }
-      } catch {
-        // fall through
-      }
+    try {
+      const routed = await this.runTextBrain(msgs, params.settings, {
+        maxTokens: 55,
+        temperature: 0.25,
+        allowOmniFallback: true,
+      });
+      if (routed?.text) return routed.text;
+    } catch {
+      // fall through
     }
     const snippet = params.transcript.split('\n').slice(-1)[0] || '';
     return `Spoke with a neighbor: ${snippet.slice(0, 72)}`;
+  }
+
+  /**
+   * Westworld-style World->NPC motivation step: reads the character's ongoing
+   * world session (identity, memories, perceptions) and chooses who to seek out
+   * or where to go next. Uses an active LLM when ready, or instant story-driven
+   * selection so idle pacing stays responsive.
+   */
+  async decideVillagerNextAction(params: {
+    villager: VillagerConfig;
+    runtime: VillagerRuntime;
+    otherNames: string[];
+    landmarkNames: string[];
+    settings: ModelSettings;
+  }): Promise<{ action: 'talk' | 'visit' | 'explore'; targetName?: string; motive: string }> {
+    const { villager, runtime, otherNames, landmarkNames, settings } = params;
+    const hasActiveWebGpu =
+      omniEngine.isReady() ||
+      minicpmEngine.isReady() ||
+      bonsaiEngine.isReady() ||
+      this.isTextModelReady();
+
+    if (
+      settings.inferenceMode !== 'story-sim' &&
+      (hasActiveWebGpu || settings.inferenceMode === 'local-api')
+    ) {
+      const worldContext = [
+        `Neighbors in Selo: ${otherNames.join(', ') || 'none'}`,
+        `Landmarks: ${landmarkNames.join(', ') || 'Village Square'}`,
+        `Current plan: ${runtime.currentIntention || villager.plan}`,
+        runtime.memories.length
+          ? `Latest memory: ${runtime.memories[runtime.memories.length - 1].summary}`
+          : '',
+        runtime.worldFeed?.length
+          ? `Recent world updates:\n${runtime.worldFeed.slice(-3).map((x) => `- ${x}`).join('\n')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      try {
+        const routed = await this.runTextBrain(
+          [
+            {
+              role: 'system',
+              content: [
+                `You are the inner mind of ${villager.name} (${villager.role}). ${villager.identity}`,
+                `Reply in ONE line using this exact format:`,
+                `ACTION: talk:<NeighborName> OR visit:<LandmarkName> | MOTIVE: <6 to 12 word motive>`,
+              ].join('\n'),
+            },
+            { role: 'user', content: worldContext },
+          ],
+          settings,
+          { maxTokens: 45, temperature: 0.55, allowOmniFallback: true },
+        );
+
+        if (routed?.text) {
+          const line = routed.text.trim();
+          const talkMatch = line.match(/talk\s*:\s*([^|\n]+)/i);
+          const visitMatch = line.match(/visit\s*:\s*([^|\n]+)/i);
+          const motiveMatch = line.match(/motive\s*:\s*(.+)$/i);
+          const motive =
+            (motiveMatch?.[1] ?? villager.plan).replace(/^["']|["']$/g, '').trim().slice(0, 90);
+          if (talkMatch?.[1]) {
+            const name = otherNames.find((n) =>
+              talkMatch[1].toLowerCase().includes(n.toLowerCase()),
+            );
+            if (name) return { action: 'talk', targetName: name, motive };
+          }
+          if (visitMatch?.[1]) {
+            const lm = landmarkNames.find((l) =>
+              visitMatch[1].toLowerCase().includes(l.toLowerCase()),
+            );
+            if (lm) return { action: 'visit', targetName: lm, motive };
+          }
+          if (motive) return { action: 'explore', motive };
+        }
+      } catch {
+        // Fall through to deterministic story motivation
+      }
+    }
+
+    // Persona-grounded social/story fallback (zero lag)
+    if (otherNames.length > 0 && Math.random() < 0.62) {
+      const targetName = otherNames[Math.floor(Math.random() * otherNames.length)];
+      return {
+        action: 'talk',
+        targetName,
+        motive: `Seeking out ${targetName} to share news about ${villager.role.toLowerCase()} work`,
+      };
+    }
+    if (landmarkNames.length > 0 && Math.random() < 0.65) {
+      const targetName = landmarkNames[Math.floor(Math.random() * landmarkNames.length)];
+      return {
+        action: 'visit',
+        targetName,
+        motive: `Heading toward ${targetName}: ${villager.plan.slice(0, 56)}`,
+      };
+    }
+    return {
+      action: 'explore',
+      motive: villager.plan,
+    };
   }
 
   refreshActiveSpatialMix() {
@@ -853,6 +1068,22 @@ function synthesizeStorySimReply(
     `Aye, ${partnerName}, the wind off the hills feels auspicious today—perfect weather for craft and good company.`,
   ];
   return templates[(spokenHistory.length + villager.name.length) % templates.length];
+}
+
+function synthesizeStorySimNarration(
+  prompt: string,
+  sceneContext: string,
+  settings: ModelSettings,
+): string {
+  const firstSceneLine = sceneContext.split('\n').filter(Boolean).slice(0, 2).join(' ');
+  const cleanPrompt = prompt.replace(/@[\p{L}\p{N}_-]+/gu, '').trim();
+  if (settings.narratorStyle === 'chronicler') {
+    return `${firstSceneLine || 'The village lane stirs quietly.'}${cleanPrompt ? ` Noted: "${cleanPrompt.slice(0, 64)}".` : ''}`;
+  }
+  if (settings.narratorStyle === 'storybook') {
+    return `A gentle hush sweeps across Selo. ${firstSceneLine || 'The folk tend their craft along the lane.'}`;
+  }
+  return `${firstSceneLine || 'Smoke curls from the hearth while footsteps pause along the lane.'}${cleanPrompt ? ` Every glance turns toward what was just asked.` : ''}`;
 }
 
 export const brainRouter = new BrainRouter();

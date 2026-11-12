@@ -11,6 +11,84 @@ import type {
   VillagerRuntime,
 } from './types';
 
+export interface MentionTarget {
+  kind: 'narrator' | 'villager';
+  id: string;
+  name: string;
+}
+
+export const CHAR_COLLISION_RADIUS = 0.78;
+
+/**
+ * Parses @mentions from user text (case-insensitive) matching villagers by full
+ * or first name as well as @Scribe / @Narrator / customized narratorName.
+ */
+export function parseMentionTargets(
+  text: string,
+  villagers: VillagerConfig[],
+  settings: ModelSettings,
+): MentionTarget[] {
+  const narratorName = settings.narratorName.trim() || 'Scribe';
+  const catalog: Array<{ token: string; target: MentionTarget }> = [];
+
+  for (const alias of [narratorName, 'Scribe', 'Narrator']) {
+    if (alias.trim()) {
+      catalog.push({
+        token: alias.trim().toLowerCase(),
+        target: { kind: 'narrator', id: 'narrator', name: narratorName },
+      });
+    }
+  }
+  for (const v of villagers) {
+    catalog.push({
+      token: v.name.trim().toLowerCase(),
+      target: { kind: 'villager', id: v.id, name: v.name },
+    });
+    const first = v.name.trim().split(/\s+/)[0];
+    if (first && first.toLowerCase() !== v.name.trim().toLowerCase()) {
+      catalog.push({
+        token: first.toLowerCase(),
+        target: { kind: 'villager', id: v.id, name: v.name },
+      });
+    }
+  }
+  // Match longer tokens first so multi-word names win before prefixes
+  catalog.sort((a, b) => b.token.length - a.token.length);
+
+  const seen = new Set<string>();
+  const ordered: Array<{ index: number; target: MentionTarget }> = [];
+  const lower = text.toLowerCase();
+
+  let cursor = 0;
+  while (cursor < lower.length) {
+    const atPos = lower.indexOf('@', cursor);
+    if (atPos === -1) break;
+    const prev = atPos > 0 ? lower[atPos - 1] : ' ';
+    if (atPos > 0 && /[\p{L}\p{N}_]/u.test(prev)) {
+      cursor = atPos + 1;
+      continue;
+    }
+    const rest = lower.slice(atPos + 1);
+    const match = catalog.find((entry) => {
+      if (!rest.startsWith(entry.token)) return false;
+      const afterChar = rest[entry.token.length];
+      return !afterChar || !/[\p{L}\p{N}_]/u.test(afterChar);
+    });
+    if (match) {
+      if (!seen.has(match.target.id)) {
+        seen.add(match.target.id);
+        ordered.push({ index: atPos, target: match.target });
+      }
+      cursor = atPos + 1 + match.token.length;
+    } else {
+      cursor = atPos + 1;
+    }
+  }
+
+  ordered.sort((a, b) => a.index - b.index);
+  return ordered.map((o) => o.target);
+}
+
 export interface PlayerAvatar {
   id: string;
   name: string;
@@ -49,6 +127,7 @@ export class VillageSimulation {
   private listeners = new Set<() => void>();
   private aiAccumulator = 0;
   private busyConversations = new Set<string>();
+  private planningVillagers = new Set<string>();
   private lastNotifyAt = 0;
 
   constructor(
@@ -136,6 +215,9 @@ export class VillageSimulation {
           path: [],
           state: 'idle',
           activityLabel: v.plan,
+          currentIntention: v.plan,
+          worldFeed: [`Entered Selo with purpose: ${v.plan}`],
+          blockedTicks: 0,
           memories: [
             {
               id: `mem-init-${v.id}`,
@@ -145,8 +227,8 @@ export class VillageSimulation {
               summary: v.plan,
             },
           ],
-          lastThinkAt: Date.now() - Math.random() * 4000,
-          lastMoveAt: Date.now(),
+          lastThinkAt: Date.now() - 4500 - Math.random() * 2500,
+          lastMoveAt: Date.now() - 2000 - Math.random() * 2000,
           animFrame: 0,
         });
       }
@@ -154,9 +236,89 @@ export class VillageSimulation {
     this.notify(true);
   }
 
+  private getOccupiedTileSet(excludeId?: string): Set<string> {
+    const blocked = new Set<string>();
+    if (excludeId !== this.player.id) {
+      blocked.add(`${Math.round(this.player.x)},${Math.round(this.player.y)}`);
+    }
+    for (const rt of this.runtimes.values()) {
+      if (rt.id !== excludeId) {
+        blocked.add(`${Math.round(rt.x)},${Math.round(rt.y)}`);
+      }
+    }
+    return blocked;
+  }
+
+  private findCharacterCollision(
+    nx: number,
+    ny: number,
+    curX: number,
+    curY: number,
+    selfId: string,
+  ): string | null {
+    const check = (ox: number, oy: number, otherId: string) => {
+      if (otherId === selfId) return false;
+      const curDist = Math.hypot(curX - ox, curY - oy);
+      const nextDist = Math.hypot(nx - ox, ny - oy);
+      return nextDist < CHAR_COLLISION_RADIUS && nextDist < curDist;
+    };
+
+    if (check(this.player.x, this.player.y, this.player.id)) {
+      return this.player.id;
+    }
+    for (const rt of this.runtimes.values()) {
+      if (check(rt.x, rt.y, rt.id)) return rt.id;
+    }
+    return null;
+  }
+
+  private isStepWalkableAndUnblocked(
+    nx: number,
+    ny: number,
+    curX: number,
+    curY: number,
+    selfId: string,
+  ): { ok: boolean; blockerId: string | null } {
+    if (!isTileWalkable(this.map, Math.round(nx), Math.round(ny))) {
+      return { ok: false, blockerId: null };
+    }
+    const blockerId = this.findCharacterCollision(nx, ny, curX, curY, selfId);
+    return { ok: blockerId === null, blockerId };
+  }
+
+  private appendWorldEvent(rt: VillagerRuntime, event: string) {
+    const feed = rt.worldFeed ?? [];
+    rt.worldFeed = [...feed, event].slice(-12);
+  }
+
+  private findAdjacentStandTile(targetX: number, targetY: number, selfId: string): { x: number; y: number } {
+    const offsets = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+      { dx: 2, dy: 0 },
+      { dx: -2, dy: 0 },
+      { dx: 0, dy: 2 },
+      { dx: 0, dy: -2 },
+    ];
+    const occupied = this.getOccupiedTileSet(selfId);
+    const tx = Math.round(targetX);
+    const ty = Math.round(targetY);
+    for (const off of offsets) {
+      const cx = tx + off.dx;
+      const cy = ty + off.dy;
+      if (isTileWalkable(this.map, cx, cy) && !occupied.has(`${cx},${cy}`)) {
+        return { x: cx, y: cy };
+      }
+    }
+    return findNearestWalkableTile(this.map, tx + 1, ty);
+  }
+
   movePlayerTo(tileX: number, tileY: number) {
+    const occupied = this.getOccupiedTileSet(this.player.id);
     const target = findNearestWalkableTile(this.map, tileX, tileY);
-    const path = findPath(this.map, { x: this.player.x, y: this.player.y }, target);
+    const path = findPath(this.map, { x: this.player.x, y: this.player.y }, target, occupied);
     this.player.path = path;
   }
 
@@ -167,10 +329,14 @@ export class VillageSimulation {
     this.player.lastNudgeAt = performance.now();
     const nx = this.player.x + dx * this.player.speed * dt;
     const ny = this.player.y + dy * this.player.speed * dt;
-    if (isTileWalkable(this.map, Math.round(nx), Math.round(this.player.y))) {
+    if (
+      this.isStepWalkableAndUnblocked(nx, this.player.y, this.player.x, this.player.y, this.player.id).ok
+    ) {
       this.player.x = nx;
     }
-    if (isTileWalkable(this.map, Math.round(this.player.x), Math.round(ny))) {
+    if (
+      this.isStepWalkableAndUnblocked(this.player.x, ny, this.player.x, this.player.y, this.player.id).ok
+    ) {
       this.player.y = ny;
     }
     this.player.facing = computeFacing({ x: 0, y: 0 }, { x: dx, y: dy }, this.player.facing);
@@ -201,10 +367,10 @@ export class VillageSimulation {
         rt.currentBubble = undefined;
       }
 
-      if (rt.path.length > 0 && rt.state !== 'conversing' && rt.state !== 'thinking') {
+      if (rt.path.length > 0 && rt.state !== 'conversing' && rt.state !== 'thinking' && rt.state !== 'speaking') {
         rt.state = 'walking';
-        const moved = this.advanceVillagerPath(rt, cfg.speed, dt);
-        if (!moved) {
+        const hasMore = this.advanceVillagerPath(rt, cfg.speed, dt);
+        if (!hasMore && rt.path.length === 0) {
           rt.state = 'idle';
           rt.lastMoveAt = now;
         }
@@ -214,51 +380,112 @@ export class VillageSimulation {
     }
 
     this.aiAccumulator += dt;
-    if (this.aiAccumulator >= 1.2) {
+    if (this.aiAccumulator >= 1.1) {
       this.aiAccumulator = 0;
       this.runAutonomousDecisions();
       this.notify();
     }
   }
 
-  private advanceEntityPath(entity: { x: number; y: number; path: Array<{ x: number; y: number }>; facing: Direction; animFrame: number; speed: number }, dt: number) {
-    if (entity.path.length === 0) return;
+  private stepAlongPathWithCollision(
+    entity: { x: number; y: number; path: Array<{ x: number; y: number }>; facing: Direction; animFrame: number },
+    stepSize: number,
+    animDelta: number,
+    selfId: string,
+  ): { progressed: boolean; reachedEnd: boolean; blockerId: string | null } {
+    if (entity.path.length === 0) {
+      return { progressed: false, reachedEnd: true, blockerId: null };
+    }
     const next = entity.path[0];
     const dx = next.x - entity.x;
     const dy = next.y - entity.y;
     const dist = Math.hypot(dx, dy);
-    const step = entity.speed * dt;
     entity.facing = computeFacing(entity, next, entity.facing);
-    entity.animFrame += dt * 7;
+    entity.animFrame += animDelta;
 
-    if (dist <= step) {
-      entity.x = next.x;
-      entity.y = next.y;
-      entity.path.shift();
-    } else {
-      entity.x += (dx / dist) * step;
-      entity.y += (dy / dist) * step;
+    const targetX = dist <= stepSize ? next.x : entity.x + (dx / dist) * stepSize;
+    const targetY = dist <= stepSize ? next.y : entity.y + (dy / dist) * stepSize;
+
+    const direct = this.isStepWalkableAndUnblocked(targetX, targetY, entity.x, entity.y, selfId);
+    if (direct.ok) {
+      entity.x = targetX;
+      entity.y = targetY;
+      if (dist <= stepSize) {
+        entity.path.shift();
+      }
+      return { progressed: true, reachedEnd: entity.path.length === 0, blockerId: null };
+    }
+
+    // Try sliding around a blocking character on whichever axis makes meaningful forward progress
+    if (Math.abs(dx) > 0.05) {
+      const slideX = entity.x + Math.sign(dx) * Math.min(stepSize, Math.abs(dx));
+      if (this.isStepWalkableAndUnblocked(slideX, entity.y, entity.x, entity.y, selfId).ok) {
+        entity.x = slideX;
+        return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+      }
+    }
+    if (Math.abs(dy) > 0.05) {
+      const slideY = entity.y + Math.sign(dy) * Math.min(stepSize, Math.abs(dy));
+      if (this.isStepWalkableAndUnblocked(entity.x, slideY, entity.x, entity.y, selfId).ok) {
+        entity.y = slideY;
+        return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+      }
+    }
+
+    return { progressed: false, reachedEnd: false, blockerId: direct.blockerId };
+  }
+
+  private advanceEntityPath(
+    entity: { x: number; y: number; path: Array<{ x: number; y: number }>; facing: Direction; animFrame: number; speed: number },
+    dt: number,
+  ) {
+    if (entity.path.length === 0) return;
+    const res = this.stepAlongPathWithCollision(entity, entity.speed * dt, dt * 7, this.player.id);
+    if (!res.progressed && res.blockerId) {
+      entity.path = [];
     }
   }
 
   private advanceVillagerPath(rt: VillagerRuntime, speed: number, dt: number): boolean {
     if (rt.path.length === 0) return false;
-    const next = rt.path[0];
-    const dx = next.x - rt.x;
-    const dy = next.y - rt.y;
-    const dist = Math.hypot(dx, dy);
-    const step = speed * dt;
-    rt.facing = computeFacing(rt, next, rt.facing);
-    rt.animFrame += dt * 5;
-
-    if (dist <= step) {
-      rt.x = next.x;
-      rt.y = next.y;
-      rt.path.shift();
-      return rt.path.length > 0;
+    const res = this.stepAlongPathWithCollision(rt, speed * dt, dt * 5, rt.id);
+    if (res.progressed) {
+      rt.blockedTicks = 0;
+      return !res.reachedEnd;
     }
-    rt.x += (dx / dist) * step;
-    rt.y += (dy / dist) * step;
+
+    rt.blockedTicks = (rt.blockedTicks ?? 0) + 1;
+
+    // Meeting another villager up close sparks a natural conversation when autoConverse is on
+    if (
+      res.blockerId &&
+      res.blockerId !== this.player.id &&
+      this.modelSettings.autoConverse &&
+      !rt.activeConversationId
+    ) {
+      const otherRt = this.runtimes.get(res.blockerId);
+      const now = Date.now();
+      if (
+        otherRt &&
+        !otherRt.activeConversationId &&
+        otherRt.state !== 'thinking' &&
+        otherRt.state !== 'speaking' &&
+        now - rt.lastThinkAt >= 6000 &&
+        now - otherRt.lastThinkAt >= 6000
+      ) {
+        rt.path = [];
+        otherRt.path = [];
+        rt.blockedTicks = 0;
+        this.startAutonomousConversation(rt.id, otherRt.id);
+        return false;
+      }
+    }
+
+    if (rt.blockedTicks > 18) {
+      rt.path = [];
+      rt.blockedTicks = 0;
+      return false;
+    }
     return true;
   }
 
@@ -266,20 +493,34 @@ export class VillageSimulation {
     const now = Date.now();
     const runtimesList = [...this.runtimes.values()];
 
-    // 1. Pair nearby idle villagers for spontaneous autonomous village conversations
+    // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
     if (this.modelSettings.autoConverse) {
       for (let i = 0; i < runtimesList.length; i++) {
         const a = runtimesList[i];
-        if (a.state !== 'idle' || a.activeConversationId) continue;
-        if (now - a.lastThinkAt < 9000) continue;
+        if (
+          a.activeConversationId ||
+          a.state === 'thinking' ||
+          a.state === 'speaking' ||
+          a.state === 'listening'
+        ) {
+          continue;
+        }
+        if (now - a.lastThinkAt < 6500) continue;
 
         for (let j = i + 1; j < runtimesList.length; j++) {
           const b = runtimesList[j];
-          if (b.state !== 'idle' || b.activeConversationId) continue;
-          if (now - b.lastThinkAt < 9000) continue;
+          if (
+            b.activeConversationId ||
+            b.state === 'thinking' ||
+            b.state === 'speaking' ||
+            b.state === 'listening'
+          ) {
+            continue;
+          }
+          if (now - b.lastThinkAt < 6500) continue;
 
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
-          if (dist <= 3.6 && Math.random() < 0.45) {
+          if (dist <= 3.8 && Math.random() < 0.85) {
             this.startAutonomousConversation(a.id, b.id);
             break;
           }
@@ -287,35 +528,76 @@ export class VillageSimulation {
       }
     }
 
-    // 2. Give idle villagers a new stroll destination across landmarks or home tiles
+    // 2. Westworld-style ongoing world-session motivation -> physical pathing
     for (const rt of runtimesList) {
       if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0) continue;
-      if (now - rt.lastMoveAt < 3500 + Math.random() * 4500) continue;
+      if (this.planningVillagers.has(rt.id)) continue;
+      if (now - rt.lastMoveAt < 2800 + Math.random() * 3000) continue;
 
-      const blocked = new Set<string>();
-      for (const other of runtimesList) {
-        if (other.id !== rt.id) blocked.add(`${Math.round(other.x)},${Math.round(other.y)}`);
+      const cfg = this.configs.get(rt.id);
+      if (!cfg) continue;
+
+      this.planningVillagers.add(rt.id);
+      void this.planNextVillagerAction(cfg, rt).finally(() => {
+        this.planningVillagers.delete(rt.id);
+      });
+    }
+  }
+
+  private async planNextVillagerAction(cfg: VillagerConfig, rt: VillagerRuntime) {
+    const now = Date.now();
+    const others = [...this.configs.values()].filter((v) => v.id !== cfg.id);
+    const landmarks = this.map.spawnPoints.map((s) => s.label);
+
+    const decision = await brainRouter.decideVillagerNextAction({
+      villager: cfg,
+      runtime: rt,
+      otherNames: others.map((v) => v.name),
+      landmarkNames: landmarks,
+      settings: this.modelSettings,
+    });
+
+    if (rt.activeConversationId || rt.state !== 'idle') {
+      rt.lastMoveAt = Date.now();
+      return;
+    }
+
+    let safeGoal: { x: number; y: number } | null = null;
+    if (decision.action === 'talk' && decision.targetName) {
+      const targetCfg = others.find(
+        (v) => v.name.toLowerCase() === decision.targetName!.toLowerCase(),
+      );
+      const targetRt = targetCfg ? this.runtimes.get(targetCfg.id) : undefined;
+      if (targetRt) {
+        safeGoal = this.findAdjacentStandTile(targetRt.x, targetRt.y, rt.id);
       }
-
-      const useLandmark = this.map.spawnPoints.length > 0 && Math.random() < 0.35;
-      let targetX = Math.round(rt.x + (Math.random() * 12 - 6));
-      let targetY = Math.round(rt.y + (Math.random() * 10 - 5));
-      if (useLandmark) {
-        const lm = this.map.spawnPoints[Math.floor(Math.random() * this.map.spawnPoints.length)];
-        targetX = lm.x + Math.round(Math.random() * 4 - 2);
-        targetY = lm.y + Math.round(Math.random() * 4 - 2);
-      }
-
-      const safeGoal = findNearestWalkableTile(this.map, targetX, targetY);
-      const path = findPath(this.map, { x: rt.x, y: rt.y }, safeGoal, blocked);
-      if (path.length > 0) {
-        rt.path = path;
-        rt.state = 'walking';
-        rt.lastMoveAt = now;
-      } else {
-        rt.lastMoveAt = now;
+    } else if (decision.action === 'visit' && decision.targetName) {
+      const lm = this.map.spawnPoints.find(
+        (s) => s.label.toLowerCase() === decision.targetName!.toLowerCase(),
+      );
+      if (lm) {
+        safeGoal = this.findAdjacentStandTile(lm.x, lm.y, rt.id);
       }
     }
+
+    if (!safeGoal) {
+      const tx = Math.round(rt.x + (Math.random() * 10 - 5));
+      const ty = Math.round(rt.y + (Math.random() * 8 - 4));
+      safeGoal = findNearestWalkableTile(this.map, tx, ty);
+    }
+
+    const occupied = this.getOccupiedTileSet(rt.id);
+    const path = findPath(this.map, { x: rt.x, y: rt.y }, safeGoal, occupied);
+    rt.currentIntention = decision.motive;
+    rt.activityLabel = decision.motive;
+    rt.lastMoveAt = now;
+
+    if (path.length > 0) {
+      rt.path = path;
+      rt.state = 'walking';
+      this.appendWorldEvent(rt, `Decided: ${decision.motive}`);
+    }
+    this.notify();
   }
 
   private buildSceneIntro(cfgA: VillagerConfig, cfgB: VillagerConfig): string {
@@ -503,14 +785,17 @@ export class VillageSimulation {
         kind: 'conversation',
         summary: memA,
       });
+      this.appendWorldEvent(rtA, `Talked with ${cfgB.name}: ${memA}`);
       const firstSpoken = conv.messages.find((m) => m.kind !== 'narration');
+      const bSummary = `Talked with ${cfgA.name}: ${firstSpoken?.text.slice(0, 64) ?? ''}`;
       rtB.memories.push({
         id: `mem-${Date.now()}-b`,
         timestamp: Date.now(),
         importance: 6,
         kind: 'conversation',
-        summary: `Talked with ${cfgA.name}: ${firstSpoken?.text.slice(0, 64) ?? ''}`,
+        summary: bSummary,
       });
+      this.appendWorldEvent(rtB, bSummary);
 
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
         const closing = `${cfgA.name} and ${cfgB.name} part ways, carrying their thoughts back into Selo.`;
@@ -534,7 +819,7 @@ export class VillageSimulation {
         if (rt.activeConversationId === convId) {
           rt.activeConversationId = undefined;
           rt.state = 'idle';
-          rt.activityLabel = cfg.plan;
+          rt.activityLabel = rt.currentIntention || cfg.plan;
           rt.lastThinkAt = Date.now();
           rt.lastMoveAt = Date.now();
         }
@@ -564,34 +849,86 @@ export class VillageSimulation {
     return conv;
   }
 
-  async sendUserTextToVillager(villagerId: string, text: string, speakReply = true): Promise<void> {
-    const cfg = this.configs.get(villagerId);
-    const rt = this.runtimes.get(villagerId);
-    if (!cfg || !rt) return;
+  private buildSceneContext(): string {
+    const lines: string[] = [];
+    for (const cfg of this.configs.values()) {
+      const rt = this.runtimes.get(cfg.id);
+      if (!rt) continue;
+      lines.push(
+        `- ${cfg.name} (${cfg.role}) at (${Math.round(rt.x)},${Math.round(rt.y)}) [${rt.state}]: ${rt.currentIntention || rt.activityLabel}`,
+      );
+    }
+    return lines.join('\n');
+  }
 
-    const conv = this.getOrCreateHumanConversation(villagerId);
-    conv.messages.push({
-      id: `msg-u-${Date.now()}`,
-      senderId: this.player.id,
-      senderName: this.player.name,
-      text,
-      timestamp: Date.now(),
-      source: 'human-text',
+  private applyWorldDirection(_cfg: VillagerConfig, rt: VillagerRuntime, userText: string) {
+    this.appendWorldEvent(rt, `${this.player.name} said: "${userText.slice(0, 90)}"`);
+    const lower = userText.toLowerCase();
+
+    // Let natural language "@Character go talk to Taras / visit windmill" steer motivation + movement
+    const directedMotion = /\b(go|head|walk|meet|find|talk|visit|check|gather|move)\b/i.test(userText);
+    if (!directedMotion) return;
+
+    const otherTarget = [...this.configs.values()].find(
+      (other) => other.id !== rt.id && lower.includes(other.name.toLowerCase()),
+    );
+    if (otherTarget) {
+      const otherRt = this.runtimes.get(otherTarget.id);
+      if (otherRt) {
+        const goal = this.findAdjacentStandTile(otherRt.x, otherRt.y, rt.id);
+        const path = findPath(
+          this.map,
+          { x: rt.x, y: rt.y },
+          goal,
+          this.getOccupiedTileSet(rt.id),
+        );
+        rt.currentIntention = `Heading to speak with ${otherTarget.name}`;
+        rt.activityLabel = rt.currentIntention;
+        if (path.length > 0) rt.path = path;
+        return;
+      }
+    }
+
+    const landmark = this.map.spawnPoints.find((sp) => {
+      const words = sp.label.toLowerCase().split(/\s+/);
+      return lower.includes(sp.label.toLowerCase()) || words.some((w) => w.length > 3 && lower.includes(w));
     });
-    conv.updatedAt = Date.now();
+    if (landmark) {
+      const goal = this.findAdjacentStandTile(landmark.x, landmark.y, rt.id);
+      const path = findPath(
+        this.map,
+        { x: rt.x, y: rt.y },
+        goal,
+        this.getOccupiedTileSet(rt.id),
+      );
+      rt.currentIntention = `Headed to ${landmark.label}`;
+      rt.activityLabel = rt.currentIntention;
+      if (path.length > 0) rt.path = path;
+    }
+  }
 
-    rt.path = [];
-    rt.facing = computeFacing(rt, this.player, rt.facing);
+  private async executeVillagerReplyTurn(
+    conv: Conversation,
+    cfg: VillagerConfig,
+    rt: VillagerRuntime,
+    userText: string,
+    speakReply: boolean,
+  ): Promise<void> {
+    const hadPathBeforeTurn = rt.path.length > 0;
+    if (!hadPathBeforeTurn) {
+      rt.facing = computeFacing(rt, this.player, rt.facing);
+    }
     rt.state = 'thinking';
     rt.activityLabel = `Listening to ${this.player.name}`;
     this.notify(true);
 
     const streamingMsg: ChatMessage = {
-      id: `msg-v-${Date.now()}`,
+      id: `msg-v-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       senderId: cfg.id,
       senderName: cfg.name,
       text: '',
       timestamp: Date.now(),
+      kind: 'speech',
       source: 'story-sim',
     };
     conv.messages.push(streamingMsg);
@@ -644,25 +981,162 @@ export class VillageSimulation {
       streamingMsg.source = res.source;
       rt.lastLatencyMs = res.durationMs;
       rt.currentBubble = { text: finalSpoken, expiresAt: Date.now() + 7000 };
+      const summary = `${this.player.name} said: "${userText.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`;
       rt.memories.push({
         id: `mem-u-${Date.now()}`,
         timestamp: Date.now(),
         importance: 7,
         kind: 'conversation',
-        summary: `${this.player.name} said: "${text.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`,
+        summary,
       });
+      this.appendWorldEvent(rt, `Replied to ${this.player.name}: "${finalSpoken.slice(0, 64)}"`);
       rt.state = speakReply ? 'speaking' : 'idle';
-      rt.activityLabel = cfg.plan;
+      rt.activityLabel = rt.currentIntention || cfg.plan;
       this.notify(true);
 
       if (speakReply && !res.audioHandled && finalSpoken) {
         await brainRouter.speakLine(finalSpoken, cfg, this.modelSettings, resolver);
       }
     } finally {
-      rt.state = 'idle';
+      rt.state = rt.path.length > 0 ? 'walking' : 'idle';
       rt.lastThinkAt = Date.now();
       this.notify(true);
     }
+  }
+
+  private async executeNarratorReplyTurn(
+    conv: Conversation,
+    userText: string,
+    speakReply: boolean,
+  ): Promise<void> {
+    const narratorName = this.modelSettings.narratorName.trim() || 'Scribe';
+    const streamingMsg: ChatMessage = {
+      id: `msg-nar-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      senderId: 'narrator',
+      senderName: narratorName,
+      text: '',
+      timestamp: Date.now(),
+      kind: 'narration',
+      source: 'story-sim',
+    };
+    conv.messages.push(streamingMsg);
+    this.notify(true);
+
+    const res = await brainRouter.generateNarratorReply({
+      prompt: userText,
+      sceneContext: this.buildSceneContext(),
+      history: conv.messages.slice(0, -1),
+      settings: this.modelSettings,
+      onChunk: (chunk) => {
+        streamingMsg.text += chunk;
+        this.notify();
+      },
+    });
+
+    streamingMsg.text = res.text;
+    streamingMsg.source = res.source;
+    conv.updatedAt = Date.now();
+    this.notify(true);
+
+    if (speakReply && this.modelSettings.narratorEnabled && res.text.trim()) {
+      await brainRouter.speakNarration(res.text, this.modelSettings);
+    }
+  }
+
+  async sendUserTextToVillager(villagerId: string, text: string, speakReply = true): Promise<void> {
+    const cfg = this.configs.get(villagerId);
+    const rt = this.runtimes.get(villagerId);
+    if (!cfg || !rt) return;
+
+    const conv = this.getOrCreateHumanConversation(villagerId);
+    conv.messages.push({
+      id: `msg-u-${Date.now()}`,
+      senderId: this.player.id,
+      senderName: this.player.name,
+      text,
+      timestamp: Date.now(),
+      source: 'human-text',
+    });
+    conv.updatedAt = Date.now();
+    this.applyWorldDirection(cfg, rt, text);
+    await this.executeVillagerReplyTurn(conv, cfg, rt, text, speakReply);
+  }
+
+  /**
+   * Routes a message supporting @mentions (e.g. "@Taras ...", "@Scribe ...", or "@Olena @Taras ...").
+   * Falls back to the active villager if no @mention is specified.
+   */
+  async sendUserAddressedMessage(
+    activeTargetId: string | undefined,
+    text: string,
+    speakReply = true,
+  ): Promise<{ focusedTargetId?: string }> {
+    const targets = parseMentionTargets(
+      text,
+      Array.from(this.configs.values()),
+      this.modelSettings,
+    );
+
+    if (targets.length === 0) {
+      if (activeTargetId === 'narrator') {
+        const conv = this.getOrCreateHumanConversation('narrator');
+        conv.messages.push({
+          id: `msg-u-${Date.now()}`,
+          senderId: this.player.id,
+          senderName: this.player.name,
+          text,
+          timestamp: Date.now(),
+          source: 'human-text',
+        });
+        conv.updatedAt = Date.now();
+        await this.executeNarratorReplyTurn(conv, text, speakReply);
+        return { focusedTargetId: 'narrator' };
+      }
+      if (activeTargetId) {
+        await this.sendUserTextToVillager(activeTargetId, text, speakReply);
+      }
+      return { focusedTargetId: activeTargetId };
+    }
+
+    if (targets.length === 1 && targets[0].kind === 'villager') {
+      await this.sendUserTextToVillager(targets[0].id, text, speakReply);
+      return { focusedTargetId: targets[0].id };
+    }
+
+    const hostId =
+      activeTargetId && (activeTargetId === 'narrator' || this.configs.has(activeTargetId))
+        ? activeTargetId
+        : targets[0].id;
+    const conv = this.getOrCreateHumanConversation(hostId);
+    conv.messages.push({
+      id: `msg-u-${Date.now()}`,
+      senderId: this.player.id,
+      senderName: this.player.name,
+      text,
+      timestamp: Date.now(),
+      source: 'human-text',
+    });
+    conv.updatedAt = Date.now();
+    this.notify(true);
+
+    for (const target of targets) {
+      if (target.kind === 'narrator') {
+        await this.executeNarratorReplyTurn(conv, text, speakReply);
+      } else {
+        const cfg = this.configs.get(target.id);
+        const rt = this.runtimes.get(target.id);
+        if (!cfg || !rt) continue;
+        this.applyWorldDirection(cfg, rt, text);
+        await this.executeVillagerReplyTurn(conv, cfg, rt, text, speakReply);
+      }
+    }
+
+    return {
+      focusedTargetId:
+        targets.length === 1 && targets[0].kind === 'narrator'
+          ? activeTargetId || 'narrator'
+          : hostId,
+    };
   }
 
   async sendUserVoiceToVillager(villagerId: string, audioBuffer: AudioBuffer): Promise<void> {

@@ -34,6 +34,25 @@ interface VillageViewProps {
   onOpenMonitor: () => void;
 }
 
+interface MentionCandidate {
+  id: string;
+  name: string;
+  role: string;
+  accentColor: string;
+  statusHint?: string;
+}
+
+function findActiveMention(
+  text: string,
+  caret: number,
+): { start: number; query: string } | null {
+  const before = text.slice(0, caret);
+  const match = before.match(/(?:^|\s)@([^\s\n@]*)$/);
+  if (!match) return null;
+  const atIndex = before.lastIndexOf('@');
+  return { start: atIndex, query: match[1] };
+}
+
 export const VillageView: React.FC<VillageViewProps> = ({
   sim,
   villagers,
@@ -42,11 +61,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onOpenMonitor,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? '');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? 'narrator');
   const [tick, setTick] = useState(0);
   const [showPaths, setShowPaths] = useState(false);
   const [followSelected, setFollowSelected] = useState(false);
+  const [feedMode, setFeedMode] = useState<'focused' | 'village'>('focused');
   const [chatInput, setChatInput] = useState('');
+  const [mentionMatch, setMentionMatch] = useState<{ start: number; query: string } | null>(null);
+  const [mentionIdx, setMentionIdx] = useState(0);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -63,7 +86,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const recorderRef = useRef<MicRecorder | null>(null);
 
   useEffect(() => {
-    if (!villagers.some((v) => v.id === selectedId) && villagers[0]) {
+    if (selectedId !== 'narrator' && !villagers.some((v) => v.id === selectedId) && villagers[0]) {
       setSelectedId(villagers[0].id);
     }
   }, [villagers, selectedId]);
@@ -312,25 +335,109 @@ export const VillageView: React.FC<VillageViewProps> = ({
     cameraRef.current.zoom = Math.min(3.5, Math.max(0.45, cameraRef.current.zoom * factor));
   };
 
-  const selectedCfg = villagers.find((v) => v.id === selectedId);
+  const narratorName = settings.narratorName.trim() || 'Scribe';
+  const isScribeSelected = selectedId === 'narrator';
+  const selectedCfg = isScribeSelected ? undefined : villagers.find((v) => v.id === selectedId);
   const selectedRt = selectedCfg ? sim.runtimes.get(selectedCfg.id) : undefined;
-  const activeConversation = selectedCfg
-    ? sim.conversations.find((c) => c.participantIds.includes(selectedCfg.id))
-    : undefined;
+  const activeConversation =
+    feedMode === 'village'
+      ? sim.conversations[0]
+      : isScribeSelected
+        ? sim.conversations.find((c) => c.participantIds.includes('narrator')) ??
+          sim.conversations.find((c) => c.messages.some((m) => m.kind === 'narration'))
+        : selectedCfg
+          ? sim.conversations.find((c) => c.participantIds.includes(selectedCfg.id))
+          : undefined;
+
+  const mentionCandidates: MentionCandidate[] = [
+    {
+      id: 'narrator',
+      name: narratorName,
+      role: `Narrator (${settings.narratorStyle})`,
+      accentColor: '#c98a3b',
+      statusHint: settings.narratorEnabled ? 'voice on' : 'text',
+    },
+    ...villagers.map((v) => ({
+      id: v.id,
+      name: v.name,
+      role: v.role,
+      accentColor: v.accentColor,
+      statusHint: sim.runtimes.get(v.id)?.state,
+    })),
+  ];
+
+  const filteredMentions = mentionMatch
+    ? mentionCandidates.filter(
+        (c) =>
+          c.name.toLowerCase().includes(mentionMatch.query.toLowerCase()) ||
+          c.role.toLowerCase().includes(mentionMatch.query.toLowerCase()),
+      )
+    : [];
+  const isMentionMenuOpen = Boolean(mentionMatch && filteredMentions.length > 0);
+  const clampedMentionIdx =
+    filteredMentions.length > 0 ? Math.min(mentionIdx, filteredMentions.length - 1) : 0;
+
+  const insertMentionCandidate = (cand: MentionCandidate) => {
+    const start = mentionMatch?.start ?? chatInput.length;
+    const caret = textareaRef.current?.selectionStart ?? chatInput.length;
+    const before = chatInput.slice(0, start);
+    const after = chatInput.slice(caret);
+    const inserted = `@${cand.name} `;
+    const nextText = `${before}${inserted}${after}`;
+    setChatInput(nextText);
+    setMentionMatch(null);
+    setMentionIdx(0);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const nextCaret = before.length + inserted.length;
+      el.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const handleChatChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const next = e.target.value;
+    setChatInput(next);
+    const match = findActiveMention(next, e.target.selectionStart ?? next.length);
+    setMentionMatch(match);
+    setMentionIdx(0);
+  };
+
+  const handleTriggerAtMention = () => {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? chatInput.length;
+    const needsSpace = caret > 0 && !/\s$/.test(chatInput.slice(0, caret));
+    const inserted = `${needsSpace ? ' ' : ''}@`;
+    const nextText = `${chatInput.slice(0, caret)}${inserted}${chatInput.slice(caret)}`;
+    const nextCaret = caret + inserted.length;
+    setChatInput(nextText);
+    setMentionMatch(findActiveMention(nextText, nextCaret));
+    setMentionIdx(0);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
 
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCfg || !chatInput.trim() || sending) return;
+    if (!chatInput.trim() || sending) return;
     const text = chatInput.trim();
     setChatInput('');
+    setMentionMatch(null);
     setSending(true);
     setVoiceError(null);
     try {
-      await sim.sendUserTextToVillager(
-        selectedCfg.id,
+      const res = await sim.sendUserAddressedMessage(
+        selectedId || undefined,
         text,
         settings.enableOmniTts || settings.enableWebSpeechFallback,
       );
+      if (res.focusedTargetId) {
+        setSelectedId(res.focusedTargetId);
+      }
     } catch (err: any) {
       setVoiceError(err?.message || String(err));
     } finally {
@@ -512,6 +619,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
             {villagers.map((v) => {
               const rt = sim.runtimes.get(v.id);
               const active = v.id === selectedId;
+              const isBusy =
+                rt?.state === 'conversing' || rt?.state === 'speaking' || rt?.state === 'thinking';
               return (
                 <button
                   key={v.id}
@@ -524,7 +633,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   }`}
                 >
                   <span
-                    className="h-2 w-2 rounded-full"
+                    className={`h-2 w-2 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
                     style={{ backgroundColor: active ? '#fff' : v.accentColor }}
                   />
                   <span>{v.name}</span>
@@ -532,45 +641,119 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={() => setSelectedId('narrator')}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                isScribeSelected
+                  ? 'border-ochre bg-ochre text-white'
+                  : 'border-borderFolk bg-surface text-ink hover:border-ochre/60'
+              }`}
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: isScribeSelected ? '#fff' : '#c98a3b' }}
+              />
+              <span>@{narratorName}</span>
+            </button>
           </div>
         </div>
 
-        {/* Selected Villager Details */}
-        {selectedCfg && selectedRt ? (
+        {/* Selected Villager or Scribe Details + Shared Chat */}
+        {(selectedCfg && selectedRt) || isScribeSelected ? (
           <>
-            <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h3 className="text-base font-bold leading-tight">{selectedCfg.name}</h3>
-                  <p className="text-xs text-muted">{selectedCfg.role}</p>
+            {isScribeSelected ? (
+              <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-base font-bold leading-tight">{narratorName}</h3>
+                    <p className="text-xs text-muted">Village Scribe · {settings.narratorStyle}</p>
+                  </div>
+                  <span className="rounded-full border border-ochre/40 bg-ochre/10 px-2 py-0.5 text-[11px] font-medium text-ink">
+                    {settings.narratorEnabled ? 'Voiced' : 'Muted'}
+                  </span>
                 </div>
-                <span className="rounded-full border border-borderFolk bg-surface px-2 py-0.5 text-[11px] font-medium capitalize">
-                  {selectedRt.state}
-                </span>
+                <p className="text-xs leading-relaxed text-ink/90">
+                  Chronicler of Selo. Reads non-dialogue scene beats in turn, and answers directly
+                  when addressed with <code className="font-mono">@{narratorName}</code>.
+                </p>
               </div>
-              <p className="text-xs leading-relaxed text-ink/90">{selectedCfg.identity}</p>
-              <div className="rounded border border-borderFolk bg-surface/80 px-2.5 py-1.5 text-xs">
-                <span className="font-semibold text-ochre">Plan:</span> {selectedCfg.plan}
-              </div>
+            ) : (
+              selectedCfg &&
+              selectedRt && (
+                <div className="border-b border-borderFolk bg-card/60 p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-bold leading-tight">{selectedCfg.name}</h3>
+                      <p className="text-xs text-muted">{selectedCfg.role}</p>
+                    </div>
+                    <span className="rounded-full border border-borderFolk bg-surface px-2 py-0.5 text-[11px] font-medium capitalize">
+                      {selectedRt.state}
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-ink/90">{selectedCfg.identity}</p>
+                  <div className="rounded border border-borderFolk bg-surface/80 px-2.5 py-1.5 text-xs">
+                    <span className="font-semibold text-ochre">Motive:</span>{' '}
+                    {selectedRt.currentIntention || selectedCfg.plan}
+                  </div>
 
-              <details className="text-xs">
-                <summary className="cursor-pointer font-medium text-indigoFolk hover:underline">
-                  Recent Memories ({selectedRt.memories.length})
-                </summary>
-                <ul className="mt-1.5 max-h-28 space-y-1 overflow-y-auto thin-scroll pr-1">
-                  {[...selectedRt.memories].reverse().slice(0, 8).map((m) => (
-                    <li key={m.id} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
-                      {m.summary}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </div>
+                  <div className="flex flex-col gap-1 text-xs">
+                    <details>
+                      <summary className="cursor-pointer font-medium text-indigoFolk hover:underline">
+                        Recent Memories ({selectedRt.memories.length})
+                      </summary>
+                      <ul className="mt-1.5 max-h-24 space-y-1 overflow-y-auto thin-scroll pr-1">
+                        {[...selectedRt.memories].reverse().slice(0, 8).map((m) => (
+                          <li key={m.id} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
+                            {m.summary}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                    {selectedRt.worldFeed && selectedRt.worldFeed.length > 0 && (
+                      <details>
+                        <summary className="cursor-pointer font-medium text-sage hover:underline">
+                          World Session Log ({selectedRt.worldFeed.length})
+                        </summary>
+                        <ul className="mt-1.5 max-h-24 space-y-1 overflow-y-auto thin-scroll pr-1">
+                          {[...selectedRt.worldFeed].reverse().slice(0, 8).map((item, idx) => (
+                            <li key={idx} className="rounded bg-card px-2 py-1 text-[11px] border border-borderFolk/60">
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              )
+            )}
 
             {/* Active Conversation Stream */}
             <div className="flex-1 overflow-y-auto p-3 space-y-2.5 thin-scroll">
-              <div className="flex items-center justify-between text-xs text-muted">
-                <span className="font-semibold uppercase tracking-wider">Conversation</span>
+              <div className="flex items-center justify-between gap-2 text-xs text-muted">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setFeedMode('focused')}
+                    aria-pressed={feedMode === 'focused'}
+                    className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      feedMode === 'focused' ? 'bg-indigoFolk text-white' : 'hover:bg-surface'
+                    }`}
+                  >
+                    Thread
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFeedMode('village')}
+                    aria-pressed={feedMode === 'village'}
+                    className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      feedMode === 'village' ? 'bg-indigoFolk text-white' : 'hover:bg-surface'
+                    }`}
+                  >
+                    Latest Scene ({sim.conversations.length})
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() =>
@@ -586,14 +769,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   ) : (
                     <VolumeX className="h-3 w-3 text-muted" />
                   )}
-                  <span>Voice Reply {settings.enableOmniTts ? 'On' : 'Off'}</span>
+                  <span>Voice {settings.enableOmniTts ? 'On' : 'Off'}</span>
                 </button>
               </div>
 
               {!activeConversation || activeConversation.messages.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-borderFolk p-4 text-center text-xs text-muted">
-                  Say hello to <strong>{selectedCfg.name}</strong> below, or speak with your microphone using{' '}
-                  <strong>LFM3-Omni-2B</strong>.
+                  Type a message below or use <code className="font-mono">@Name</code> /{' '}
+                  <code className="font-mono">@{narratorName}</code> to address any character or guide their next step.
                 </div>
               ) : (
                 <ul className="space-y-2">
@@ -626,7 +809,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             </div>
 
             {/* Composer & LFM3-Omni Voice Input */}
-            <div className="border-t border-borderFolk bg-card p-3 space-y-2">
+            <div className="relative border-t border-borderFolk bg-card p-3 space-y-2">
               {voiceError && (
                 <div role="alert" className="flex items-center justify-between gap-2 rounded border border-crimson/50 bg-crimson/10 px-2.5 py-1.5 text-[11px] text-crimson">
                   <span>{voiceError}</span>
@@ -655,40 +838,136 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 </div>
               )}
 
-              <form onSubmit={handleSendText} className="flex items-end gap-2">
+              {isMentionMenuOpen && (
+                <div className="absolute bottom-full left-3 right-3 z-20 mb-1.5 rounded-lg border border-borderFolk bg-card p-1 shadow-lg">
+                  <ul
+                    id="mention-listbox"
+                    role="listbox"
+                    aria-label="Address a character or Scribe"
+                    className="max-h-48 overflow-y-auto thin-scroll space-y-0.5"
+                  >
+                    {filteredMentions.map((cand, idx) => {
+                      const active = idx === clampedMentionIdx;
+                      return (
+                        <li
+                          key={cand.id}
+                          id={`mention-opt-${cand.id}`}
+                          role="option"
+                          aria-selected={active}
+                          onMouseDown={(ev) => {
+                            ev.preventDefault();
+                            insertMentionCandidate(cand);
+                          }}
+                          className={`flex cursor-pointer items-center justify-between gap-2 rounded px-2.5 py-1.5 text-xs ${
+                            active ? 'bg-indigoFolk text-white' : 'hover:bg-surface text-ink'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: active ? '#fff' : cand.accentColor }}
+                            />
+                            <span className="font-semibold truncate">@{cand.name}</span>
+                            <span className={`truncate text-[11px] ${active ? 'text-white/80' : 'text-muted'}`}>
+                              {cand.role}
+                            </span>
+                          </div>
+                          {cand.statusHint && (
+                            <span className={`shrink-0 text-[10px] font-mono ${active ? 'text-white/80' : 'text-muted'}`}>
+                              {cand.statusHint}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <form onSubmit={handleSendText} className="flex items-end gap-1.5">
                 <div className="flex-1">
                   <label htmlFor="village-chat-input" className="visually-hidden">
-                    Message {selectedCfg.name}
+                    Message {isScribeSelected ? narratorName : selectedCfg?.name ?? 'village'} (use @ to mention a character)
                   </label>
                   <textarea
+                    ref={textareaRef}
                     id="village-chat-input"
                     rows={2}
                     value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
+                    onChange={handleChatChange}
+                    aria-expanded={isMentionMenuOpen}
+                    aria-controls={isMentionMenuOpen ? 'mention-listbox' : undefined}
+                    aria-activedescendant={
+                      isMentionMenuOpen && filteredMentions[clampedMentionIdx]
+                        ? `mention-opt-${filteredMentions[clampedMentionIdx].id}`
+                        : undefined
+                    }
+                    aria-describedby="chat-mention-hint"
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      if (e.nativeEvent.isComposing) return;
+                      if (isMentionMenuOpen) {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setMentionIdx((i) => (i + 1) % filteredMentions.length);
+                          return;
+                        }
+                        if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setMentionIdx(
+                            (i) => (i - 1 + filteredMentions.length) % filteredMentions.length,
+                          );
+                          return;
+                        }
+                        if (e.key === 'Tab' || e.key === 'Enter') {
+                          e.preventDefault();
+                          const choice = filteredMentions[clampedMentionIdx];
+                          if (choice) insertMentionCandidate(choice);
+                          return;
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setMentionMatch(null);
+                          return;
+                        }
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         handleSendText(e);
                       }
                     }}
-                    placeholder={`Talk to ${selectedCfg.name}…`}
+                    placeholder={
+                      isScribeSelected
+                        ? `Ask @${narratorName} or guide a villager with @Name…`
+                        : `Talk to ${selectedCfg?.name ?? ''} or type @${narratorName} / @Name…`
+                    }
                     className="w-full resize-none rounded-md border border-borderFolk bg-surface px-2.5 py-1.5 text-xs text-ink placeholder:text-muted"
                   />
                 </div>
 
                 <button
                   type="button"
-                  onClick={toggleVoiceRecording}
-                  aria-pressed={recording}
-                  aria-label={recording ? 'Stop voice recording and send' : 'Talk with microphone'}
-                  className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border transition ${
-                    recording
-                      ? 'border-crimson bg-crimson text-white'
-                      : 'border-borderFolk bg-surface text-ink hover:border-crimson'
-                  }`}
+                  onClick={handleTriggerAtMention}
+                  aria-label="Address a character with @"
+                  className="inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-md border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-indigoFolk"
                 >
-                  {recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  @
                 </button>
+
+                {!isScribeSelected && (
+                  <button
+                    type="button"
+                    onClick={toggleVoiceRecording}
+                    aria-pressed={recording}
+                    aria-label={recording ? 'Stop voice recording and send' : 'Talk with microphone'}
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border transition ${
+                      recording
+                        ? 'border-crimson bg-crimson text-white'
+                        : 'border-borderFolk bg-surface text-ink hover:border-crimson'
+                    }`}
+                  >
+                    {recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </button>
+                )}
 
                 <button
                   type="submit"
@@ -700,6 +979,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   <span>Send</span>
                 </button>
               </form>
+              <p id="chat-mention-hint" className="text-[10px] text-muted">
+                Tip: use <code className="font-mono">@Name</code> or <code className="font-mono">@{narratorName}</code> to address or direct characters (e.g. &ldquo;@Olena meet Taras at the windmill&rdquo;).
+              </p>
             </div>
           </>
         ) : (

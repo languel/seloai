@@ -116,6 +116,9 @@ export interface VillagerRuntime {
   };
   activeConversationId?: string;
   memories: MemoryEntry[];
+  worldFeed?: string[];
+  currentIntention?: string;
+  blockedTicks?: number;
   lastThinkAt: number;
   lastMoveAt: number;
   lastLatencyMs?: number;
