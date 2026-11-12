@@ -8,6 +8,7 @@ import {
   Hand,
   PaintBucket,
   Paintbrush,
+  Palette,
   Pipette,
   Plus,
   Redo2,
@@ -23,6 +24,7 @@ import { createBulgarianShevitsaMap } from '../data/shevitsaMap';
 import { drawAnimatedSprites, drawTileGrid, getCachedImage } from '../engine/renderer';
 import type { PointOfInterest, TileGrid, TileMacroStamp, VillageMap } from '../engine/types';
 import { resolvePublicUrl } from '../utils/assetUrl';
+import { TapestryStudioModal } from './TapestryStudioModal';
 
 interface LevelEditorViewProps {
   map: VillageMap;
@@ -66,6 +68,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
   const [undoStack, setUndoStack] = useState<VillageMap[]>([]);
   const [redoStack, setRedoStack] = useState<VillageMap[]>([]);
   const [newLevelOpen, setNewLevelOpen] = useState(false);
+  const [tapestryStudioOpen, setTapestryStudioOpen] = useState(false);
   const [newLevelName, setNewLevelName] = useState('New Realm');
   const [newLevelW, setNewLevelW] = useState(48);
   const [newLevelH, setNewLevelH] = useState(36);
@@ -712,6 +715,82 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
     setTool('brush');
   };
 
+  const handleAddTilesAndStamp = (payload: {
+    tilesetUrl: string;
+    tilesetDimX: number;
+    tilesetDimY: number;
+    stamp: TileMacroStamp;
+    tileIndices: number[];
+    widthInTiles: number;
+    heightInTiles: number;
+    directPlace?: boolean;
+    targetLayer?: 'bg0' | 'bg1' | 'obj0' | 'obj1';
+  }) => {
+    pushUndo(draft);
+    const nextStamps = [...(draft.stamps ?? []), payload.stamp];
+    let nextDraft: VillageMap = {
+      ...draft,
+      tileSetUrl: payload.tilesetUrl,
+      tileSetDimX: payload.tilesetDimX,
+      tileSetDimY: payload.tilesetDimY,
+      stamps: nextStamps,
+    };
+
+    if (payload.directPlace) {
+      const tgtLayer = payload.targetLayer ?? payload.stamp.layer ?? 'bg1';
+      const startX = Math.max(0, Math.floor((draft.width - payload.widthInTiles) / 2));
+      const startY = Math.max(0, Math.floor((draft.height - payload.heightInTiles) / 2));
+      const nextBg = draft.bgTiles.map((l) => l.map((c) => [...c]));
+      const nextObj = draft.objectTiles.map((l) => l.map((c) => [...c]));
+      const nextCol = draft.collisionGrid.map((c) => [...c]);
+
+      const layerGrid =
+        tgtLayer === 'bg0'
+          ? nextBg[0]
+          : tgtLayer === 'bg1'
+            ? nextBg[1]
+            : tgtLayer === 'obj0'
+              ? nextObj[0]
+              : nextObj[1];
+
+      for (let r = 0; r < payload.heightInTiles; r++) {
+        for (let c = 0; c < payload.widthInTiles; c++) {
+          const mapX = startX + c;
+          const mapY = startY + r;
+          const idx = payload.stamp.tiles[r * payload.widthInTiles + c];
+          if (mapX < draft.width && mapY < draft.height && idx !== undefined) {
+            layerGrid[mapX][mapY] = idx;
+            if (payload.stamp.blocksMovement) {
+              nextCol[mapX][mapY] = true;
+            }
+          }
+        }
+      }
+
+      nextDraft = {
+        ...nextDraft,
+        bgTiles: nextBg,
+        objectTiles: nextObj,
+        collisionGrid: nextCol,
+      };
+    }
+
+    setDraft(nextDraft);
+    setActiveStampId(payload.stamp.id);
+    setActiveLayer((payload.targetLayer ?? payload.stamp.layer ?? 'bg1') as EditorLayer);
+    setTool('brush');
+    setAppliedToast(true);
+    setTimeout(() => setAppliedToast(false), 2200);
+  };
+
+  const handleApplyWholeMap = (newMap: VillageMap) => {
+    pushUndo(draft);
+    setDraft(cloneMap(newMap));
+    setActiveStampId(null);
+    setAppliedToast(true);
+    setTimeout(() => setAppliedToast(false), 2200);
+  };
+
   const handleStartSidebarResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -1047,6 +1126,15 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
                   <option value={draft.tileSetUrl}>Custom Tileset</option>
                 )}
               </select>
+
+              <button
+                type="button"
+                onClick={() => setTapestryStudioOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded border border-crimson/40 bg-crimson/5 px-2 py-1 text-[11px] font-semibold text-crimson hover:bg-crimson/15 w-full justify-center"
+              >
+                <Palette className="h-3.5 w-3.5" />
+                <span>Sample from Tapestry / Painting…</span>
+              </button>
 
               {/* Tile Resolution + Palette Zoom/Pan */}
               <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
@@ -1393,6 +1481,16 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
 
             <button
               type="button"
+              onClick={() => setTapestryStudioOpen(true)}
+              title="Import a painting or tapestry to sample pixel art tiles, motifs, and stamps"
+              className="inline-flex items-center gap-1.5 rounded border border-crimson/50 bg-crimson/10 px-2.5 py-1 text-xs font-semibold text-crimson hover:bg-crimson/20"
+            >
+              <Palette className="h-3.5 w-3.5" />
+              <span>Tapestry Studio</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 pushUndo(draft);
                 const shevitsa = createBulgarianShevitsaMap();
@@ -1610,6 +1708,17 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
             </form>
           </div>
         )}
+
+        <TapestryStudioModal
+          isOpen={tapestryStudioOpen}
+          onClose={() => setTapestryStudioOpen(false)}
+          tileDim={draft.tileDim}
+          currentTilesetUrl={draft.tileSetUrl}
+          currentTilesetDimX={draft.tileSetDimX}
+          currentTilesetDimY={draft.tileSetDimY}
+          onAddTilesAndStamp={handleAddTilesAndStamp}
+          onApplyWholeMap={handleApplyWholeMap}
+        />
       </section>
     </div>
   );

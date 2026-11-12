@@ -40,6 +40,12 @@ import {
   SPRITE_SHEET_WIDTH,
 } from '../spriteGenerator';
 import {
+  appendTilesToTileset,
+  createMacroStampFromIndices,
+  processTilePixels,
+  sliceSelectionToTiles,
+} from '../tapestrySampler';
+import {
   createBlankWorldMap,
   createBulgarianShevitsaMap,
   exportCharactersJson,
@@ -1151,5 +1157,67 @@ describe('SeloAI core engine', () => {
     const toolRes = await seloToolHost.callTool('create_world', { preset: 'shevitsa' });
     expect(toolRes.ok).toBe(true);
     expect(toolRes.map.name).toContain('Шевици');
+  });
+
+  it('slices imported tapestry/painting crops into tiles, removes background color, and creates macro stamps', async () => {
+    // 1. Test sliceSelectionToTiles calculation
+    const sliced = sliceSelectionToTiles(
+      {} as any,
+      400,
+      300,
+      { x: 32, y: 64, w: 96, h: 64 },
+      32,
+    );
+    expect(sliced.cols).toBe(3);
+    expect(sliced.rows).toBe(2);
+    expect(sliced.tileDim).toBe(32);
+
+    // 2. Test chroma-key background transparency filtering
+    const mockData = {
+      data: new Uint8ClampedArray([
+        255, 255, 255, 255, // Exact white -> transparent
+        250, 250, 250, 255, // Near white -> transparent within tolerance
+        190, 30, 45, 255,   // Crimson thread -> kept opaque
+        34, 119, 60, 255,   // Green thread -> kept opaque
+      ]),
+    } as ImageData;
+
+    processTilePixels(mockData, {
+      chromaKey: { r: 255, g: 255, b: 255, tolerance: 20 },
+    });
+
+    expect(mockData.data[3]).toBe(0); // White made transparent
+    expect(mockData.data[7]).toBe(0); // Near white made transparent
+    expect(mockData.data[11]).toBe(255); // Crimson preserved
+    expect(mockData.data[15]).toBe(255); // Green preserved
+
+    // 3. Test appending new tiles to an existing tileset
+    const appended = await appendTilesToTileset(
+      null,
+      512,
+      512,
+      32,
+      Array.from({ length: 6 }, () => ({} as any)),
+    );
+    expect(appended.startTileIndex).toBe(256);
+    expect(appended.tileIndices).toEqual([256, 257, 258, 259, 260, 261]);
+    expect(appended.newDimX).toBe(512);
+    expect(appended.newDimY).toBeGreaterThanOrEqual(512 + 32);
+
+    // 4. Test Macro Stamp generation
+    const stamp = createMacroStampFromIndices(
+      'Custom Shevitsa Bird',
+      3,
+      2,
+      appended.tileIndices,
+      'obj0',
+      true,
+    );
+    expect(stamp.name).toBe('Custom Shevitsa Bird');
+    expect(stamp.width).toBe(3);
+    expect(stamp.height).toBe(2);
+    expect(stamp.tiles.length).toBe(6);
+    expect(stamp.layer).toBe('obj0');
+    expect(stamp.blocksMovement).toBe(true);
   });
 });
