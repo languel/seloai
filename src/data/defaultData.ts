@@ -228,9 +228,9 @@ export const SPRITESHEET_PRESETS: SpritesheetPreset[] = [
 ];
 
 export const TILESET_PRESETS = [
-  { label: 'Gentle Village (Placeholder)', url: '/assets/gentle-obj.png', w: 1440, h: 1024 },
-  { label: 'RPG Classic Tileset', url: '/assets/rpg-tileset.png', w: 512, h: 512 },
-  { label: 'Mage City Tileset', url: '/assets/magecity.png', w: 256, h: 1450 },
+  { label: 'Gentle Village (Placeholder)', url: '/assets/gentle-obj.png', w: 1440, h: 1024, tileDim: 32 },
+  { label: 'RPG Classic Tileset', url: '/assets/rpg-tileset.png', w: 1600, h: 1600, tileDim: 80 },
+  { label: 'Mage City Tileset', url: '/assets/magecity.png', w: 256, h: 1450, tileDim: 32 },
 ];
 
 function buildInitialCollisionGrid(objectTiles: TileGrid[], width: number, height: number): boolean[][] {

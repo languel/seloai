@@ -166,9 +166,20 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
   });
 
   // Preload/notify when tileset URL changes so switching tilesets renders immediately
+  // and auto-syncs natural image dimensions if metadata was stale
   useEffect(() => {
     const img = new Image();
-    img.onload = () => setTilesetLoadTick((t) => t + 1);
+    img.onload = () => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        setDraft((p) =>
+          p.tileSetUrl === draft.tileSetUrl &&
+          (p.tileSetDimX !== img.naturalWidth || p.tileSetDimY !== img.naturalHeight)
+            ? { ...p, tileSetDimX: img.naturalWidth, tileSetDimY: img.naturalHeight }
+            : p,
+        );
+      }
+      setTilesetLoadTick((t) => t + 1);
+    };
     img.src = draft.tileSetUrl;
   }, [draft.tileSetUrl]);
 
@@ -1017,6 +1028,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
                       tileSetUrl: preset.url,
                       tileSetDimX: preset.w,
                       tileSetDimY: preset.h,
+                      tileDim: preset.tileDim ?? p.tileDim,
                     }));
                     setPaletteSel({ startX: 0, startY: 0, w: 1, h: 1 });
                     setActiveStampId(null);
@@ -1037,27 +1049,47 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
               {/* Tile Resolution + Palette Zoom/Pan */}
               <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
                 <div className="flex items-center gap-1">
-                  <label htmlFor="tile-res-select" className="text-muted">
+                  <label htmlFor="tile-res-input" className="text-muted">
                     Tile px
                   </label>
                   <select
-                    id="tile-res-select"
-                    value={draft.tileDim}
+                    aria-label="Tile pixel size preset"
+                    value={[16, 24, 32, 48, 64, 80].includes(draft.tileDim) ? String(draft.tileDim) : 'custom'}
                     onChange={(e) => {
+                      if (e.target.value === 'custom') return;
                       const nextDim = Number(e.target.value);
                       pushUndo(draft);
                       setDraft((p) => ({ ...p, tileDim: nextDim }));
                       setPaletteSel({ startX: 0, startY: 0, w: 1, h: 1 });
                       setActiveStampId(null);
                     }}
-                    className="rounded border border-borderFolk bg-card px-1.5 py-0.5 font-mono text-[11px]"
+                    className="rounded border border-borderFolk bg-card px-1 py-0.5 font-mono text-[11px]"
                   >
-                    {[16, 24, 32, 48].map((dim) => (
+                    {[16, 24, 32, 48, 64, 80].map((dim) => (
                       <option key={dim} value={dim}>
                         {dim}px
                       </option>
                     ))}
+                    <option value="custom">Custom</option>
                   </select>
+                  <input
+                    id="tile-res-input"
+                    type="number"
+                    min={8}
+                    max={256}
+                    step={1}
+                    value={draft.tileDim}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      if (!Number.isFinite(val) || val < 8 || val > 256) return;
+                      pushUndo(draft);
+                      setDraft((p) => ({ ...p, tileDim: Math.round(val) }));
+                      setPaletteSel({ startX: 0, startY: 0, w: 1, h: 1 });
+                      setActiveStampId(null);
+                    }}
+                    aria-label="Custom tile pixel size"
+                    className="w-14 rounded border border-borderFolk bg-card px-1.5 py-0.5 font-mono text-[11px]"
+                  />
                 </div>
 
                 <div className="flex items-center gap-1">
