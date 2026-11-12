@@ -1,4 +1,5 @@
 import {
+  createBulgarianShevitsaMap,
   createDefaultMap,
   DEFAULT_MODEL_SETTINGS,
   DEFAULT_VILLAGERS,
@@ -142,6 +143,8 @@ export async function resetPersistedState(): Promise<PersistedVillageState> {
   await savePersistedState(fresh);
   return fresh;
 }
+
+export { createBulgarianShevitsaMap };
 
 export function createBlankWorldMap(name = 'New World', width = 36, height = 28): VillageMap {
   const base = createDefaultMap();

@@ -41,6 +41,7 @@ import {
 } from '../spriteGenerator';
 import {
   createBlankWorldMap,
+  createBulgarianShevitsaMap,
   exportCharactersJson,
   exportCharactersWithHistoriesJson,
   exportDatabaseJson,
@@ -1081,5 +1082,74 @@ describe('SeloAI core engine', () => {
     const callPayload = JSON.parse(mcpResponses[2].result.content[0].text);
     expect(callPayload.ok).toBe(true);
     expect(callPayload.world.map.name).toBe('MCP Fortress');
+  });
+
+  it('builds a walkable tile map based on the 7 regional Bulgarian Shevitsa embroidery patterns', async () => {
+    const shevitsaMap = createBulgarianShevitsaMap();
+    expect(shevitsaMap.width).toBe(64);
+    expect(shevitsaMap.height).toBe(48);
+    expect(shevitsaMap.tileSetUrl).toContain('shevitsa-tileset.png');
+
+    const tags = (shevitsaMap.pointsOfInterest ?? []).map((p) => p.tag);
+    expect(tags).toContain('Elbetitsa');
+    expect(tags).toContain('TreeOfLife');
+    expect(tags).toContain('PirinLabyrinth');
+    expect(tags).toContain('RhodopeRosette');
+    expect(tags).toContain('ChiprovtsiLoom');
+    expect(tags).toContain('DobrudzhaPlains');
+    expect(tags).toContain('StrandzhaGate');
+    expect(tags).toContain('DanubeFord');
+
+    // Verify all POIs are walkable
+    for (const poi of shevitsaMap.pointsOfInterest ?? []) {
+      expect(isTileWalkable(shevitsaMap, poi.x, poi.y)).toBe(true);
+    }
+
+    // Pathfinding across the regional embroidery hubs
+    const elbetitsa = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'Elbetitsa')!;
+    const treeOfLife = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'TreeOfLife')!;
+    const pirin = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'PirinLabyrinth')!;
+    const rhodope = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'RhodopeRosette')!;
+    const dobrudzha = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'DobrudzhaPlains')!;
+    const chiprovtsi = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'ChiprovtsiLoom')!;
+    const danube = shevitsaMap.pointsOfInterest!.find((p) => p.tag === 'DanubeFord')!;
+
+    const pathToTree = findPath(shevitsaMap, elbetitsa, treeOfLife);
+    expect(pathToTree.length).toBeGreaterThan(0);
+
+    const pathToPirin = findPath(shevitsaMap, elbetitsa, pirin);
+    expect(pathToPirin.length).toBeGreaterThan(0);
+
+    const pathToRhodope = findPath(shevitsaMap, treeOfLife, rhodope);
+    expect(pathToRhodope.length).toBeGreaterThan(0);
+
+    const pathToDobrudzha = findPath(shevitsaMap, treeOfLife, dobrudzha);
+    expect(pathToDobrudzha.length).toBeGreaterThan(0);
+
+    const pathToChiprovtsi = findPath(shevitsaMap, elbetitsa, chiprovtsi);
+    expect(pathToChiprovtsi.length).toBeGreaterThan(0);
+
+    const pathToDanube = findPath(shevitsaMap, chiprovtsi, danube);
+    expect(pathToDanube.length).toBeGreaterThan(0);
+
+    // Verify Tile Macro Stamps for the Level Editor
+    const stampNames = (shevitsaMap.stamps ?? []).map((s) => s.name);
+    expect(stampNames).toContain('Shopluk Elbetitsa (8-Fold Star)');
+    expect(stampNames).toContain('Tree of Life & Paired Birds');
+    expect(stampNames).toContain('Pirin Stepped Labyrinth (Pink & Blue)');
+    expect(stampNames).toContain('Rhodope Sunburst Rosette');
+    expect(stampNames).toContain('Chiprovtsi Kilim Diamond Loom');
+
+    // Round-trip level export
+    const json = exportLevelJson(shevitsaMap);
+    const parsed = parseImportedVillageJson(json);
+    expect(parsed.map?.name).toBe(shevitsaMap.name);
+    expect(parsed.map?.pointsOfInterest?.length).toBe(shevitsaMap.pointsOfInterest?.length);
+    expect(parsed.map?.stamps?.length).toBe(shevitsaMap.stamps?.length);
+
+    // Verify tool execution via seloToolHost with preset: 'shevitsa'
+    const toolRes = await seloToolHost.callTool('create_world', { preset: 'shevitsa' });
+    expect(toolRes.ok).toBe(true);
+    expect(toolRes.map.name).toContain('Шевици');
   });
 });

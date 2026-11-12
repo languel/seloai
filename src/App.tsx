@@ -27,6 +27,7 @@ import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
 import {
   createBlankWorldMap,
+  createBulgarianShevitsaMap,
   exportCharactersJson,
   exportCharactersWithHistoriesJson,
   exportDatabaseJson,
@@ -330,6 +331,18 @@ export function App() {
     setDataNotice('Created a new blank world and cleared the story database.');
   };
 
+  const handleLoadShevitsaRealm = () => {
+    if (!settings) return;
+    brainRouter.flushAudioQueue();
+    const shevitsaMap = createBulgarianShevitsaMap();
+    setMap(shevitsaMap);
+    simRef.current?.updateMap(shevitsaMap);
+    simRef.current?.clearDatabase();
+    persistAll(shevitsaMap, villagers, settings);
+    dataDialogRef.current?.close();
+    setDataNotice('Loaded "Шевици: The Embroidered Realm of Bulgaria" with regional embroidery motifs & POIs.');
+  };
+
   const handleConfirmReset = async () => {
     const fresh = await resetPersistedState();
     simRef.current = new VillageSimulation(
@@ -549,7 +562,15 @@ export function App() {
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
               New World / Story &amp; Database
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-1.5">
+              <button
+                type="button"
+                onClick={handleLoadShevitsaRealm}
+                className="rounded-sm border border-ochre/60 bg-surface px-2 py-1.5 text-left hover:border-ochre"
+              >
+                <div className="font-semibold text-ochre">Embroidered Bulgaria</div>
+                <div className="text-[10px] text-muted">7 Shevitsa motifs &amp; lore</div>
+              </button>
               <button
                 type="button"
                 onClick={handleNewStoryClearDb}

@@ -19,6 +19,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { ANIMATION_CATALOG, TILESET_PRESETS } from '../data/defaultData';
+import { createBulgarianShevitsaMap } from '../data/shevitsaMap';
 import { drawAnimatedSprites, drawTileGrid, getCachedImage } from '../engine/renderer';
 import type { PointOfInterest, TileGrid, TileMacroStamp, VillageMap } from '../engine/types';
 import { resolvePublicUrl } from '../utils/assetUrl';
@@ -1388,6 +1389,20 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({ map, onApplyMa
             >
               <FilePlus2 className="h-3.5 w-3.5" />
               <span>New Level</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                pushUndo(draft);
+                const shevitsa = createBulgarianShevitsaMap();
+                setDraft(cloneMap(shevitsa));
+                setActiveStampId(null);
+              }}
+              title="Load Embroidered Bulgaria Shevitsa Map with regional embroidery patterns"
+              className="inline-flex items-center gap-1 rounded border border-ochre/60 bg-surface px-2.5 py-1 text-xs font-medium text-ochre hover:bg-card"
+            >
+              <span>Shevitsa Map</span>
             </button>
 
             <button

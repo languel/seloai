@@ -22,6 +22,7 @@ import type {
 } from '../engine/types';
 import {
   createBlankWorldMap,
+  createBulgarianShevitsaMap,
   exportCharactersJson,
   exportCharactersWithHistoriesJson,
   exportDatabaseJson,
@@ -182,9 +183,17 @@ export class SeloToolHost {
       }
 
       case 'create_world': {
-        const width = Math.max(12, Math.min(80, Number(args.width ?? 36)));
-        const height = Math.max(12, Math.min(64, Number(args.height ?? 28)));
-        const nextMap = createBlankWorldMap(args.name || 'Agent World', width, height);
+        const width = Math.max(12, Math.min(80, Number(args.width ?? (args.preset === 'shevitsa' || args.preset === 'bulgaria' ? 64 : 36))));
+        const height = Math.max(12, Math.min(64, Number(args.height ?? (args.preset === 'shevitsa' || args.preset === 'bulgaria' ? 48 : 28))));
+        const isShevitsa =
+          String(args.preset || '').toLowerCase() === 'shevitsa' ||
+          String(args.preset || '').toLowerCase() === 'bulgaria' ||
+          String(args.name || '').toLowerCase().includes('shevitsa') ||
+          String(args.name || '').toLowerCase().includes('bulgaria');
+        const nextMap = isShevitsa
+          ? createBulgarianShevitsaMap(width, height)
+          : createBlankWorldMap(args.name || 'Agent World', width, height);
+        if (args.name && !isShevitsa) nextMap.name = args.name;
         if (typeof args.tileDim === 'number' && args.tileDim >= 8) nextMap.tileDim = args.tileDim;
         if (typeof args.tileSetUrl === 'string' && args.tileSetUrl.trim()) {
           nextMap.tileSetUrl = args.tileSetUrl.trim();
