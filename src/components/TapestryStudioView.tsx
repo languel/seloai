@@ -112,6 +112,32 @@ function savePatternLibrary(items: SavedPatternEntry[]) {
   }
 }
 
+const MIN_STUDIO_ZOOM = 0.25;
+const MAX_STUDIO_ZOOM = 24;
+
+function computeAnchoredZoomPan(
+  curZoom: number,
+  curPan: { x: number; y: number },
+  targetZoom: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  fromCanvasPt: { x: number; y: number },
+  toCanvasPt: { x: number; y: number } = fromCanvasPt,
+): { zoom: number; pan: { x: number; y: number } } {
+  const nextZoom = Math.max(
+    MIN_STUDIO_ZOOM,
+    Math.min(MAX_STUDIO_ZOOM, Number(targetZoom.toFixed(4))),
+  );
+  const ratio = nextZoom / curZoom;
+  return {
+    zoom: nextZoom,
+    pan: {
+      x: toCanvasPt.x - canvasWidth / 2 - (fromCanvasPt.x - canvasWidth / 2 - curPan.x) * ratio,
+      y: toCanvasPt.y - canvasHeight / 2 - (fromCanvasPt.y - canvasHeight / 2 - curPan.y) * ratio,
+    },
+  };
+}
+
 interface TapestryStudioViewProps {
   map: VillageMap;
   onApplyMap: (nextMap: VillageMap) => void;
@@ -211,6 +237,13 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const strokeSavedRef = useRef(false);
 
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  zoomRef.current = zoom;
+  panRef.current = pan;
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStateRef = useRef<{ dist: number; mx: number; my: number } | null>(null);
+  const gestureStartZoomRef = useRef<{ zoom: number; pan: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
   const isDraggingRef = useRef(false);
   const dragModeRef = useRef<'none' | 'pan' | 'select' | 'move' | 'resize' | 'paint'>('none');
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -234,6 +267,119 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     const ro = new ResizeObserver(updateSize);
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  // Trackpad pinch-zoom, two-finger scroll pan, and Safari gesture events on the canvas viewport
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    let wheelPinchSeen = false;
+
+    const applyZoomPan = (nextZoom: number, nextPan: { x: number; y: number }) => {
+      zoomRef.current = nextZoom;
+      panRef.current = nextPan;
+      setZoom(nextZoom);
+      setPan(nextPan);
+    };
+
+    const clientToCanvasPt = (clientX: number, clientY: number, canvas: HTMLCanvasElement, rect: DOMRect) => ({
+      x: ((clientX - rect.left) * canvas.width) / rect.width,
+      y: ((clientY - rect.top) * canvas.height) / rect.height,
+    });
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const curZoom = zoomRef.current;
+      const curPan = panRef.current;
+
+      if (e.ctrlKey || e.metaKey) {
+        wheelPinchSeen = true;
+        // Trackpad pinch-to-zoom (or Ctrl/Cmd+Wheel): zoom smoothly anchored at cursor
+        let dy = e.deltaY;
+        if (e.deltaMode === 1) dy *= 16;
+        else if (e.deltaMode === 2) dy *= rect.height;
+        const next = computeAnchoredZoomPan(
+          curZoom,
+          curPan,
+          curZoom * Math.exp(-dy * 0.01),
+          canvas.width,
+          canvas.height,
+          clientToCanvasPt(e.clientX, e.clientY, canvas, rect),
+        );
+        applyZoomPan(next.zoom, next.pan);
+      } else {
+        // Two-finger trackpad scroll / wheel pan
+        const mult = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1;
+        const stepX = (e.deltaX * mult * canvas.width) / rect.width;
+        const stepY = (e.deltaY * mult * canvas.height) / rect.height;
+        applyZoomPan(curZoom, {
+          x: curPan.x - stepX,
+          y: curPan.y - stepY,
+        });
+      }
+    };
+
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      wheelPinchSeen = false;
+      const ge = e as unknown as { clientX?: number; clientY?: number };
+      const rect = el.getBoundingClientRect();
+      gestureStartZoomRef.current = {
+        zoom: zoomRef.current,
+        pan: { ...panRef.current },
+        clientX: ge.clientX ?? rect.left + rect.width / 2,
+        clientY: ge.clientY ?? rect.top + rect.height / 2,
+      };
+    };
+
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      if (wheelPinchSeen) return;
+      const ge = e as unknown as { scale?: number; clientX?: number; clientY?: number };
+      const start = gestureStartZoomRef.current;
+      const canvas = canvasRef.current;
+      if (!start || !canvas || typeof ge.scale !== 'number') return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const pt = clientToCanvasPt(
+        ge.clientX ?? start.clientX,
+        ge.clientY ?? start.clientY,
+        canvas,
+        rect,
+      );
+      const next = computeAnchoredZoomPan(
+        start.zoom,
+        start.pan,
+        start.zoom * ge.scale,
+        canvas.width,
+        canvas.height,
+        pt,
+      );
+      applyZoomPan(next.zoom, next.pan);
+    };
+
+    const onGestureEnd = (e: Event) => {
+      e.preventDefault();
+      gestureStartZoomRef.current = null;
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('gesturestart', onGestureStart, { passive: false });
+    el.addEventListener('gesturechange', onGestureChange, { passive: false });
+    el.addEventListener('gestureend', onGestureEnd, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('gesturestart', onGestureStart);
+      el.removeEventListener('gesturechange', onGestureChange);
+      el.removeEventListener('gestureend', onGestureEnd);
+    };
   }, []);
 
   // Load sample on mount if none loaded
@@ -1049,6 +1195,26 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Two-finger touchscreen pinch-zoom + two-finger pan
+    if (activePointersRef.current.size >= 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      const mx = (pts[0].x + pts[1].x) / 2;
+      const my = (pts[0].y + pts[1].y) / 2;
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      pinchStateRef.current = { dist, mx, my };
+      isDraggingRef.current = false;
+      dragModeRef.current = 'none';
+      strokeSavedRef.current = false;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore if already captured
+      }
+      return;
+    }
+
     if (e.button === 1 || activeTool === 'pan' || (activeTool === 'frame' && e.altKey)) {
       isDraggingRef.current = true;
       dragModeRef.current = 'pan';
@@ -1181,6 +1347,48 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (activePointersRef.current.size >= 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      const mx = (pts[0].x + pts[1].x) / 2;
+      const my = (pts[0].y + pts[1].y) / 2;
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      const prev = pinchStateRef.current;
+      const canvas = canvasRef.current;
+      if (prev && canvas) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const curZoom = zoomRef.current;
+          const curPan = panRef.current;
+          const scale = prev.dist > 4 ? dist / prev.dist : 1;
+          const next = computeAnchoredZoomPan(
+            curZoom,
+            curPan,
+            curZoom * scale,
+            canvas.width,
+            canvas.height,
+            {
+              x: ((prev.mx - rect.left) * canvas.width) / rect.width,
+              y: ((prev.my - rect.top) * canvas.height) / rect.height,
+            },
+            {
+              x: ((mx - rect.left) * canvas.width) / rect.width,
+              y: ((my - rect.top) * canvas.height) / rect.height,
+            },
+          );
+          zoomRef.current = next.zoom;
+          panRef.current = next.pan;
+          setZoom(next.zoom);
+          setPan(next.pan);
+        }
+      }
+      pinchStateRef.current = { dist, mx, my };
+      return;
+    }
+
     const { x, y, ox, oy } = canvasToImageCoords(e);
 
     if (!isDraggingRef.current) {
@@ -1278,7 +1486,11 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     });
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(e.pointerId);
+    if (activePointersRef.current.size < 2) {
+      pinchStateRef.current = null;
+    }
     isDraggingRef.current = false;
     dragModeRef.current = 'none';
     strokeSavedRef.current = false;
@@ -1901,17 +2113,19 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    zoomRef.current = 1;
+                    panRef.current = { x: 0, y: 0 };
                     setZoom(1);
                     setPan({ x: 0, y: 0 });
                   }}
                   className="px-1 font-mono text-[10px] text-white/80"
                   title="Reset Zoom & Pan"
                 >
-                  {zoom}×
+                  {Number(zoom.toFixed(2))}×
                 </button>
                 <button
                   type="button"
-                  onClick={() => setZoom((z) => Math.min(16, Number((z + 0.5).toFixed(2))))}
+                  onClick={() => setZoom((z) => Math.min(24, Number((z + 0.5).toFixed(2))))}
                   className="rounded p-1 hover:bg-white/10"
                   title="Zoom In"
                 >
@@ -1925,7 +2139,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
           <div
             ref={viewportRef}
             onContextMenu={(e) => e.preventDefault()}
-            className={`relative flex-1 overflow-hidden select-none ${canvasCursorClass}`}
+            className={`relative flex-1 overflow-hidden select-none touch-none ${canvasCursorClass}`}
           >
             <canvas
               ref={canvasRef}
@@ -1934,7 +2148,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
-              className="w-full h-full block"
+              onPointerCancel={handlePointerUp}
+              onLostPointerCapture={handlePointerUp}
+              className="w-full h-full block touch-none"
             />
 
             {statusMsg && (
