@@ -17,6 +17,7 @@ import {
   FlipVertical2,
   Focus,
   Grid,
+  GripVertical,
   Hand,
   Layers,
   Maximize2,
@@ -44,9 +45,11 @@ import {
   createMacroStampFromIndices,
   detectMotifRegions,
   findFirstEmptyTileBlock,
+  findOpenSlotForOutputBox,
   floodFillTransparent,
   generateProceduralCodeFromGrid,
   getOpaqueBounds,
+  hitTestBoxAction,
   parseHexColor,
   placeTilesInTilesetAt,
   processTilePixels,
@@ -55,8 +58,11 @@ import {
   removeEdgeBackground,
   renderPixelGridToCanvases,
   repositionTilesInTileset,
+  resizeBoxWithHandle,
   sampleNearestPaletteIndexForCell,
   sliceSelectionToTiles,
+  type BoxHoverAction,
+  type BoxResizeHandle,
   type ChromaKeyFilter,
   type CropSelection,
 } from '../engine/tapestrySampler';
@@ -66,10 +72,26 @@ import { resolvePublicUrl } from '../utils/assetUrl';
 type CanvasViewMode = 'create' | 'tileset';
 type CanvasTool = 'frame' | 'pencil' | 'eraser' | 'fill' | 'eyedropper' | 'wand' | 'pan';
 type TilesetTool = 'position' | 'move' | 'pencil' | 'eraser' | 'eyedropper' | 'pan';
-type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-type CropHoverAction = ResizeHandle | 'move' | null;
+type ResizeHandle = BoxResizeHandle;
+type CropHoverAction = BoxHoverAction;
 type InspectorTab = 'trace' | 'slicer' | 'library';
 type TraceOverlayMode = 'lines' | 'dots' | 'both' | 'off';
+
+export interface OutputPlacedPattern {
+  id: string;
+  sourcePatternId?: string;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  gridWidth: number;
+  gridHeight: number;
+  palette: string[];
+  grid: number[];
+  layer: 'bg0' | 'bg1' | 'obj0' | 'obj1';
+  blocksMovement: boolean;
+}
 
 const SUBTLE_CHECKER_STYLE: React.CSSProperties = {
   backgroundColor: '#1d1f24',
@@ -144,6 +166,113 @@ function computeAnchoredZoomPan(
       y: toCanvasPt.y - canvasHeight / 2 - (fromCanvasPt.y - canvasHeight / 2 - curPan.y) * ratio,
     },
   };
+}
+
+function renderIndexedPatternCanvas(
+  grid: number[],
+  gridW: number,
+  gridH: number,
+  palette: string[],
+): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, gridW);
+  c.height = Math.max(1, gridH);
+  const ctx = c.getContext('2d');
+  if (!ctx) return c;
+  const imgData = ctx.createImageData(c.width, c.height);
+  const rgbPalette = palette.map((hex) => parseHexColor(hex));
+  for (let i = 0; i < c.width * c.height; i++) {
+    const idx = grid[i];
+    if (idx === undefined || idx < 0 || idx >= rgbPalette.length) continue;
+    const rgb = rgbPalette[idx];
+    if (!rgb) continue;
+    const o = i * 4;
+    imgData.data[o] = rgb.r;
+    imgData.data[o + 1] = rgb.g;
+    imgData.data[o + 2] = rgb.b;
+    imgData.data[o + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return c;
+}
+
+function cursorForHoverAction(action: CropHoverAction, fallback: string = 'cursor-crosshair'): string {
+  switch (action) {
+    case 'nw':
+    case 'se':
+      return 'cursor-nwse-resize';
+    case 'ne':
+    case 'sw':
+      return 'cursor-nesw-resize';
+    case 'n':
+    case 's':
+      return 'cursor-ns-resize';
+    case 'e':
+    case 'w':
+      return 'cursor-ew-resize';
+    case 'move':
+      return 'cursor-move';
+    default:
+      return fallback;
+  }
+}
+
+function drawBoxSelectionHandles(
+  ctx: CanvasRenderingContext2D,
+  box: CropSelection,
+  zoom: number,
+  borderColor: string,
+  showHandles: boolean = true,
+) {
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 2 / zoom;
+  ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1 / zoom;
+  ctx.setLineDash([4 / zoom, 4 / zoom]);
+  ctx.strokeRect(box.x, box.y, box.w, box.h);
+  ctx.setLineDash([]);
+
+  if (!showHandles) return;
+  const hs = Math.max(4, 7 / zoom);
+  const half = hs / 2;
+  const handles: Array<[number, number]> = [
+    [box.x, box.y],
+    [box.x + box.w / 2, box.y],
+    [box.x + box.w, box.y],
+    [box.x + box.w, box.y + box.h / 2],
+    [box.x + box.w, box.y + box.h],
+    [box.x + box.w / 2, box.y + box.h],
+    [box.x, box.y + box.h],
+    [box.x, box.y + box.h / 2],
+  ];
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 1.5 / zoom;
+  for (const [hx, hy] of handles) {
+    ctx.fillRect(hx - half, hy - half, hs, hs);
+    ctx.strokeRect(hx - half, hy - half, hs, hs);
+  }
+}
+
+function isBaseTileOccupied(
+  work: HTMLCanvasElement | null,
+  tileDim: number,
+  col: number,
+  row: number,
+): boolean {
+  if (!work || tileDim <= 0) return false;
+  const sx = col * tileDim;
+  const sy = row * tileDim;
+  if (sx < 0 || sy < 0 || sx + tileDim > work.width || sy + tileDim > work.height) return false;
+  const ctx = work.getContext('2d');
+  if (!ctx) return false;
+  const data = ctx.getImageData(sx, sy, tileDim, tileDim).data;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] > 8) return true;
+  }
+  return false;
 }
 
 interface TapestryStudioViewProps {
@@ -223,10 +352,11 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const [builderCode, setBuilderCode] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState(false);
 
-  // Target Output Tileset Preview & Editing View (separate from map.tileSetUrl until explicitly applied)
+  // Target Output Tileset Preview & Multi-Pattern Composer (separate from map.tileSetUrl until explicitly applied)
   const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('create');
   const [tilesetTool, setTilesetTool] = useState<TilesetTool>('position');
   const [tilesetGridVisible, setTilesetGridVisible] = useState(true);
+  const [tilesetGuidesVisible, setTilesetGuidesVisible] = useState(true);
   const [tilesetSourceLabel, setTilesetSourceLabel] = useState<'blank' | 'map' | 'uploaded'>('blank');
   const [tilesetDimX, setTilesetDimX] = useState<number>(() => Math.max(256, tileDim * 8));
   const [tilesetDimY, setTilesetDimY] = useState<number>(() => tileDim * 4);
@@ -234,8 +364,18 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const [tilesetHasEdits, setTilesetHasEdits] = useState(false);
   const [tilesetUndoCount, setTilesetUndoCount] = useState(0);
   const [studioStamps, setStudioStamps] = useState<TileMacroStamp[]>([]);
-  const [showStagedDraft, setShowStagedDraft] = useState(true);
-  const [stagedSlot, setStagedSlot] = useState<{ col: number; row: number }>({ col: 0, row: 0 });
+  const [outputLayers, setOutputLayers] = useState<OutputPlacedPattern[]>([]);
+  const [selectedOutputLayerId, setSelectedOutputLayerId] = useState<string | null>(null);
+  const [outputSnapGrid, setOutputSnapGrid] = useState<number>(tileDim);
+  const [tilesetHoverAction, setTilesetHoverAction] = useState<CropHoverAction>(null);
+  const [dropPreview, setDropPreview] = useState<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    name: string;
+  } | null>(null);
+  const [outputPreviewUrl, setOutputPreviewUrl] = useState<string>('');
   const [selectedTilesetSlot, setSelectedTilesetSlot] = useState<{ col: number; row: number; w: number; h: number }>({
     col: 0,
     row: 0,
@@ -269,11 +409,35 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
 
   const tilesetWorkCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const tilesetUndoStackRef = useRef<
-    Array<{ width: number; height: number; data: ImageData; stamps: TileMacroStamp[] }>
+    Array<{
+      width: number;
+      height: number;
+      data: ImageData;
+      stamps: TileMacroStamp[];
+      outputLayers: OutputPlacedPattern[];
+      selectedOutputLayerId: string | null;
+    }>
   >([]);
   const tilesetDragOriginRef = useRef<{ col: number; row: number; w: number; h: number } | null>(null);
   const tilesetPaintSavedRef = useRef(false);
-  const stagedPreviewCanvasesRef = useRef<HTMLCanvasElement[]>([]);
+  const tilesetLayerDragSavedRef = useRef(false);
+  const outputLayerMoveRef = useRef<{ layerId: string; dx: number; dy: number; w: number; h: number }>({
+    layerId: '',
+    dx: 0,
+    dy: 0,
+    w: 32,
+    h: 32,
+  });
+  const outputLayerResizeRef = useRef<{
+    layerId: string;
+    handle: ResizeHandle;
+    orig: CropSelection;
+  }>({
+    layerId: '',
+    handle: 'se',
+    orig: { x: 0, y: 0, w: 32, h: 32 },
+  });
+  const draggingLibEntryRef = useRef<SavedPatternEntry | null>(null);
   const pendingTileRemapsRef = useRef<Array<Record<number, number>>>([]);
 
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
@@ -286,7 +450,16 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   const gestureStartZoomRef = useRef<{ zoom: number; pan: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
   const isDraggingRef = useRef(false);
   const dragModeRef = useRef<
-    'none' | 'pan' | 'select' | 'move' | 'resize' | 'paint' | 'ts-position' | 'ts-move' | 'ts-paint'
+    | 'none'
+    | 'pan'
+    | 'select'
+    | 'move'
+    | 'resize'
+    | 'paint'
+    | 'ts-layer-move'
+    | 'ts-layer-resize'
+    | 'ts-move'
+    | 'ts-paint'
   >('none');
   const dragStartRef = useRef({ x: 0, y: 0 });
   const moveOffsetRef = useRef({ dx: 0, dy: 0, w: 0, h: 0 });
@@ -442,7 +615,8 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setTilesetSourceLabel('blank');
     setTilesetHasEdits(false);
     setStudioStamps([]);
-    setStagedSlot({ col: 0, row: 0 });
+    setOutputLayers([]);
+    setSelectedOutputLayerId(null);
     setSelectedTilesetSlot({ col: 0, row: 0, w: 1, h: 1 });
     setTilesetVersion((v) => v + 1);
     return c;
@@ -808,21 +982,80 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     }));
   };
 
-  const nudgeStagedSlot = (dc: number, dr: number) => {
-    setStagedSlot((prev) => {
-      const nextCol = Math.max(0, Math.min(Math.max(0, tilesetCols - builderOutCols), prev.col + dc));
-      const nextRow = Math.max(0, Math.min(Math.max(0, tilesetRows - builderOutRows), prev.row + dr));
-      setSelectedTilesetSlot({
-        col: nextCol,
-        row: nextRow,
-        w: builderOutCols,
-        h: builderOutRows,
-      });
-      return { col: nextCol, row: nextRow };
-    });
+  const layerCanvasCacheRef = useRef<
+    WeakMap<number[], { palette: string[]; canvas: HTMLCanvasElement }>
+  >(new WeakMap());
+
+  const getLayerNativeCanvas = (layer: OutputPlacedPattern): HTMLCanvasElement => {
+    const cached = layerCanvasCacheRef.current.get(layer.grid);
+    if (cached && cached.palette === layer.palette) {
+      return cached.canvas;
+    }
+    const c = renderIndexedPatternCanvas(
+      layer.grid,
+      layer.gridWidth,
+      layer.gridHeight,
+      layer.palette,
+    );
+    layerCanvasCacheRef.current.set(layer.grid, { palette: layer.palette, canvas: c });
+    return c;
   };
 
-  // Keyboard shortcuts: Arrows nudge crop/draft, B/E/G/I/V/M switch tools, Cmd/Ctrl+Z undo
+  const composeFlattenedOutputCanvas = (includeLayers: boolean = true): HTMLCanvasElement => {
+    const work = tilesetWorkCanvasRef.current;
+    const w = work?.width ?? tilesetDimX;
+    const h = work?.height ?? tilesetDimY;
+    const out = document.createElement('canvas');
+    out.width = Math.max(tileDim, w);
+    out.height = Math.max(tileDim, h);
+    const ctx = out.getContext('2d');
+    if (!ctx) return out;
+    ctx.imageSmoothingEnabled = false;
+    if (work) {
+      ctx.drawImage(work, 0, 0);
+    }
+    if (includeLayers) {
+      for (const layer of outputLayers) {
+        const nativeC = getLayerNativeCanvas(layer);
+        ctx.drawImage(nativeC, layer.x, layer.y, layer.w, layer.h);
+      }
+    }
+    return out;
+  };
+
+  const nudgeSelectedOutputLayer = (dx: number, dy: number) => {
+    if (!selectedOutputLayerId) return;
+    pushTilesetUndo();
+    setOutputLayers((prev) =>
+      prev.map((l) =>
+        l.id === selectedOutputLayerId
+          ? {
+              ...l,
+              x: Math.max(0, Math.min(Math.max(0, tilesetDimX - l.w), l.x + dx)),
+              y: Math.max(0, Math.min(Math.max(0, tilesetDimY - l.h), l.y + dy)),
+            }
+          : l,
+      ),
+    );
+    setTilesetHasEdits(true);
+  };
+
+  const removeOutputLayer = (layerId: string) => {
+    const removed = outputLayers.find((l) => l.id === layerId);
+    if (!removed) return;
+    pushTilesetUndo();
+    setOutputLayers((prev) => {
+      const next = prev.filter((l) => l.id !== layerId);
+      if (selectedOutputLayerId === layerId) {
+        setSelectedOutputLayerId(next[next.length - 1]?.id ?? null);
+      }
+      return next;
+    });
+    setTilesetHasEdits(true);
+    setStatusMsg(`Removed "${removed.name}" from Output Tileset`);
+  };
+
+  // Keyboard shortcuts: Arrows nudge crop/layer, Delete removes selected layer, B/E/G/I/V/M switch tools, Cmd/Ctrl+Z undo
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -843,18 +1076,46 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         if (e.key === 'b' || e.key === 'B') setTilesetTool('pencil');
         if (e.key === 'e' || e.key === 'E') setTilesetTool('eraser');
         if (e.key === 'i' || e.key === 'I') setTilesetTool('eyedropper');
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedOutputLayerId) {
+          e.preventDefault();
+          removeOutputLayer(selectedOutputLayerId);
+          return;
+        }
+        const nudgeStep = e.shiftKey ? 1 : Math.max(1, outputSnapGrid);
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
-          nudgeStagedSlot(-1, 0);
+          if (selectedOutputLayerId) {
+            nudgeSelectedOutputLayer(-nudgeStep, 0);
+          } else {
+            setSelectedTilesetSlot((prev) => ({ ...prev, col: Math.max(0, prev.col - 1) }));
+          }
         } else if (e.key === 'ArrowRight') {
           e.preventDefault();
-          nudgeStagedSlot(1, 0);
+          if (selectedOutputLayerId) {
+            nudgeSelectedOutputLayer(nudgeStep, 0);
+          } else {
+            setSelectedTilesetSlot((prev) => ({
+              ...prev,
+              col: Math.min(Math.max(0, tilesetCols - prev.w), prev.col + 1),
+            }));
+          }
         } else if (e.key === 'ArrowUp') {
           e.preventDefault();
-          nudgeStagedSlot(0, -1);
+          if (selectedOutputLayerId) {
+            nudgeSelectedOutputLayer(0, -nudgeStep);
+          } else {
+            setSelectedTilesetSlot((prev) => ({ ...prev, row: Math.max(0, prev.row - 1) }));
+          }
         } else if (e.key === 'ArrowDown') {
           e.preventDefault();
-          nudgeStagedSlot(0, 1);
+          if (selectedOutputLayerId) {
+            nudgeSelectedOutputLayer(0, nudgeStep);
+          } else {
+            setSelectedTilesetSlot((prev) => ({
+              ...prev,
+              row: Math.min(Math.max(0, tilesetRows - prev.h), prev.row + 1),
+            }));
+          }
         }
         return;
       }
@@ -882,7 +1143,20 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [imgWidth, imgHeight, builderGrid, builderPalette, canvasViewMode, tilesetCols, tilesetRows, builderOutCols, builderOutRows]);
+  }, [
+    imgWidth,
+    imgHeight,
+    builderGrid,
+    builderPalette,
+    canvasViewMode,
+    tilesetCols,
+    tilesetRows,
+    tilesetDimX,
+    tilesetDimY,
+    selectedOutputLayerId,
+    outputLayers,
+    outputSnapGrid,
+  ]);
 
   // Keep raw reference crop thumbnail + rebuilt trace preview & procedural code synced
   useEffect(() => {
@@ -918,12 +1192,21 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         builderOutRows,
         tileDim,
       );
-      stagedPreviewCanvasesRef.current = rendered.canvases;
       setBuilderPreviewUrl(rendered.previewDataUrl);
     } catch {
       // ignore
     }
   }, [builderGrid, builderPalette, builderW, builderH, builderOutCols, builderOutRows, tileDim, stampName]);
+
+  // Keep flattened clean Output Sheet preview thumbnail synced for right-panel Composer
+  useEffect(() => {
+    try {
+      const composed = composeFlattenedOutputCanvas(true);
+      setOutputPreviewUrl(composed.toDataURL('image/png'));
+    } catch {
+      // ignore
+    }
+  }, [outputLayers, tilesetVersion, tilesetDimX, tilesetDimY]);
 
   // Main unified layered canvas renderer (Create Reference/Trace OR Preview Output Tileset)
   useEffect(() => {
@@ -964,145 +1247,151 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         ctx.drawImage(workCanvas, 0, 0, tilesetDimX, tilesetDimY);
       }
 
-      // 1px pixel subgrid when zoomed in deeply
-      if (zoom >= 6) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-        ctx.lineWidth = 1 / zoom;
-        ctx.beginPath();
-        for (let px = 1; px < tilesetDimX; px++) {
-          ctx.moveTo(px, 0);
-          ctx.lineTo(px, tilesetDimY);
-        }
-        for (let py = 1; py < tilesetDimY; py++) {
-          ctx.moveTo(0, py);
-          ctx.lineTo(tilesetDimX, py);
-        }
-        ctx.stroke();
+      // Composite all placed pattern layers cleanly atop base tileset
+      for (const layer of outputLayers) {
+        const nativeC = getLayerNativeCanvas(layer);
+        ctx.drawImage(nativeC, layer.x, layer.y, layer.w, layer.h);
       }
 
-      // Tile grid overlay + #idx labels
-      if (tilesetGridVisible) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-        ctx.lineWidth = 1 / zoom;
-        ctx.beginPath();
-        for (let c = 0; c <= tilesetCols; c++) {
-          const xPos = c * tileDim;
-          ctx.moveTo(xPos, 0);
-          ctx.lineTo(xPos, tilesetDimY);
-        }
-        for (let r = 0; r <= tilesetRows; r++) {
-          const yPos = r * tileDim;
-          ctx.moveTo(0, yPos);
-          ctx.lineTo(tilesetDimX, yPos);
-        }
-        ctx.stroke();
-
-        if (tileDim * zoom >= 24) {
-          const fontPx = Math.max(7, Math.min(11, Math.round(10 / zoom * 1)));
-          ctx.font = `bold ${Math.max(4, Math.round(9 / Math.max(0.6, Math.min(2.2, zoom * 0.35))))}px monospace`;
-          ctx.textBaseline = 'top';
-          for (let r = 0; r < tilesetRows; r++) {
-            for (let c = 0; c < tilesetCols; c++) {
-              const idx = r * tilesetCols + c;
-              const tx = c * tileDim + 2 / Math.max(1, zoom * 0.5);
-              const ty = r * tileDim + 1.5 / Math.max(1, zoom * 0.5);
-              ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-              ctx.fillText(`#${idx}`, tx + 0.4, ty + 0.4);
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
-              ctx.fillText(`#${idx}`, tx, ty);
-            }
+      if (tilesetGuidesVisible) {
+        // 1px pixel subgrid when zoomed in deeply
+        if (zoom >= 6) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.lineWidth = 1 / zoom;
+          ctx.beginPath();
+          for (let px = 1; px < tilesetDimX; px++) {
+            ctx.moveTo(px, 0);
+            ctx.lineTo(px, tilesetDimY);
           }
-          void fontPx;
+          for (let py = 1; py < tilesetDimY; py++) {
+            ctx.moveTo(0, py);
+            ctx.lineTo(tilesetDimX, py);
+          }
+          ctx.stroke();
         }
-      }
 
-      // Subtle borders for registered studio stamps
-      if (studioStamps.length > 0 && tilesetGridVisible) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
-        ctx.lineWidth = 1.2 / zoom;
-        ctx.setLineDash([3 / zoom, 3 / zoom]);
-        for (const st of studioStamps) {
-          if (st.tiles.length === 0) continue;
-          const firstIdx = st.tiles[0];
-          const sc = firstIdx % tilesetCols;
-          const sr = Math.floor(firstIdx / tilesetCols);
-          ctx.strokeRect(sc * tileDim, sr * tileDim, st.width * tileDim, st.height * tileDim);
-        }
-        ctx.restore();
-      }
+        // Tile grid overlay + compact corner #idx labels
+        if (tilesetGridVisible) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+          ctx.lineWidth = 1 / zoom;
+          ctx.beginPath();
+          for (let c = 0; c <= tilesetCols; c++) {
+            const xPos = c * tileDim;
+            ctx.moveTo(xPos, 0);
+            ctx.lineTo(xPos, tilesetDimY);
+          }
+          for (let r = 0; r <= tilesetRows; r++) {
+            const yPos = r * tileDim;
+            ctx.moveTo(0, yPos);
+            ctx.lineTo(tilesetDimX, yPos);
+          }
+          ctx.stroke();
 
-      // Selected tile/block outline
-      const selX = selectedTilesetSlot.col * tileDim;
-      const selY = selectedTilesetSlot.row * tileDim;
-      const selW = selectedTilesetSlot.w * tileDim;
-      const selH = selectedTilesetSlot.h * tileDim;
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 2 / zoom;
-      ctx.strokeRect(selX, selY, selW, selH);
-
-      // Staged Draft overlay (created pattern ready to position & stamp)
-      if (showStagedDraft && stagedPreviewCanvasesRef.current.length > 0) {
-        const draftX = stagedSlot.col * tileDim;
-        const draftY = stagedSlot.row * tileDim;
-        const draftW = builderOutCols * tileDim;
-        const draftH = builderOutRows * tileDim;
-
-        if (traceLayerVisible && traceLayerOpacity > 0) {
-          ctx.save();
-          ctx.globalAlpha = traceLayerOpacity / 100;
-          for (let r = 0; r < builderOutRows; r++) {
-            for (let c = 0; c < builderOutCols; c++) {
-              const tileC = stagedPreviewCanvasesRef.current[r * builderOutCols + c];
-              if (tileC) {
-                ctx.drawImage(
-                  tileC,
-                  (stagedSlot.col + c) * tileDim,
-                  (stagedSlot.row + r) * tileDim,
-                  tileDim,
-                  tileDim,
-                );
+          if (tileDim * zoom >= 28) {
+            const cornerFont = Math.max(3.5, Math.min(8, 7 / zoom));
+            ctx.font = `bold ${cornerFont.toFixed(1)}px monospace`;
+            ctx.textBaseline = 'top';
+            for (let r = 0; r < tilesetRows; r++) {
+              for (let c = 0; c < tilesetCols; c++) {
+                const idx = r * tilesetCols + c;
+                const tx = c * tileDim + 2 / zoom;
+                const ty = r * tileDim + 1.5 / zoom;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                ctx.fillText(`#${idx}`, tx + 0.5 / zoom, ty + 0.5 / zoom);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+                ctx.fillText(`#${idx}`, tx, ty);
               }
             }
           }
+        }
+
+        // Subtle borders for registered studio stamps
+        if (studioStamps.length > 0 && tilesetGridVisible) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
+          ctx.lineWidth = 1.2 / zoom;
+          ctx.setLineDash([3 / zoom, 3 / zoom]);
+          for (const st of studioStamps) {
+            if (st.tiles.length === 0) continue;
+            const firstIdx = st.tiles[0];
+            const sc = firstIdx % tilesetCols;
+            const sr = Math.floor(firstIdx / tilesetCols);
+            ctx.strokeRect(sc * tileDim, sr * tileDim, st.width * tileDim, st.height * tileDim);
+          }
           ctx.restore();
         }
 
-        ctx.strokeStyle = '#be1e2d';
-        ctx.lineWidth = 2 / zoom;
-        ctx.strokeRect(draftX, draftY, draftW, draftH);
+        // Unselected layer outlines + active selected layer with 8 Create-style resize handles
+        for (const layer of outputLayers) {
+          if (layer.id === selectedOutputLayerId) continue;
+          ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';
+          ctx.lineWidth = 1.1 / zoom;
+          ctx.setLineDash([3 / zoom, 3 / zoom]);
+          ctx.strokeRect(layer.x, layer.y, layer.w, layer.h);
+          ctx.setLineDash([]);
+        }
 
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2 / zoom;
-        ctx.setLineDash([4 / zoom, 4 / zoom]);
-        ctx.strokeRect(draftX, draftY, draftW, draftH);
-        ctx.setLineDash([]);
+        const activeLayer = outputLayers.find((l) => l.id === selectedOutputLayerId) ?? null;
+        if (activeLayer) {
+          drawBoxSelectionHandles(
+            ctx,
+            activeLayer,
+            zoom,
+            '#10b981',
+            tilesetTool === 'position',
+          );
 
-        if (tileDim * zoom >= 16) {
-          ctx.save();
-          ctx.font = `bold ${Math.max(5, Math.min(12, 10 / Math.max(0.5, zoom * 0.45)))}px sans-serif`;
-          ctx.fillStyle = 'rgba(190, 30, 45, 0.9)';
-          const tag = `DRAFT (${stagedSlot.col},${stagedSlot.row})`;
-          const m = ctx.measureText(tag);
-          const tagH = Math.max(8, 12 / Math.max(0.6, zoom * 0.45));
-          ctx.fillRect(draftX, Math.max(0, draftY - tagH - 1), m.width + 6, tagH);
-          ctx.fillStyle = '#ffffff';
-          ctx.textBaseline = 'top';
-          ctx.fillText(tag, draftX + 3, Math.max(0, draftY - tagH));
-          ctx.restore();
+          if (tileDim * zoom >= 14) {
+            ctx.save();
+            const badgeFont = Math.max(4.5, Math.min(9.5, 9 / zoom));
+            ctx.font = `bold ${badgeFont.toFixed(1)}px sans-serif`;
+            const tag = `${activeLayer.name} (${activeLayer.x},${activeLayer.y} ${activeLayer.w}×${activeLayer.h})`;
+            const m = ctx.measureText(tag);
+            const padX = 4 / zoom;
+            const tagH = Math.max(6, 12 / zoom);
+            const tagY = activeLayer.y >= tagH + 2 / zoom ? activeLayer.y - tagH - 1 / zoom : activeLayer.y + 1 / zoom;
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.92)';
+            ctx.fillRect(activeLayer.x, tagY, m.width + padX * 2, tagH);
+            ctx.fillStyle = '#ffffff';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(tag, activeLayer.x + padX, tagY + tagH / 2);
+            ctx.restore();
+          }
+        } else {
+          // Selected base tile/block outline when no floating pattern layer is active
+          const selX = selectedTilesetSlot.col * tileDim;
+          const selY = selectedTilesetSlot.row * tileDim;
+          const selW = selectedTilesetSlot.w * tileDim;
+          const selH = selectedTilesetSlot.h * tileDim;
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 1.8 / zoom;
+          ctx.strokeRect(selX, selY, selW, selH);
+        }
+
+        // Hover / Move-Swap target highlight for base slots
+        if (tilesetHoverSlot && (!selectedOutputLayerId || tilesetTool === 'move')) {
+          const isDraggingMove = dragModeRef.current === 'ts-move' && tilesetDragOriginRef.current;
+          const hw = (isDraggingMove ? tilesetDragOriginRef.current!.w : 1) * tileDim;
+          const hh = (isDraggingMove ? tilesetDragOriginRef.current!.h : 1) * tileDim;
+          const hx = Math.min(tilesetCols - hw / tileDim, Math.max(0, tilesetHoverSlot.col)) * tileDim;
+          const hy = Math.min(tilesetRows - hh / tileDim, Math.max(0, tilesetHoverSlot.row)) * tileDim;
+          ctx.strokeStyle = isDraggingMove ? '#34d399' : 'rgba(255, 255, 255, 0.6)';
+          ctx.lineWidth = (isDraggingMove ? 2.2 : 1.1) / zoom;
+          ctx.strokeRect(hx, hy, hw, hh);
         }
       }
 
-      // Hover / Move-Swap target highlight
-      if (tilesetHoverSlot) {
-        const isDraggingMove = dragModeRef.current === 'ts-move' && tilesetDragOriginRef.current;
-        const hw = (isDraggingMove ? tilesetDragOriginRef.current!.w : 1) * tileDim;
-        const hh = (isDraggingMove ? tilesetDragOriginRef.current!.h : 1) * tileDim;
-        const hx = Math.min(tilesetCols - (hw / tileDim), Math.max(0, tilesetHoverSlot.col)) * tileDim;
-        const hy = Math.min(tilesetRows - (hh / tileDim), Math.max(0, tilesetHoverSlot.row)) * tileDim;
-        ctx.strokeStyle = isDraggingMove ? '#34d399' : 'rgba(255, 255, 255, 0.7)';
-        ctx.lineWidth = (isDraggingMove ? 2.2 : 1.2) / zoom;
-        ctx.strokeRect(hx, hy, hw, hh);
+      // Drag-from-Library live snapped drop ghost preview
+      if (dropPreview) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.22)';
+        ctx.fillRect(dropPreview.x, dropPreview.y, dropPreview.w, dropPreview.h);
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 2 / zoom;
+        ctx.setLineDash([4 / zoom, 3 / zoom]);
+        ctx.strokeRect(dropPreview.x, dropPreview.y, dropPreview.w, dropPreview.h);
+        ctx.setLineDash([]);
+        ctx.restore();
       }
 
       ctx.restore();
@@ -1284,37 +1573,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       }
 
       // Frame border & 8 resize handles
-      ctx.strokeStyle = '#be1e2d';
-      ctx.lineWidth = 2 / zoom;
-      ctx.strokeRect(crop.x, crop.y, crop.w, crop.h);
-
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1 / zoom;
-      ctx.setLineDash([4 / zoom, 4 / zoom]);
-      ctx.strokeRect(crop.x, crop.y, crop.w, crop.h);
-      ctx.setLineDash([]);
-
-      if (activeTool === 'frame') {
-        const hs = Math.max(4, 7 / zoom);
-        const half = hs / 2;
-        const handles: Array<[number, number]> = [
-          [crop.x, crop.y],
-          [crop.x + crop.w / 2, crop.y],
-          [crop.x + crop.w, crop.y],
-          [crop.x + crop.w, crop.y + crop.h / 2],
-          [crop.x + crop.w, crop.y + crop.h],
-          [crop.x + crop.w / 2, crop.y + crop.h],
-          [crop.x, crop.y + crop.h],
-          [crop.x, crop.y + crop.h / 2],
-        ];
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#be1e2d';
-        ctx.lineWidth = 1.5 / zoom;
-        for (const [hx, hy] of handles) {
-          ctx.fillRect(hx - half, hy - half, hs, hs);
-          ctx.strokeRect(hx - half, hy - half, hs, hs);
-        }
-      }
+      drawBoxSelectionHandles(ctx, crop, zoom, '#be1e2d', activeTool === 'frame');
     }
 
     ctx.restore();
@@ -1350,17 +1609,19 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     tilesetDimY,
     tilesetVersion,
     tilesetGridVisible,
+    tilesetGuidesVisible,
     tilesetTool,
     tilesetHoverSlot,
     selectedTilesetSlot,
-    stagedSlot,
-    showStagedDraft,
+    outputLayers,
+    selectedOutputLayerId,
+    dropPreview,
     studioStamps,
     useSampleBrush,
   ]);
 
-  // Convert pointer event to floating and clamped pixel coords in active sheet space (Reference or Output Tileset)
-  const canvasToImageCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  // Convert pointer/drag client coordinates to floating and clamped pixel coords in active sheet space
+  const clientToSheetCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     const sheetW = activeSheetW;
     const sheetH = activeSheetH;
@@ -1368,8 +1629,8 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     const rect = canvas.getBoundingClientRect();
     const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
     const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
-    const cx = (e.clientX - rect.left) * scaleX;
-    const cy = (e.clientY - rect.top) * scaleY;
+    const cx = (clientX - rect.left) * scaleX;
+    const cy = (clientY - rect.top) * scaleY;
 
     const ox = (cx - (canvas.width / 2 + pan.x)) / zoom + sheetW / 2;
     const oy = (cy - (canvas.height / 2 + pan.y)) / zoom + sheetH / 2;
@@ -1382,6 +1643,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     };
   };
 
+  const canvasToImageCoords = (e: React.PointerEvent<HTMLCanvasElement>) =>
+    clientToSheetCoords(e.clientX, e.clientY);
+
   const imageToTraceCell = (ox: number, oy: number) => {
     if (crop.w <= 0 || crop.h <= 0) return null;
     if (ox < crop.x || ox >= crop.x + crop.w || oy < crop.y || oy >= crop.y + crop.h) return null;
@@ -1390,15 +1654,27 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     return { gx, gy };
   };
 
-  const imageToOutputDraftCell = (ox: number, oy: number) => {
-    if (!showStagedDraft) return null;
-    const x0 = stagedSlot.col * tileDim;
-    const y0 = stagedSlot.row * tileDim;
-    const w = builderOutCols * tileDim;
-    const h = builderOutRows * tileDim;
-    if (ox < x0 || ox >= x0 + w || oy < y0 || oy >= y0 + h) return null;
-    const gx = Math.min(builderW - 1, Math.max(0, Math.floor(((ox - x0) / w) * builderW)));
-    const gy = Math.min(builderH - 1, Math.max(0, Math.floor(((oy - y0) / h) * builderH)));
+  const findHitOutputLayer = (ox: number, oy: number): OutputPlacedPattern | null => {
+    for (let i = outputLayers.length - 1; i >= 0; i--) {
+      const l = outputLayers[i];
+      if (ox >= l.x && ox <= l.x + l.w && oy >= l.y && oy <= l.y + l.h) {
+        return l;
+      }
+    }
+    return null;
+  };
+
+  const imageToOutputLayerCell = (layer: OutputPlacedPattern, ox: number, oy: number) => {
+    if (layer.w <= 0 || layer.h <= 0) return null;
+    if (ox < layer.x || ox >= layer.x + layer.w || oy < layer.y || oy >= layer.y + layer.h) return null;
+    const gx = Math.min(
+      layer.gridWidth - 1,
+      Math.max(0, Math.floor(((ox - layer.x) / layer.w) * layer.gridWidth)),
+    );
+    const gy = Math.min(
+      layer.gridHeight - 1,
+      Math.max(0, Math.floor(((oy - layer.y) / layer.h) * layer.gridHeight)),
+    );
     return { gx, gy };
   };
 
@@ -1412,34 +1688,8 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     };
   };
 
-  const hitTestCropAction = (ox: number, oy: number): CropHoverAction => {
-    if (crop.w <= 0 || crop.h <= 0) return null;
-    const tol = Math.max(5, Math.round(7 / zoom));
-    const left = crop.x;
-    const right = crop.x + crop.w;
-    const top = crop.y;
-    const bottom = crop.y + crop.h;
-
-    if (ox < left - tol || ox > right + tol || oy < top - tol || oy > bottom + tol) {
-      return null;
-    }
-
-    const nearLeft = Math.abs(ox - left) <= tol;
-    const nearRight = Math.abs(ox - right) <= tol;
-    const nearTop = Math.abs(oy - top) <= tol;
-    const nearBottom = Math.abs(oy - bottom) <= tol;
-
-    if (nearTop && nearLeft) return 'nw';
-    if (nearTop && nearRight) return 'ne';
-    if (nearBottom && nearLeft) return 'sw';
-    if (nearBottom && nearRight) return 'se';
-    if (nearTop) return 'n';
-    if (nearBottom) return 's';
-    if (nearLeft) return 'w';
-    if (nearRight) return 'e';
-    if (ox >= left && ox < right && oy >= top && oy < bottom) return 'move';
-    return null;
-  };
+  const hitTestCropAction = (ox: number, oy: number): CropHoverAction =>
+    hitTestBoxAction(crop, ox, oy, zoom);
 
   const paintTraceCell = (gx: number, gy: number, value: number) => {
     setBuilderGrid((prev) => {
@@ -1556,17 +1806,40 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   };
 
   const paintTilesetAtCoords = (ox: number, oy: number, erase: boolean) => {
-    const draftCell = imageToOutputDraftCell(ox, oy);
-    if (draftCell) {
-      setHoveredCell(draftCell);
-      if (erase) {
-        paintTraceCell(draftCell.gx, draftCell.gy, -1);
-      } else if (useSampleBrush) {
-        paintSampleCellAt(draftCell.gx, draftCell.gy);
-      } else {
-        paintTraceCell(draftCell.gx, draftCell.gy, activeColorIdx);
+    const activeLayer =
+      (selectedOutputLayerId ? outputLayers.find((l) => l.id === selectedOutputLayerId) : null) ??
+      findHitOutputLayer(ox, oy);
+    if (activeLayer) {
+      const layerCell = imageToOutputLayerCell(activeLayer, ox, oy);
+      if (layerCell) {
+        const activeHex = builderPalette[activeColorIdx] || '#be1e2d';
+        setOutputLayers((prev) =>
+          prev.map((l) => {
+            if (l.id !== activeLayer.id) return l;
+            const idx = layerCell.gy * l.gridWidth + layerCell.gx;
+            if (idx < 0 || idx >= l.grid.length) return l;
+            let nextPalette = l.palette;
+            let nextVal = -1;
+            if (!erase) {
+              nextVal = l.palette.indexOf(activeHex);
+              if (nextVal < 0) {
+                nextPalette = [...l.palette, activeHex];
+                nextVal = nextPalette.length - 1;
+              }
+            }
+            if (l.grid[idx] === nextVal && nextPalette === l.palette) return l;
+            if (!tilesetPaintSavedRef.current) {
+              pushTilesetUndo();
+              tilesetPaintSavedRef.current = true;
+            }
+            const nextGrid = [...l.grid];
+            nextGrid[idx] = nextVal;
+            return { ...l, palette: nextPalette, grid: nextGrid };
+          }),
+        );
+        setTilesetHasEdits(true);
+        return;
       }
-      return;
     }
 
     const work = tilesetWorkCanvasRef.current;
@@ -1606,6 +1879,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       dragModeRef.current = 'none';
       strokeSavedRef.current = false;
       tilesetPaintSavedRef.current = false;
+      tilesetLayerDragSavedRef.current = false;
       tilesetDragOriginRef.current = null;
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -1636,15 +1910,17 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       setTilesetHoverSlot(slotHit.inside ? { col: slotHit.col, row: slotHit.row } : null);
 
       if (tilesetTool === 'eyedropper' || (e.altKey && (tilesetTool === 'pencil' || tilesetTool === 'eraser'))) {
-        const draftCell = imageToOutputDraftCell(ox, oy);
-        if (draftCell && showStagedDraft) {
-          const idx = builderGrid[draftCell.gy * builderW + draftCell.gx];
-          if (idx !== undefined && idx >= 0 && idx < builderPalette.length) {
-            setUseSampleBrush(false);
-            setActiveColorIdx(idx);
-            setTilesetTool('pencil');
-            setStatusMsg(`Picked draft swatch #${idx + 1} (${builderPalette[idx]})`);
-            return;
+        const hitLayer = findHitOutputLayer(ox, oy);
+        if (hitLayer) {
+          const lc = imageToOutputLayerCell(hitLayer, ox, oy);
+          if (lc) {
+            const idx = hitLayer.grid[lc.gy * hitLayer.gridWidth + lc.gx];
+            if (idx !== undefined && idx >= 0 && idx < hitLayer.palette.length) {
+              selectOrAddPaletteHex(hitLayer.palette[idx]);
+              setTilesetTool('pencil');
+              setStatusMsg(`Picked ${hitLayer.palette[idx]} from "${hitLayer.name}"`);
+              return;
+            }
           }
         }
         const hex = samplePixelHexFromCanvas(tilesetWorkCanvasRef.current, Math.floor(ox), Math.floor(oy));
@@ -1659,23 +1935,53 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       }
 
       if (tilesetTool === 'position') {
-        const nextCol = Math.max(0, Math.min(Math.max(0, tilesetCols - builderOutCols), slotHit.col));
-        const nextRow = Math.max(0, Math.min(Math.max(0, tilesetRows - builderOutRows), slotHit.row));
-        setShowStagedDraft(true);
-        setStagedSlot({ col: nextCol, row: nextRow });
-        setSelectedTilesetSlot({
-          col: nextCol,
-          row: nextRow,
-          w: builderOutCols,
-          h: builderOutRows,
-        });
-        isDraggingRef.current = true;
-        dragModeRef.current = 'ts-position';
-        e.currentTarget.setPointerCapture(e.pointerId);
+        const activeLayer = selectedOutputLayerId
+          ? outputLayers.find((l) => l.id === selectedOutputLayerId) ?? null
+          : null;
+        const activeHit = activeLayer && !e.metaKey && !e.ctrlKey
+          ? hitTestBoxAction(activeLayer, ox, oy, zoom)
+          : null;
+
+        if (activeLayer && activeHit && activeHit !== 'move') {
+          isDraggingRef.current = true;
+          dragModeRef.current = 'ts-layer-resize';
+          tilesetLayerDragSavedRef.current = false;
+          outputLayerResizeRef.current = {
+            layerId: activeLayer.id,
+            handle: activeHit,
+            orig: { x: activeLayer.x, y: activeLayer.y, w: activeLayer.w, h: activeLayer.h },
+          };
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+
+        const hitLayer = findHitOutputLayer(ox, oy);
+        if (hitLayer) {
+          setSelectedOutputLayerId(hitLayer.id);
+          isDraggingRef.current = true;
+          dragModeRef.current = 'ts-layer-move';
+          tilesetLayerDragSavedRef.current = false;
+          outputLayerMoveRef.current = {
+            layerId: hitLayer.id,
+            dx: ox - hitLayer.x,
+            dy: oy - hitLayer.y,
+            w: hitLayer.w,
+            h: hitLayer.h,
+          };
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+
+        setSelectedOutputLayerId(null);
+        setTilesetHoverAction(null);
+        if (slotHit.inside) {
+          setSelectedTilesetSlot({ col: slotHit.col, row: slotHit.row, w: 1, h: 1 });
+        }
         return;
       }
 
       if (tilesetTool === 'move') {
+        setSelectedOutputLayerId(null);
         const insideSel =
           slotHit.col >= selectedTilesetSlot.col &&
           slotHit.col < selectedTilesetSlot.col + selectedTilesetSlot.w &&
@@ -1698,7 +2004,11 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         strokeSavedRef.current = false;
         tilesetPaintSavedRef.current = false;
         const erase = e.button === 2 || tilesetTool === 'eraser';
-        if (!imageToOutputDraftCell(ox, oy) && slotHit.inside) {
+        const hitLayer = findHitOutputLayer(ox, oy);
+        if (hitLayer) {
+          setSelectedOutputLayerId(hitLayer.id);
+        } else if (slotHit.inside) {
+          setSelectedOutputLayerId(null);
           setSelectedTilesetSlot({ col: slotHit.col, row: slotHit.row, w: 1, h: 1 });
         }
         paintTilesetAtCoords(ox, oy, erase);
@@ -1908,18 +2218,68 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         setTilesetHoverSlot(null);
       }
 
-      if (!isDraggingRef.current) return;
+      if (!isDraggingRef.current) {
+        if (tilesetTool === 'position') {
+          const activeLayer = selectedOutputLayerId
+            ? outputLayers.find((l) => l.id === selectedOutputLayerId) ?? null
+            : null;
+          let nextAction: CropHoverAction = activeLayer
+            ? hitTestBoxAction(activeLayer, ox, oy, zoom)
+            : null;
+          if (!nextAction && findHitOutputLayer(ox, oy)) {
+            nextAction = 'move';
+          }
+          if (nextAction !== tilesetHoverAction) {
+            setTilesetHoverAction(nextAction);
+          }
+        } else if (tilesetHoverAction !== null) {
+          setTilesetHoverAction(null);
+        }
+        return;
+      }
 
-      if (dragModeRef.current === 'ts-position') {
-        const nextCol = Math.max(0, Math.min(Math.max(0, tilesetCols - builderOutCols), slotHit.col));
-        const nextRow = Math.max(0, Math.min(Math.max(0, tilesetRows - builderOutRows), slotHit.row));
-        setStagedSlot({ col: nextCol, row: nextRow });
-        setSelectedTilesetSlot({
-          col: nextCol,
-          row: nextRow,
-          w: builderOutCols,
-          h: builderOutRows,
-        });
+      if (dragModeRef.current === 'ts-layer-resize') {
+        if (!tilesetLayerDragSavedRef.current) {
+          pushTilesetUndo();
+          tilesetLayerDragSavedRef.current = true;
+        }
+        const { layerId, handle, orig } = outputLayerResizeRef.current;
+        const snap = e.altKey ? 1 : Math.max(1, outputSnapGrid);
+        const nextBox = resizeBoxWithHandle(
+          orig,
+          handle,
+          Math.round(ox),
+          Math.round(oy),
+          tilesetDimX,
+          tilesetDimY,
+          snap,
+          8,
+          e.shiftKey,
+        );
+        setOutputLayers((prev) =>
+          prev.map((l) => (l.id === layerId ? { ...l, ...nextBox } : l)),
+        );
+        setTilesetHasEdits(true);
+        return;
+      }
+
+      if (dragModeRef.current === 'ts-layer-move') {
+        if (!tilesetLayerDragSavedRef.current) {
+          pushTilesetUndo();
+          tilesetLayerDragSavedRef.current = true;
+        }
+        const { layerId, dx, dy, w, h } = outputLayerMoveRef.current;
+        const snap = e.altKey ? 1 : Math.max(1, outputSnapGrid);
+        const rawX = ox - dx;
+        const rawY = oy - dy;
+        const snappedX = Math.round(rawX / snap) * snap;
+        const snappedY = Math.round(rawY / snap) * snap;
+        const nextX = Math.max(0, Math.min(Math.max(0, tilesetDimX - w), snappedX));
+        const nextY = Math.max(0, Math.min(Math.max(0, tilesetDimY - h), snappedY));
+        setOutputLayers((prev) =>
+          prev.map((l) => (l.id === layerId ? { ...l, x: nextX, y: nextY } : l)),
+        );
+        setTilesetHasEdits(true);
         return;
       }
 
@@ -1974,26 +2334,10 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
 
     if (dragModeRef.current === 'resize') {
       const { handle, orig } = resizeStartRef.current;
-      const minSize = 8;
-      let left = orig.x;
-      let top = orig.y;
-      let right = orig.x + orig.w;
-      let bottom = orig.y + orig.h;
-
-      const snapVal = (v: number) =>
-        e.shiftKey && snapGrid > 0 ? Math.round(v / snapGrid) * snapGrid : v;
-
-      if (handle.includes('w')) left = Math.max(0, Math.min(right - minSize, snapVal(x)));
-      if (handle.includes('e')) right = Math.min(imgWidth, Math.max(left + minSize, snapVal(x + 1)));
-      if (handle.includes('n')) top = Math.max(0, Math.min(bottom - minSize, snapVal(y)));
-      if (handle.includes('s')) bottom = Math.min(imgHeight, Math.max(top + minSize, snapVal(y + 1)));
-
-      setCrop({
-        x: left,
-        y: top,
-        w: Math.max(minSize, right - left),
-        h: Math.max(minSize, bottom - top),
-      });
+      const snap = e.shiftKey && snapGrid > 0 ? snapGrid : 1;
+      const rawX = handle.includes('e') ? x + 1 : x;
+      const rawY = handle.includes('s') ? y + 1 : y;
+      setCrop(resizeBoxWithHandle(orig, handle, rawX, rawY, imgWidth, imgHeight, snap, 8, false));
       return;
     }
 
@@ -2065,6 +2409,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     dragModeRef.current = 'none';
     strokeSavedRef.current = false;
     tilesetPaintSavedRef.current = false;
+    tilesetLayerDragSavedRef.current = false;
     tilesetDragOriginRef.current = null;
   };
 
@@ -2121,6 +2466,12 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       height: work.height,
       data: ctx.getImageData(0, 0, work.width, work.height),
       stamps: studioStamps.map((s) => ({ ...s, tiles: [...s.tiles] })),
+      outputLayers: outputLayers.map((l) => ({
+        ...l,
+        palette: [...l.palette],
+        grid: [...l.grid],
+      })),
+      selectedOutputLayerId,
     };
     tilesetUndoStackRef.current = [...tilesetUndoStackRef.current.slice(-24), snap];
     setTilesetUndoCount(tilesetUndoStackRef.current.length);
@@ -2142,6 +2493,8 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setTilesetDimX(snap.width);
     setTilesetDimY(snap.height);
     setStudioStamps(snap.stamps);
+    setOutputLayers(snap.outputLayers);
+    setSelectedOutputLayerId(snap.selectedOutputLayerId);
     setTilesetVersion((v) => v + 1);
     setStatusMsg('Undid Output Tileset edit');
   };
@@ -2204,7 +2557,6 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
       setTilesetHasEdits(false);
       setStudioStamps(initialStamps.map((s) => ({ ...s, tiles: [...s.tiles] })));
       const nextSlot = findFirstEmptyTileBlock(canvas, tileDim, builderOutCols, builderOutRows);
-      setStagedSlot(nextSlot);
       setSelectedTilesetSlot({ ...nextSlot, w: 1, h: 1 });
       setTilesetVersion((v) => v + 1);
       setCanvasViewMode('tileset');
@@ -2275,13 +2627,164 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     setStatusMsg(`Added ${rowsToAdd} empty tile row (${work.width}×${nextH}px)`);
   };
 
-  const handleSnapDraftNextEmpty = () => {
+  const expandTilesetRowsIfNeeded = (neededRows: number): HTMLCanvasElement => {
     const work = tilesetWorkCanvasRef.current || ensureBlankTilesetCanvas(8, 4);
-    const slot = findFirstEmptyTileBlock(work, tileDim, builderOutCols, builderOutRows);
-    setShowStagedDraft(true);
-    setStagedSlot(slot);
-    setSelectedTilesetSlot({ ...slot, w: builderOutCols, h: builderOutRows });
-    setStatusMsg(`Positioned Draft at next open ${builderOutCols}×${builderOutRows} slot (${slot.col}, ${slot.row})`);
+    const curRows = Math.max(1, Math.floor(work.height / tileDim));
+    if (neededRows <= curRows) return work;
+    const nextH = neededRows * tileDim;
+    const nextCanvas = document.createElement('canvas');
+    nextCanvas.width = work.width;
+    nextCanvas.height = nextH;
+    const ctx = nextCanvas.getContext('2d');
+    if (ctx) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(work, 0, 0);
+    }
+    tilesetWorkCanvasRef.current = nextCanvas;
+    setTilesetDimY(nextH);
+    return nextCanvas;
+  };
+
+  const addPatternLayerToOutput = (
+    entry: SavedPatternEntry,
+    options: { dropPos?: { x: number; y: number }; switchView?: boolean } = {},
+  ): OutputPlacedPattern => {
+    const work = tilesetWorkCanvasRef.current || ensureBlankTilesetCanvas(8, 4);
+    pushTilesetUndo();
+    const cols = Math.max(1, Math.floor(work.width / tileDim));
+    const rows = Math.max(1, Math.floor(work.height / tileDim));
+    const w = Math.max(8, (entry.outCols || 1) * tileDim);
+    const h = Math.max(8, (entry.outRows || 1) * tileDim);
+
+    let x = options.dropPos?.x;
+    let y = options.dropPos?.y;
+    let finalRows = rows;
+    if (x === undefined || y === undefined) {
+      const slot = findOpenSlotForOutputBox(
+        outputLayers,
+        cols,
+        rows,
+        tileDim,
+        w,
+        h,
+        (c, r) => isBaseTileOccupied(work, tileDim, c, r),
+      );
+      x = slot.x;
+      y = slot.y;
+      finalRows = slot.requiredRows;
+      if (finalRows > rows) {
+        expandTilesetRowsIfNeeded(finalRows);
+      }
+    } else {
+      x = Math.max(0, Math.min(Math.max(0, work.width - w), x));
+      y = Math.max(0, Math.min(Math.max(0, work.height - h), y));
+    }
+
+    const layer: OutputPlacedPattern = {
+      id: `out-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      sourcePatternId: entry.id,
+      name: entry.name,
+      x,
+      y,
+      w,
+      h,
+      gridWidth: entry.gridWidth,
+      gridHeight: entry.gridHeight,
+      palette: [...entry.palette],
+      grid: [...entry.grid],
+      layer: targetLayer,
+      blocksMovement,
+    };
+
+    const nextCount = outputLayers.length + 1;
+    setOutputLayers((prev) => [...prev, layer]);
+    setSelectedOutputLayerId(layer.id);
+    setTilesetTool('position');
+    setTilesetHasEdits(true);
+
+    const switchView = options.switchView ?? true;
+    const sheetH = finalRows * tileDim;
+    if (switchView && canvasViewMode !== 'tileset') {
+      setCanvasViewMode('tileset');
+      fitTilesetToViewport(work.width, sheetH);
+    } else if (finalRows > rows) {
+      fitTilesetToViewport(work.width, sheetH);
+    }
+
+    setStatusMsg(
+      `Added "${entry.name}" to Output Tileset at (${x}, ${y}) [${nextCount} active ${nextCount === 1 ? 'pattern' : 'patterns'}]`,
+    );
+    return layer;
+  };
+
+  const getDraggedPatternEntry = (e?: React.DragEvent): SavedPatternEntry | null => {
+    if (draggingLibEntryRef.current) return draggingLibEntryRef.current;
+    if (!e) return null;
+    const id =
+      e.dataTransfer.getData('application/x-selo-pattern') ||
+      e.dataTransfer.getData('text/plain');
+    return patternLibrary.find((p) => p.id === id) ?? null;
+  };
+
+  const handleCanvasDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    const entry = getDraggedPatternEntry(e);
+    if (!entry) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+
+    const w = Math.max(8, (entry.outCols || 1) * tileDim);
+    const h = Math.max(8, (entry.outRows || 1) * tileDim);
+
+    if (canvasViewMode === 'tileset') {
+      const { ox, oy } = clientToSheetCoords(e.clientX, e.clientY);
+      const snap = e.altKey ? 1 : Math.max(1, outputSnapGrid);
+      const rawX = ox - w / 2;
+      const rawY = oy - h / 2;
+      const sx = Math.max(0, Math.min(Math.max(0, tilesetDimX - w), Math.round(rawX / snap) * snap));
+      const sy = Math.max(0, Math.min(Math.max(0, tilesetDimY - h), Math.round(rawY / snap) * snap));
+      if (
+        !dropPreview ||
+        dropPreview.x !== sx ||
+        dropPreview.y !== sy ||
+        dropPreview.w !== w ||
+        dropPreview.h !== h ||
+        dropPreview.name !== entry.name
+      ) {
+        setDropPreview({ x: sx, y: sy, w, h, name: entry.name });
+      }
+    } else if (!dropPreview || dropPreview.name !== entry.name) {
+      setDropPreview({ x: 0, y: 0, w, h, name: entry.name });
+    }
+  };
+
+  const handleCanvasDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDropPreview(null);
+  };
+
+  const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const entry = getDraggedPatternEntry(e);
+    if (!entry) {
+      setDropPreview(null);
+      return;
+    }
+    e.preventDefault();
+    const w = Math.max(8, (entry.outCols || 1) * tileDim);
+    const h = Math.max(8, (entry.outRows || 1) * tileDim);
+
+    if (canvasViewMode === 'tileset') {
+      const { ox, oy } = clientToSheetCoords(e.clientX, e.clientY);
+      const snap = e.altKey ? 1 : Math.max(1, outputSnapGrid);
+      const rawX = ox - w / 2;
+      const rawY = oy - h / 2;
+      const sx = Math.max(0, Math.min(Math.max(0, tilesetDimX - w), Math.round(rawX / snap) * snap));
+      const sy = Math.max(0, Math.min(Math.max(0, tilesetDimY - h), Math.round(rawY / snap) * snap));
+      addPatternLayerToOutput(entry, { dropPos: { x: sx, y: sy }, switchView: false });
+    } else {
+      addPatternLayerToOutput(entry, { switchView: true });
+    }
+    draggingLibEntryRef.current = null;
+    setDropPreview(null);
   };
 
   const placeCanvasesIntoStudioTileset = async (
@@ -2334,35 +2837,56 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     return { stamp, placed, col: slot.col, row: slot.row };
   };
 
-  const handleCommitDraftToTileset = async () => {
-    setIsProcessing(true);
-    try {
-      const rendered = renderPixelGridToCanvases(
-        builderGrid,
-        builderW,
-        builderH,
-        builderPalette,
-        builderOutCols,
-        builderOutRows,
-        tileDim,
+  const buildStampsFromOutputLayers = (dimX: number, dimY: number): TileMacroStamp[] => {
+    const cols = Math.max(1, Math.floor(dimX / tileDim));
+    const rows = Math.max(1, Math.floor(dimY / tileDim));
+    return outputLayers.map((l) => {
+      const col0 = Math.max(0, Math.min(cols - 1, Math.floor(l.x / tileDim)));
+      const row0 = Math.max(0, Math.min(rows - 1, Math.floor(l.y / tileDim)));
+      const col1 = Math.max(col0, Math.min(cols - 1, Math.floor(Math.max(l.x, l.x + l.w - 1) / tileDim)));
+      const row1 = Math.max(row0, Math.min(rows - 1, Math.floor(Math.max(l.y, l.y + l.h - 1) / tileDim)));
+      const indices: number[] = [];
+      for (let r = row0; r <= row1; r++) {
+        for (let c = col0; c <= col1; c++) {
+          indices.push(r * cols + c);
+        }
+      }
+      return createMacroStampFromIndices(
+        l.name,
+        col1 - col0 + 1,
+        row1 - row0 + 1,
+        indices,
+        l.layer,
+        l.blocksMovement,
       );
-      const { stamp, col, row } = await placeCanvasesIntoStudioTileset(
-        rendered.canvases,
-        builderOutCols,
-        builderOutRows,
-        stampName || `Motif (${builderW}×${builderH})`,
-        stagedSlot.col,
-        stagedSlot.row,
-      );
-      setShowStagedDraft(false);
-      setStatusMsg(
-        `Stamped "${stamp.name}" at (${col}, ${row}) [#${stamp.tiles[0]}..#${stamp.tiles[stamp.tiles.length - 1]}] — live map untouched until Apply`,
-      );
-    } catch (err) {
-      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setIsProcessing(false);
-    }
+    });
+  };
+
+  const handleBakeLayersToBase = () => {
+    if (outputLayers.length === 0) return;
+    pushTilesetUndo();
+    const flattened = composeFlattenedOutputCanvas(true);
+    const bakedStamps = buildStampsFromOutputLayers(flattened.width, flattened.height);
+    tilesetWorkCanvasRef.current = flattened;
+    setStudioStamps((prev) => {
+      const next = [...prev];
+      for (const st of bakedStamps) {
+        const idx = next.findIndex(
+          (s) => s.tiles[0] === st.tiles[0] && s.width === st.width && s.height === st.height,
+        );
+        if (idx >= 0) next[idx] = st;
+        else next.push(st);
+      }
+      return next;
+    });
+    const bakedCount = outputLayers.length;
+    setOutputLayers([]);
+    setSelectedOutputLayerId(null);
+    setTilesetDimX(flattened.width);
+    setTilesetDimY(flattened.height);
+    setTilesetHasEdits(true);
+    setTilesetVersion((v) => v + 1);
+    setStatusMsg(`Baked ${bakedCount} pattern ${bakedCount === 1 ? 'layer' : 'layers'} onto base Output Tileset`);
   };
 
   const handleRepositionTilesetSlots = async (
@@ -2457,98 +2981,127 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   };
 
   const handleDownloadTilesetPng = () => {
-    const work = tilesetWorkCanvasRef.current;
-    if (!work) return;
-    const url = work.toDataURL('image/png');
+    const composed = composeFlattenedOutputCanvas(true);
+    const url = composed.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = url;
-    a.download = `shevitsa-output-tileset-${work.width}x${work.height}.png`;
+    a.download = `shevitsa-output-tileset-${composed.width}x${composed.height}.png`;
     a.click();
-    setStatusMsg(`Exported ${work.width}×${work.height} PNG tileset`);
+    setStatusMsg(`Exported composed ${composed.width}×${composed.height} PNG tileset`);
   };
 
   const handleApplyTilesetToMap = (options: { placeSelected?: boolean } = {}) => {
-    const work = tilesetWorkCanvasRef.current;
-    if (!work) return;
-    const tilesetUrl = work.toDataURL('image/png');
+    const composed = composeFlattenedOutputCanvas(true);
+    const tilesetUrl = composed.toDataURL('image/png');
     let nextMap: VillageMap = map;
 
     for (const remap of pendingTileRemapsRef.current) {
       nextMap = remapTileIndicesInMap(nextMap, remap);
     }
 
-    let nextStamps: TileMacroStamp[] =
+    const layerStamps = buildStampsFromOutputLayers(composed.width, composed.height);
+    const baseStamps =
       tilesetSourceLabel === 'map'
         ? [...studioStamps]
         : studioStamps.length > 0
           ? [...(map.stamps ?? []), ...studioStamps]
           : [...(map.stamps ?? [])];
 
+    const nextStamps = [...baseStamps];
+    for (const st of layerStamps) {
+      const idx = nextStamps.findIndex(
+        (s) => s.tiles[0] === st.tiles[0] && s.width === st.width && s.height === st.height,
+      );
+      if (idx >= 0) nextStamps[idx] = st;
+      else nextStamps.push(st);
+    }
+
     nextMap = {
       ...nextMap,
       tileSetUrl: tilesetUrl,
-      tileSetDimX: work.width,
-      tileSetDimY: work.height,
+      tileSetDimX: composed.width,
+      tileSetDimY: composed.height,
       stamps: nextStamps,
     };
 
+    let placedCount = 0;
     if (options.placeSelected) {
-      const cols = Math.max(1, Math.floor(work.width / tileDim));
-      const indices: number[] = [];
-      for (let r = 0; r < selectedTilesetSlot.h; r++) {
-        for (let c = 0; c < selectedTilesetSlot.w; c++) {
-          indices.push((selectedTilesetSlot.row + r) * cols + (selectedTilesetSlot.col + c));
+      const stampsToPlace: TileMacroStamp[] = [...layerStamps];
+      if (stampsToPlace.length === 0) {
+        const cols = Math.max(1, Math.floor(composed.width / tileDim));
+        const indices: number[] = [];
+        for (let r = 0; r < selectedTilesetSlot.h; r++) {
+          for (let c = 0; c < selectedTilesetSlot.w; c++) {
+            indices.push((selectedTilesetSlot.row + r) * cols + (selectedTilesetSlot.col + c));
+          }
         }
-      }
-      const existingMatch = nextStamps.find(
-        (st) =>
-          st.width === selectedTilesetSlot.w &&
-          st.height === selectedTilesetSlot.h &&
-          st.tiles[0] === indices[0],
-      );
-      const placeStamp =
-        existingMatch ??
-        createMacroStampFromIndices(
-          stampName || `Tile (${selectedTilesetSlot.col},${selectedTilesetSlot.row})`,
-          selectedTilesetSlot.w,
-          selectedTilesetSlot.h,
-          indices,
-          targetLayer,
-          blocksMovement,
+        const existingMatch = nextStamps.find(
+          (st) =>
+            st.width === selectedTilesetSlot.w &&
+            st.height === selectedTilesetSlot.h &&
+            st.tiles[0] === indices[0],
         );
-      if (!existingMatch) {
-        nextStamps = [...nextStamps, placeStamp];
-        nextMap = { ...nextMap, stamps: nextStamps };
+        const fallbackStamp =
+          existingMatch ??
+          createMacroStampFromIndices(
+            stampName || `Tile (${selectedTilesetSlot.col},${selectedTilesetSlot.row})`,
+            selectedTilesetSlot.w,
+            selectedTilesetSlot.h,
+            indices,
+            targetLayer,
+            blocksMovement,
+          );
+        if (!existingMatch) {
+          nextMap = { ...nextMap, stamps: [...nextStamps, fallbackStamp] };
+        }
+        stampsToPlace.push(fallbackStamp);
       }
 
-      const startX = Math.max(0, Math.floor((nextMap.width - placeStamp.width) / 2));
-      const startY = Math.max(0, Math.floor((nextMap.height - placeStamp.height) / 2));
       const nextBg = nextMap.bgTiles.map((l) => l.map((colArr) => [...colArr]));
       const nextObj = nextMap.objectTiles.map((l) => l.map((colArr) => [...colArr]));
       const nextCol = nextMap.collisionGrid.map((colArr) => [...colArr]);
-      const tgtLayer = placeStamp.layer ?? targetLayer;
-      const layerGrid =
-        tgtLayer === 'bg0'
-          ? nextBg[0]
-          : tgtLayer === 'bg1'
-            ? nextBg[1]
-            : tgtLayer === 'obj0'
-              ? nextObj[0]
-              : nextObj[1];
 
-      for (let r = 0; r < placeStamp.height; r++) {
-        for (let c = 0; c < placeStamp.width; c++) {
-          const mapX = startX + c;
-          const mapY = startY + r;
-          const idx = placeStamp.tiles[r * placeStamp.width + c];
-          if (mapX < nextMap.width && mapY < nextMap.height && idx !== undefined) {
-            layerGrid[mapX][mapY] = idx;
-            if (placeStamp.blocksMovement) {
-              nextCol[mapX][mapY] = true;
+      const totalW = stampsToPlace.reduce((acc, s) => acc + s.width, 0) + Math.max(0, stampsToPlace.length - 1);
+      let cursorX = Math.max(1, Math.floor((nextMap.width - Math.min(totalW, nextMap.width - 2)) / 2));
+      let cursorY = Math.max(1, Math.floor(nextMap.height / 2) - 1);
+      let rowMaxH = 1;
+
+      for (const placeStamp of stampsToPlace) {
+        if (cursorX + placeStamp.width >= nextMap.width - 1 && cursorX > 1) {
+          cursorX = 1;
+          cursorY = Math.min(nextMap.height - placeStamp.height, cursorY + rowMaxH + 1);
+          rowMaxH = 1;
+        }
+        const startX = Math.max(0, Math.min(nextMap.width - placeStamp.width, cursorX));
+        const startY = Math.max(0, Math.min(nextMap.height - placeStamp.height, cursorY));
+        const tgtLayer = placeStamp.layer ?? targetLayer;
+        const layerGrid =
+          tgtLayer === 'bg0'
+            ? nextBg[0]
+            : tgtLayer === 'bg1'
+              ? nextBg[1]
+              : tgtLayer === 'obj0'
+                ? nextObj[0]
+                : nextObj[1];
+
+        for (let r = 0; r < placeStamp.height; r++) {
+          for (let c = 0; c < placeStamp.width; c++) {
+            const mapX = startX + c;
+            const mapY = startY + r;
+            const idx = placeStamp.tiles[r * placeStamp.width + c];
+            if (mapX < nextMap.width && mapY < nextMap.height && idx !== undefined) {
+              layerGrid[mapX][mapY] = idx;
+              if (placeStamp.blocksMovement) {
+                nextCol[mapX][mapY] = true;
+              }
             }
           }
         }
+        cursorX = startX + placeStamp.width + 1;
+        rowMaxH = Math.max(rowMaxH, placeStamp.height);
+        placedCount++;
       }
+
       nextMap = {
         ...nextMap,
         bgTiles: nextBg,
@@ -2562,8 +3115,8 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     onApplyMap(nextMap);
     setStatusMsg(
       options.placeSelected
-        ? `Applied Output Tileset (${work.width}×${work.height}) & placed selection on live map!`
-        : `Applied Output Tileset (${work.width}×${work.height}) to live world map!`,
+        ? `Applied composed Output Tileset (${composed.width}×${composed.height}) & placed ${placedCount} ${placedCount === 1 ? 'pattern' : 'patterns'} on live map!`
+        : `Applied composed Output Tileset (${composed.width}×${composed.height}) to live world map!`,
     );
   };
 
@@ -2603,27 +3156,12 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     return entry;
   };
 
-  // Save traced pixel pattern to Library & optionally stage in Output Tileset (NEVER auto-mutates map.tileSetUrl!)
+  // Save traced pixel pattern to Library & optionally add as a non-overwriting layer in Output Tileset
   const handleSaveTracedPattern = (options: { positionInOutput?: boolean } = {}) => {
     const entry = saveCurrentPatternToLibrary();
 
     if (options.positionInOutput) {
-      const work = tilesetWorkCanvasRef.current || ensureBlankTilesetCanvas(8, 4);
-      const slot = findFirstEmptyTileBlock(work, tileDim, builderOutCols, builderOutRows);
-      setShowStagedDraft(true);
-      setStagedSlot(slot);
-      setSelectedTilesetSlot({
-        col: slot.col,
-        row: slot.row,
-        w: builderOutCols,
-        h: builderOutRows,
-      });
-      setTilesetTool('position');
-      setCanvasViewMode('tileset');
-      fitTilesetToViewport(work.width, work.height);
-      setStatusMsg(
-        `Saved "${entry.name}" to Library & staged Draft in Output Tileset — position & edit before Stamp / Apply`,
-      );
+      addPatternLayerToOutput(entry, { switchView: true });
     } else {
       setStatusMsg(`Saved "${entry.name}" to Pattern Library (map tileset unchanged)`);
     }
@@ -2646,7 +3184,6 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         sliced.rows,
         `${stampName || 'Motif'} (Raw)`,
       );
-      setShowStagedDraft(false);
       setCanvasViewMode('tileset');
       fitTilesetToViewport(placed.newDimX, placed.newDimY);
       setStatusMsg(
@@ -2690,7 +3227,6 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
         placedCount++;
       }
 
-      setShowStagedDraft(false);
       setCanvasViewMode('tileset');
       const finalWork = tilesetWorkCanvasRef.current;
       fitTilesetToViewport(finalWork?.width ?? tilesetDimX, finalWork?.height ?? tilesetDimY);
@@ -2735,21 +3271,53 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
   };
 
   const handleStageSavedPatternToOutput = (entry: SavedPatternEntry) => {
-    handleLoadSavedPattern(entry);
+    addPatternLayerToOutput(entry, { switchView: true });
+  };
+
+  const handleEditOutputLayerInCreate = (layer: OutputPlacedPattern) => {
+    pushTraceUndo();
+    setStampName(layer.name);
+    setBuilderW(layer.gridWidth);
+    setBuilderH(layer.gridHeight);
+    setBuilderOutCols(Math.max(1, Math.round(layer.w / tileDim)));
+    setBuilderOutRows(Math.max(1, Math.round(layer.h / tileDim)));
+    setBuilderPalette([...layer.palette]);
+    setBuilderGrid([...layer.grid]);
+    setTraceLayerVisible(true);
+    setInspectorTab('trace');
+    setCanvasViewMode('create');
+    setStatusMsg(`Editing "${layer.name}" in Create mode`);
+  };
+
+  const handleDuplicateOutputLayer = (layer: OutputPlacedPattern) => {
     const work = tilesetWorkCanvasRef.current || ensureBlankTilesetCanvas(8, 4);
-    const slot = findFirstEmptyTileBlock(work, tileDim, entry.outCols, entry.outRows);
-    setShowStagedDraft(true);
-    setStagedSlot(slot);
-    setSelectedTilesetSlot({
-      col: slot.col,
-      row: slot.row,
-      w: entry.outCols,
-      h: entry.outRows,
-    });
-    setTilesetTool('position');
-    setCanvasViewMode('tileset');
-    fitTilesetToViewport(work.width, work.height);
-    setStatusMsg(`Staged "${entry.name}" Draft in Output Tileset at (${slot.col}, ${slot.row})`);
+    pushTilesetUndo();
+    const cols = Math.max(1, Math.floor(work.width / tileDim));
+    const rows = Math.max(1, Math.floor(work.height / tileDim));
+    const slot = findOpenSlotForOutputBox(
+      outputLayers,
+      cols,
+      rows,
+      tileDim,
+      layer.w,
+      layer.h,
+      (c, r) => isBaseTileOccupied(work, tileDim, c, r),
+    );
+    if (slot.requiredRows > rows) {
+      expandTilesetRowsIfNeeded(slot.requiredRows);
+    }
+    const copyLayer: OutputPlacedPattern = {
+      ...layer,
+      id: `out-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      x: slot.x,
+      y: slot.y,
+      palette: [...layer.palette],
+      grid: [...layer.grid],
+    };
+    setOutputLayers((prev) => [...prev, copyLayer]);
+    setSelectedOutputLayerId(copyLayer.id);
+    setTilesetHasEdits(true);
+    setStatusMsg(`Duplicated "${layer.name}" at (${slot.x}, ${slot.y})`);
   };
 
   const handleCopyCode = async (text?: string) => {
@@ -2771,25 +3339,17 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     canvasViewMode === 'tileset'
       ? tilesetTool === 'pan'
         ? 'cursor-grab active:cursor-grabbing'
-        : tilesetTool === 'position' || tilesetTool === 'move'
-          ? 'cursor-move'
-          : 'cursor-crosshair'
+        : tilesetTool === 'position'
+          ? cursorForHoverAction(tilesetHoverAction, 'cursor-default')
+          : tilesetTool === 'move'
+            ? 'cursor-move'
+            : 'cursor-crosshair'
       : pickingChromaKey
         ? 'cursor-crosshair'
         : activeTool === 'pan'
           ? 'cursor-grab active:cursor-grabbing'
           : activeTool === 'frame'
-            ? hoverAction === 'nw' || hoverAction === 'se'
-              ? 'cursor-nwse-resize'
-              : hoverAction === 'ne' || hoverAction === 'sw'
-                ? 'cursor-nesw-resize'
-                : hoverAction === 'n' || hoverAction === 's'
-                  ? 'cursor-ns-resize'
-                  : hoverAction === 'e' || hoverAction === 'w'
-                    ? 'cursor-ew-resize'
-                    : hoverAction === 'move'
-                      ? 'cursor-move'
-                      : 'cursor-crosshair'
+            ? cursorForHoverAction(hoverAction, 'cursor-crosshair')
             : 'cursor-crosshair';
 
   return (
@@ -3032,10 +3592,10 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
 
                   {/* Output Tileset Tool Palette */}
                   {[
-                    ['position', 'Position Staged Draft (V)', SquareDashedMousePointer],
-                    ['move', 'Move / Swap Existing Tiles (M)', Move],
-                    ['pencil', 'Pixel Pencil (B) - Paint Draft or Sheet', Pencil],
-                    ['eraser', 'Eraser (E) - Erase Draft or Sheet Pixel', Eraser],
+                    ['position', 'Select / Move / Resize Placed Patterns (V)', SquareDashedMousePointer],
+                    ['move', 'Move / Swap Base Tiles (M)', Move],
+                    ['pencil', 'Pixel Pencil (B) - Paint Active Pattern or Base', Pencil],
+                    ['eraser', 'Eraser (E) - Erase Active Pattern or Base', Eraser],
                     ['eyedropper', 'Eyedropper (I) - Pick Color', Pipette],
                     ['pan', 'Pan Viewport', Hand],
                   ].map(([id, title, Icon]) => {
@@ -3139,35 +3699,46 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                 </>
               ) : (
                 <>
-                  <div className="flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5 text-[10px]">
-                    <button
-                      type="button"
-                      onClick={() => setShowStagedDraft((v) => !v)}
-                      title="Toggle Floating Draft Overlay"
-                      className={showStagedDraft ? 'text-rose-400' : 'text-white/40'}
-                    >
-                      {showStagedDraft ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                    </button>
-                    <span className="text-white/60">Draft</span>
-                    <input
-                      type="range"
-                      min={10}
-                      max={100}
-                      value={traceLayerOpacity}
-                      onChange={(e) => setTraceLayerOpacity(Number(e.target.value))}
-                      title={`Draft Overlay Opacity: ${traceLayerOpacity}%`}
-                      className="w-14"
-                    />
-                  </div>
+                  <select
+                    value={outputSnapGrid}
+                    onChange={(e) => setOutputSnapGrid(Number(e.target.value))}
+                    title="Move / Resize Snap Increment (hold Alt while dragging for 1px free, Shift on corners locks aspect)"
+                    className="rounded border border-white/15 bg-black/40 px-1.5 py-0.5 text-[10px] text-white/90"
+                  >
+                    <option value={tileDim}>Snap {tileDim}px (1 Tile)</option>
+                    <option value={Math.max(1, Math.round(tileDim / 2))}>
+                      Snap {Math.max(1, Math.round(tileDim / 2))}px (1/2)
+                    </option>
+                    <option value={Math.max(1, Math.round(tileDim / 4))}>
+                      Snap {Math.max(1, Math.round(tileDim / 4))}px (1/4)
+                    </option>
+                    <option value={1}>Snap 1px (Free)</option>
+                  </select>
 
                   <button
                     type="button"
-                    onClick={() => setTilesetGridVisible((g) => !g)}
-                    title="Toggle Tileset Slot Grid & Indices"
-                    className={`rounded p-1 ${tilesetGridVisible ? 'bg-white/20 text-white' : 'text-white/45 hover:bg-white/10'}`}
+                    onClick={() => setTilesetGuidesVisible((g) => !g)}
+                    title="Toggle Clean Preview vs Grid, Handles & Bounds Guides"
+                    className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
+                      tilesetGuidesVisible
+                        ? 'bg-white/20 text-white'
+                        : 'bg-emerald-600/80 text-white'
+                    }`}
                   >
-                    <Grid className="h-3.5 w-3.5" />
+                    {tilesetGuidesVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                    <span>{tilesetGuidesVisible ? 'Guides' : 'Clean'}</span>
                   </button>
+
+                  {tilesetGuidesVisible && (
+                    <button
+                      type="button"
+                      onClick={() => setTilesetGridVisible((g) => !g)}
+                      title="Toggle Tileset Slot Grid & Indices"
+                      className={`rounded p-1 ${tilesetGridVisible ? 'bg-white/20 text-white' : 'text-white/45 hover:bg-white/10'}`}
+                    >
+                      <Grid className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </>
               )}
 
@@ -3219,9 +3790,12 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
             </div>
           </div>
 
-          {/* Interactive Layered Canvas */}
+          {/* Interactive Layered Canvas (+ Library Pattern Drag-and-Drop Target) */}
           <div
             ref={viewportRef}
+            onDragOver={handleCanvasDragOver}
+            onDragLeave={handleCanvasDragLeave}
+            onDrop={handleCanvasDrop}
             onContextMenu={(e) => e.preventDefault()}
             className={`relative flex-1 overflow-hidden select-none touch-none ${canvasCursorClass}`}
           >
@@ -3237,6 +3811,14 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
               className="w-full h-full block touch-none"
             />
 
+            {dropPreview && canvasViewMode === 'create' && (
+              <div className="pointer-events-none absolute inset-4 flex items-center justify-center rounded border-2 border-dashed border-emerald-400 bg-emerald-950/60 backdrop-blur-[1px]">
+                <span className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow">
+                  Drop &ldquo;{dropPreview.name}&rdquo; to add to Output Tileset
+                </span>
+              </div>
+            )}
+
             {statusMsg && (
               <div className="absolute bottom-2 left-2 rounded bg-black/80 px-2 py-1 text-[11px] font-mono text-white/90 backdrop-blur-sm">
                 {statusMsg}
@@ -3245,7 +3827,14 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
 
             <div className="absolute top-2 left-2 rounded bg-black/65 px-2 py-0.5 text-[10px] font-mono text-white/80 backdrop-blur-sm pointer-events-none">
               {canvasViewMode === 'tileset'
-                ? `Output Tileset ${tilesetDimX}×${tilesetDimY} (${tilesetCols}×${tilesetRows} tiles) · Source: ${tilesetSourceLabel} · Slot (${selectedTilesetSlot.col},${selectedTilesetSlot.row})${tilesetHasEdits ? ' · Modified' : ''}`
+                ? (() => {
+                    const activeLayer = selectedOutputLayerId
+                      ? outputLayers.find((l) => l.id === selectedOutputLayerId)
+                      : null;
+                    return activeLayer
+                      ? `Output ${tilesetDimX}×${tilesetDimY} · "${activeLayer.name}" (${activeLayer.x},${activeLayer.y} ${activeLayer.w}×${activeLayer.h}) · ${outputLayers.length} layers`
+                      : `Output ${tilesetDimX}×${tilesetDimY} (${tilesetCols}×${tilesetRows} tiles) · Slot (${selectedTilesetSlot.col},${selectedTilesetSlot.row}) · ${outputLayers.length} layers${tilesetHasEdits ? ' · Modified' : ''}`;
+                  })()
                 : imgWidth > 0
                   ? `${imgWidth}×${imgHeight} ref · Crop ${crop.w}×${crop.h} → Trace ${builderW}×${builderH}${useSampleBrush ? ' · Sample Brush' : ''}`
                   : 'Import an image to start'}
@@ -3277,128 +3866,284 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
             ))}
           </div>
 
-          {/* Scrollable Tab Content */}
-          <div className="flex-1 overflow-y-auto thin-scroll p-3 space-y-3">
-            {inspectorTab === 'trace' && (
-              <>
-                {canvasViewMode === 'tileset' && (
-                  <div className="rounded border border-emerald-700/40 bg-emerald-950/10 p-2.5 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
-                        Output Tileset &amp; Slot Editor
-                      </span>
-                      <span className="font-mono text-[10px] text-muted">
-                        #{selectedTilesetSlot.row * tilesetCols + selectedTilesetSlot.col} ({selectedTilesetSlot.col},{selectedTilesetSlot.row})
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 text-[10px]">
-                      <label className="flex items-center gap-1.5 cursor-pointer font-medium">
-                        <input
-                          type="checkbox"
-                          checked={showStagedDraft}
-                          onChange={(e) => setShowStagedDraft(e.target.checked)}
-                        />
-                        <span>Show Staged Draft ({builderOutCols}×{builderOutRows})</span>
-                      </label>
+          {/* Persistent Output Composer Strip (visible across all tabs while in Preview Output mode) */}
+          {canvasViewMode === 'tileset' &&
+            (() => {
+              const activeLayer = selectedOutputLayerId
+                ? outputLayers.find((l) => l.id === selectedOutputLayerId) ?? null
+                : null;
+              const updateActiveLayerBox = (patch: Partial<CropSelection>) => {
+                if (!activeLayer) return;
+                pushTilesetUndo();
+                setOutputLayers((prev) =>
+                  prev.map((l) => {
+                    if (l.id !== activeLayer.id) return l;
+                    const nextW = Math.max(8, Math.min(tilesetDimX, Math.round(patch.w ?? l.w)));
+                    const nextH = Math.max(8, Math.min(tilesetDimY, Math.round(patch.h ?? l.h)));
+                    const nextX = Math.max(0, Math.min(tilesetDimX - nextW, Math.round(patch.x ?? l.x)));
+                    const nextY = Math.max(0, Math.min(tilesetDimY - nextH, Math.round(patch.y ?? l.y)));
+                    return { ...l, x: nextX, y: nextY, w: nextW, h: nextH };
+                  }),
+                );
+                setTilesetHasEdits(true);
+              };
+              return (
+                <div className="border-b border-borderFolk bg-emerald-950/10 p-2.5 space-y-2 shrink-0 max-h-72 overflow-y-auto thin-scroll">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                      Output Composer ({outputLayers.length})
+                    </span>
+                    <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={handleSnapDraftNextEmpty}
+                        onClick={() => setTilesetGuidesVisible((g) => !g)}
                         className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] font-medium hover:bg-card"
+                        title="Toggle clean preview vs canvas guides & handles"
                       >
-                        Next Empty
+                        {tilesetGuidesVisible ? 'Clean Preview' : 'Show Guides'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInspectorTab('library')}
+                        className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] font-medium text-indigoFolk hover:bg-card"
+                      >
+                        + Library
                       </button>
                     </div>
+                  </div>
 
-                    {showStagedDraft && (
-                      <div className="flex items-center justify-between gap-2 text-[10px]">
-                        <div className="flex items-center gap-1">
-                          <span className="text-muted">Draft @ ({stagedSlot.col},{stagedSlot.row})</span>
-                          <button
-                            type="button"
-                            onClick={() => nudgeStagedSlot(-1, 0)}
-                            className="rounded border border-borderFolk bg-surface p-0.5 hover:bg-card"
-                            title="Nudge Draft Left"
-                          >
-                            <ArrowLeft className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => nudgeStagedSlot(0, -1)}
-                            className="rounded border border-borderFolk bg-surface p-0.5 hover:bg-card"
-                            title="Nudge Draft Up"
-                          >
-                            <ArrowUp className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => nudgeStagedSlot(0, 1)}
-                            className="rounded border border-borderFolk bg-surface p-0.5 hover:bg-card"
-                            title="Nudge Draft Down"
-                          >
-                            <ArrowDown className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => nudgeStagedSlot(1, 0)}
-                            className="rounded border border-borderFolk bg-surface p-0.5 hover:bg-card"
-                            title="Nudge Draft Right"
-                          >
-                            <ArrowRight className="h-3 w-3" />
-                          </button>
-                        </div>
-
-                        <button
-                          type="button"
-                          disabled={isProcessing}
-                          onClick={handleCommitDraftToTileset}
-                          className="rounded bg-crimson px-2 py-0.5 font-semibold text-white hover:bg-crimson/90 disabled:opacity-50"
-                        >
-                          Stamp @ ({stagedSlot.col},{stagedSlot.row})
-                        </button>
-                      </div>
+                  {/* Live Flattened Preview Thumbnail + Placed Pattern Chips */}
+                  <div className="flex items-start gap-2">
+                    {outputPreviewUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setTilesetGuidesVisible((g) => !g)}
+                        title="Live flattened Output Tileset preview (click to toggle canvas Clean Preview)"
+                        className="shrink-0 rounded border border-borderFolk overflow-hidden hover:border-emerald-500 transition"
+                        style={SUBTLE_CHECKER_STYLE}
+                      >
+                        <img
+                          src={outputPreviewUrl}
+                          alt="Output Tileset Preview"
+                          className="h-14 w-28 object-contain pixel-canvas"
+                        />
+                      </button>
                     )}
 
-                    <div className="flex items-center justify-between gap-1.5 border-t border-borderFolk/50 pt-1.5 text-[10px]">
-                      <div className="flex items-center rounded border border-borderFolk bg-surface p-0.5">
-                        {(['swap', 'move'] as const).map((m) => (
+                    <div className="min-w-0 flex-1 flex flex-wrap gap-1 max-h-16 overflow-y-auto thin-scroll">
+                      {outputLayers.length === 0 ? (
+                        <p className="text-[10px] leading-snug text-muted">
+                          Drag patterns from <strong className="text-ink">Library</strong> onto Output Tiles, or click{' '}
+                          <strong className="text-emerald-700">+ Output</strong>.
+                        </p>
+                      ) : (
+                        outputLayers.map((l, idx) => {
+                          const isSel = l.id === selectedOutputLayerId;
+                          return (
+                            <div
+                              key={l.id}
+                              className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] transition ${
+                                isSel
+                                  ? 'border-emerald-600 bg-emerald-600 text-white font-semibold'
+                                  : 'border-borderFolk bg-surface text-ink hover:border-emerald-600/60'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedOutputLayerId(l.id);
+                                  setTilesetTool('position');
+                                }}
+                                className="truncate max-w-[115px]"
+                                title={`${l.name} (${l.x},${l.y} ${l.w}×${l.h})`}
+                              >
+                                {idx + 1}. {l.name}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(ev) => {
+                                  ev.stopPropagation();
+                                  removeOutputLayer(l.id);
+                                }}
+                                title="Remove pattern from Output"
+                                className={isSel ? 'hover:text-amber-200' : 'text-muted hover:text-crimson'}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Active Placed Pattern Reposition & Rescale Inspector */}
+                  {activeLayer ? (
+                    <div className="space-y-1.5 border-t border-borderFolk/50 pt-1.5">
+                      <div className="flex items-center justify-between gap-1 text-[10px]">
+                        <span className="truncate font-semibold text-ink">
+                          {activeLayer.name}{' '}
+                          <span className="font-mono font-normal text-muted">
+                            (src {activeLayer.gridWidth}×{activeLayer.gridHeight})
+                          </span>
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
-                            key={m}
                             type="button"
-                            onClick={() => setRepositionMode(m)}
-                            className={`rounded px-1.5 py-0.5 capitalize ${
-                              repositionMode === m
-                                ? 'bg-emerald-600 text-white font-semibold'
-                                : 'text-muted hover:text-ink'
-                            }`}
+                            onClick={() =>
+                              updateActiveLayerBox({
+                                w: Math.max(8, activeLayer.gridWidth),
+                                h: Math.max(8, activeLayer.gridHeight),
+                              })
+                            }
+                            className="rounded border border-borderFolk bg-surface px-1 py-0.5 text-[9px] hover:bg-card"
+                            title={`Reset output size to native ${activeLayer.gridWidth}×${activeLayer.gridHeight}px`}
                           >
-                            {m}
+                            Orig
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => updateActiveLayerBox({ w: tileDim, h: tileDim })}
+                            className="rounded border border-borderFolk bg-surface px-1 py-0.5 text-[9px] hover:bg-card"
+                            title={`Fit to 1×1 tile (${tileDim}×${tileDim}px)`}
+                          >
+                            1×1
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateActiveLayerBox({
+                                w: Math.max(tileDim, Math.round(activeLayer.w / tileDim) * tileDim),
+                                h: Math.max(tileDim, Math.round(activeLayer.h / tileDim) * tileDim),
+                              })
+                            }
+                            className="rounded border border-borderFolk bg-surface px-1 py-0.5 text-[9px] hover:bg-card"
+                            title="Snap size to whole tile multiples"
+                          >
+                            Tile Fit
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-1 text-[10px]">
+                        {(
+                          [
+                            ['X', activeLayer.x, 'x', tilesetDimX - activeLayer.w],
+                            ['Y', activeLayer.y, 'y', tilesetDimY - activeLayer.h],
+                            ['W', activeLayer.w, 'w', tilesetDimX],
+                            ['H', activeLayer.h, 'h', tilesetDimY],
+                          ] as const
+                        ).map(([lbl, val, key, maxVal]) => (
+                          <label key={key} className="space-y-0.5">
+                            <span className="block text-[9px] text-muted">{lbl}</span>
+                            <input
+                              type="number"
+                              min={key === 'w' || key === 'h' ? 8 : 0}
+                              max={Math.max(key === 'w' || key === 'h' ? 8 : 0, maxVal)}
+                              value={val}
+                              onChange={(e) => updateActiveLayerBox({ [key]: Number(e.target.value) || 0 })}
+                              className="w-full rounded border border-borderFolk bg-surface px-1 py-0.5 font-mono text-[10px]"
+                            />
+                          </label>
                         ))}
                       </div>
 
+                      <div className="flex items-center justify-between gap-1 text-[10px]">
+                        <select
+                          value={activeLayer.layer}
+                          onChange={(e) => {
+                            const nextL = e.target.value as OutputPlacedPattern['layer'];
+                            pushTilesetUndo();
+                            setOutputLayers((prev) =>
+                              prev.map((l) => (l.id === activeLayer.id ? { ...l, layer: nextL } : l)),
+                            );
+                          }}
+                          className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px]"
+                        >
+                          <option value="bg0">BG 0</option>
+                          <option value="bg1">BG 1</option>
+                          <option value="obj0">OBJ 0</option>
+                          <option value="obj1">OBJ 1</option>
+                        </select>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleEditOutputLayerInCreate(activeLayer)}
+                            className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 font-medium hover:bg-card"
+                            title="Load into Create mode to re-trace or remix"
+                          >
+                            Edit in Create
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDuplicateOutputLayer(activeLayer)}
+                            className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 font-medium hover:bg-card"
+                            title="Duplicate pattern into next open slot"
+                          >
+                            Dup
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeOutputLayer(activeLayer.id)}
+                            className="rounded border border-borderFolk bg-surface p-0.5 text-muted hover:text-crimson"
+                            title="Remove selected pattern (Delete)"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-1.5 border-t border-borderFolk/50 pt-1.5 text-[10px]">
+                      <span className="font-mono text-muted">
+                        Base Slot #{selectedTilesetSlot.row * tilesetCols + selectedTilesetSlot.col} (
+                        {selectedTilesetSlot.col},{selectedTilesetSlot.row})
+                      </span>
                       <div className="flex items-center gap-1">
+                        <div className="flex items-center rounded border border-borderFolk bg-surface p-0.5">
+                          {(['swap', 'move'] as const).map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setRepositionMode(m)}
+                              className={`rounded px-1 py-0.5 capitalize text-[9px] ${
+                                repositionMode === m
+                                  ? 'bg-emerald-600 text-white font-semibold'
+                                  : 'text-muted hover:text-ink'
+                              }`}
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
                         <button
                           type="button"
                           onClick={handleLoadTilesetSlotToCreate}
                           className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 font-medium hover:bg-card"
-                          title="Extract selected tile slot into Create tab for high-res tracing/remixing"
+                          title="Extract base tile slot into Create mode"
                         >
-                          Edit in Create
+                          Edit Slot
                         </button>
                         <button
                           type="button"
                           onClick={handleClearSelectedTilesetSlots}
-                          className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-muted hover:text-crimson"
-                          title="Erase pixels in selected tile slot"
+                          className="rounded border border-borderFolk bg-surface p-0.5 text-muted hover:text-crimson"
+                          title="Erase pixels in selected base slot"
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+              );
+            })()}
 
+          {/* Scrollable Tab Content */}
+          <div className="flex-1 overflow-y-auto thin-scroll p-3 space-y-3">
+            {inspectorTab === 'trace' && (
+              <>
                 {/* Merged Preview (Raw Sample vs Traced Pixel Layer) */}
                 <div className="rounded border border-borderFolk bg-card p-2.5 space-y-2">
                   <div className="flex items-center justify-between">
@@ -4321,72 +5066,92 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                       No saved patterns yet. Trace &amp; clean a motif over the reference, then save it here!
                     </p>
                   ) : (
-                    <div className="space-y-2 max-h-72 overflow-y-auto thin-scroll pr-0.5">
-                      {patternLibrary.map((entry) => (
-                        <div
-                          key={entry.id}
-                          className="flex items-center gap-2 rounded border border-borderFolk bg-surface p-1.5"
-                        >
-                          <img
-                            src={entry.previewDataUrl}
-                            alt={entry.name}
-                            style={SUBTLE_CHECKER_STYLE}
-                            className="h-12 w-12 shrink-0 rounded border border-borderFolk object-contain pixel-canvas"
-                          />
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="truncate text-xs font-semibold">{entry.name}</span>
-                              <span className="font-mono text-[9px] text-muted shrink-0">
-                                {entry.gridWidth}×{entry.gridHeight}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-0.5">
-                              {entry.palette.slice(0, 8).map((hex, i) => (
-                                <span
-                                  key={`${hex}-${i}`}
-                                  className="h-2.5 w-2.5 rounded-sm border border-borderFolk"
-                                  style={{ backgroundColor: hex }}
-                                />
-                              ))}
-                            </div>
-                            <div className="flex items-center gap-1.5 text-[10px]">
-                              <button
-                                type="button"
-                                onClick={() => handleLoadSavedPattern(entry)}
-                                className="text-indigoFolk hover:underline font-medium"
-                              >
-                                Load Layer
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleStageSavedPatternToOutput(entry)}
-                                className="text-emerald-700 hover:underline font-medium"
-                              >
-                                Position in Output
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleCopyCode(entry.proceduralCode)}
-                                className="text-muted hover:text-ink"
-                              >
-                                Code
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const next = patternLibrary.filter((p) => p.id !== entry.id);
-                                  setPatternLibrary(next);
-                                  savePatternLibrary(next);
-                                }}
-                                className="ml-auto text-muted hover:text-crimson"
-                              >
-                                Delete
-                              </button>
+                    <>
+                      <p className="text-[10px] text-muted">
+                        Drag any pattern directly onto the Output Tileset canvas, or click{' '}
+                        <strong className="text-emerald-700">+ Output</strong> to stack without overwriting.
+                      </p>
+                      <div className="space-y-2 max-h-72 overflow-y-auto thin-scroll pr-0.5">
+                        {patternLibrary.map((entry) => (
+                          <div
+                            key={entry.id}
+                            draggable
+                            onDragStart={(e) => {
+                              draggingLibEntryRef.current = entry;
+                              e.dataTransfer.setData('application/x-selo-pattern', entry.id);
+                              e.dataTransfer.setData('text/plain', entry.id);
+                              e.dataTransfer.effectAllowed = 'copy';
+                            }}
+                            onDragEnd={() => {
+                              draggingLibEntryRef.current = null;
+                              setDropPreview(null);
+                            }}
+                            title="Drag onto Output Tileset canvas"
+                            className="flex items-center gap-1.5 rounded border border-borderFolk bg-surface p-1.5 cursor-grab active:cursor-grabbing hover:border-emerald-600/60 transition"
+                          >
+                            <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted/70" />
+                            <img
+                              src={entry.previewDataUrl}
+                              alt={entry.name}
+                              draggable={false}
+                              style={SUBTLE_CHECKER_STYLE}
+                              className="h-12 w-12 shrink-0 rounded border border-borderFolk object-contain pixel-canvas"
+                            />
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="truncate text-xs font-semibold">{entry.name}</span>
+                                <span className="font-mono text-[9px] text-muted shrink-0">
+                                  {entry.gridWidth}×{entry.gridHeight}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-0.5">
+                                {entry.palette.slice(0, 8).map((hex, i) => (
+                                  <span
+                                    key={`${hex}-${i}`}
+                                    className="h-2.5 w-2.5 rounded-sm border border-borderFolk"
+                                    style={{ backgroundColor: hex }}
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[10px]">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStageSavedPatternToOutput(entry)}
+                                  className="rounded bg-emerald-700/15 px-1.5 py-0.5 font-semibold text-emerald-700 hover:bg-emerald-700/25"
+                                >
+                                  + Output
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleLoadSavedPattern(entry)}
+                                  className="text-indigoFolk hover:underline font-medium"
+                                >
+                                  Load Layer
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyCode(entry.proceduralCode)}
+                                  className="text-muted hover:text-ink"
+                                >
+                                  Code
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = patternLibrary.filter((p) => p.id !== entry.id);
+                                    setPatternLibrary(next);
+                                    savePatternLibrary(next);
+                                  }}
+                                  className="ml-auto text-muted hover:text-crimson"
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
 
@@ -4425,7 +5190,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                   className="flex w-full items-center justify-center gap-1.5 rounded bg-crimson px-3 py-2 text-xs font-semibold text-white hover:bg-crimson/90 disabled:opacity-50"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  <span>Save &amp; Position in Output</span>
+                  <span>Save &amp; Add to Output</span>
                 </button>
 
                 <div className="grid grid-cols-2 gap-1.5">
@@ -4448,22 +5213,22 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                     className="flex items-center justify-center gap-1 rounded border border-emerald-700/50 bg-emerald-950/10 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-950/20"
                   >
                     <Grid className="h-3 w-3" />
-                    <span>Preview Output</span>
+                    <span>Preview Output ({outputLayers.length})</span>
                   </button>
                 </div>
               </>
             ) : (
               <>
-                {showStagedDraft && (
+                {outputLayers.length > 0 && (
                   <button
                     type="button"
                     disabled={isProcessing}
-                    onClick={handleCommitDraftToTileset}
-                    className="flex w-full items-center justify-center gap-1.5 rounded bg-crimson px-3 py-1.5 text-xs font-semibold text-white hover:bg-crimson/90 disabled:opacity-50"
+                    onClick={handleBakeLayersToBase}
+                    className="flex w-full items-center justify-center gap-1.5 rounded border border-emerald-700/40 bg-emerald-950/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-950/25 disabled:opacity-50"
                   >
-                    <Plus className="h-3.5 w-3.5" />
+                    <Check className="h-3.5 w-3.5" />
                     <span>
-                      Stamp Draft @ ({stagedSlot.col}, {stagedSlot.row})
+                      Bake {outputLayers.length} {outputLayers.length === 1 ? 'Pattern Layer' : 'Pattern Layers'} to Sheet
                     </span>
                   </button>
                 )}
@@ -4486,7 +5251,7 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
                     className="flex items-center justify-center gap-1 rounded border border-indigoFolk bg-indigoFolk/10 px-2 py-1.5 text-[11px] font-medium text-indigoFolk hover:bg-indigoFolk/20 disabled:opacity-50"
                   >
                     <Layers className="h-3 w-3" />
-                    <span>Apply &amp; Place</span>
+                    <span>{outputLayers.length > 0 ? 'Apply & Place All' : 'Apply & Place'}</span>
                   </button>
                 </div>
               </>

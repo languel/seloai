@@ -46,8 +46,10 @@ import {
   createMacroStampFromIndices,
   detectMotifRegions,
   findNearestPaletteIndex,
+  findOpenSlotForOutputBox,
   floodFillTransparent,
   getOpaqueBounds,
+  hitTestBoxAction,
   parseHexColor,
   placeTilesInTilesetAt,
   processTilePixels,
@@ -55,6 +57,7 @@ import {
   remapTileIndicesInMap,
   removeEdgeBackground,
   repositionTilesInTileset,
+  resizeBoxWithHandle,
   sampleNearestPaletteIndexFromImageData,
   sliceSelectionToTiles,
 } from '../tapestrySampler';
@@ -1401,5 +1404,46 @@ describe('SeloAI core engine', () => {
     expect(
       sampleNearestPaletteIndexFromImageData(bgCell, palette, { r: 250, g: 253, b: 244, tolerance: 8 }),
     ).toBe(-1);
+  });
+
+  it('hit-tests, resizes with snap/aspect lock, and finds non-overlapping slots for multi-pattern output composition', () => {
+    const box = { x: 32, y: 32, w: 64, h: 32 };
+    expect(hitTestBoxAction(box, 32, 32, 2)).toBe('nw');
+    expect(hitTestBoxAction(box, 96, 64, 2)).toBe('se');
+    expect(hitTestBoxAction(box, 64, 32, 2)).toBe('n');
+    expect(hitTestBoxAction(box, 96, 48, 2)).toBe('e');
+    expect(hitTestBoxAction(box, 64, 48, 2)).toBe('move');
+    expect(hitTestBoxAction(box, 140, 140, 2)).toBeNull();
+
+    // Resizing southeast handle with 16px snap
+    const resizedSnap = resizeBoxWithHandle(box, 'se', 110, 88, 256, 128, 16, 8, false);
+    expect(resizedSnap).toEqual({ x: 32, y: 32, w: 80, h: 64 });
+
+    // Resizing southeast handle with aspect ratio lock (2:1 original ratio)
+    const resizedAspect = resizeBoxWithHandle(box, 'se', 160, 60, 256, 128, 1, 8, true);
+    expect(resizedAspect.w).toBe(128);
+    expect(resizedAspect.h).toBe(64);
+
+    // Non-overlapping placement across occupied layer boxes + occupied base tiles
+    const existingLayers = [
+      { x: 0, y: 0, w: 32, h: 96 }, // occupies col 0, rows 0..2
+      { x: 32, y: 0, w: 32, h: 32 }, // occupies col 1, row 0
+    ];
+    // Mark col 2, row 0 base tile as occupied too
+    const nextSlot = findOpenSlotForOutputBox(
+      existingLayers,
+      4,
+      3,
+      32,
+      32,
+      32,
+      (c, r) => c === 2 && r === 0,
+    );
+    expect(nextSlot).toEqual({ x: 96, y: 0, requiredRows: 3 });
+
+    // Full sheet forces row expansion below existing bottom row
+    const fullRowOccupied = [{ x: 0, y: 0, w: 128, h: 64 }];
+    const expandedSlot = findOpenSlotForOutputBox(fullRowOccupied, 4, 2, 32, 64, 32);
+    expect(expandedSlot).toEqual({ x: 0, y: 64, requiredRows: 3 });
   });
 });

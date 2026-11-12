@@ -1508,3 +1508,177 @@ export async function convertTapestryToMap(
     },
   };
 }
+
+export type BoxResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+export type BoxHoverAction = BoxResizeHandle | 'move' | null;
+
+/**
+ * Hit-tests a bounding box's 8 resize handles and interior move area in sheet space.
+ */
+export function hitTestBoxAction(
+  box: CropSelection,
+  ox: number,
+  oy: number,
+  zoom: number,
+): BoxHoverAction {
+  if (box.w <= 0 || box.h <= 0) return null;
+  const tol = Math.max(5, Math.round(8 / Math.max(0.25, zoom)));
+  const left = box.x;
+  const right = box.x + box.w;
+  const top = box.y;
+  const bottom = box.y + box.h;
+
+  if (ox < left - tol || ox > right + tol || oy < top - tol || oy > bottom + tol) {
+    return null;
+  }
+
+  const nearLeft = Math.abs(ox - left) <= tol;
+  const nearRight = Math.abs(ox - right) <= tol;
+  const nearTop = Math.abs(oy - top) <= tol;
+  const nearBottom = Math.abs(oy - bottom) <= tol;
+
+  if (nearTop && nearLeft) return 'nw';
+  if (nearTop && nearRight) return 'ne';
+  if (nearBottom && nearLeft) return 'sw';
+  if (nearBottom && nearRight) return 'se';
+  if (nearTop) return 'n';
+  if (nearBottom) return 's';
+  if (nearLeft) return 'w';
+  if (nearRight) return 'e';
+  if (ox >= left && ox < right && oy >= top && oy < bottom) return 'move';
+  return null;
+}
+
+/**
+ * Computes an updated `{ x, y, w, h }` bounding box when dragging a corner or edge handle,
+ * supporting grid snapping, sheet bounds clamping, and optional corner aspect locking.
+ */
+export function resizeBoxWithHandle(
+  orig: CropSelection,
+  handle: BoxResizeHandle,
+  rawX: number,
+  rawY: number,
+  maxW: number,
+  maxH: number,
+  snap: number = 1,
+  minSize: number = 8,
+  keepAspect: boolean = false,
+): CropSelection {
+  const safeMin = Math.max(4, minSize);
+  const step = snap > 1 ? snap : 1;
+  const snapVal = (v: number) => (step > 1 ? Math.round(v / step) * step : Math.round(v));
+
+  let left = orig.x;
+  let top = orig.y;
+  let right = orig.x + orig.w;
+  let bottom = orig.y + orig.h;
+
+  const isCorner = handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+  if (keepAspect && isCorner && orig.h > 0) {
+    const aspect = orig.w / orig.h;
+    const anchorX = handle.includes('w') ? orig.x + orig.w : orig.x;
+    const anchorY = handle.includes('n') ? orig.y + orig.h : orig.y;
+    const targetW = Math.max(safeMin, snapVal(Math.abs(rawX - anchorX)));
+    const targetHFromY = Math.max(safeMin, snapVal(Math.abs(rawY - anchorY)));
+    let nextW = Math.max(targetW, Math.round(targetHFromY * aspect));
+    let nextH = Math.max(safeMin, Math.round(nextW / aspect));
+
+    const maxAvailW = handle.includes('w') ? anchorX : maxW - anchorX;
+    const maxAvailH = handle.includes('n') ? anchorY : maxH - anchorY;
+    if (nextW > maxAvailW) {
+      nextW = Math.max(safeMin, Math.floor(maxAvailW));
+      nextH = Math.max(safeMin, Math.round(nextW / aspect));
+    }
+    if (nextH > maxAvailH) {
+      nextH = Math.max(safeMin, Math.floor(maxAvailH));
+      nextW = Math.max(safeMin, Math.round(nextH * aspect));
+    }
+
+    return {
+      x: handle.includes('w') ? anchorX - nextW : anchorX,
+      y: handle.includes('n') ? anchorY - nextH : anchorY,
+      w: Math.max(safeMin, nextW),
+      h: Math.max(safeMin, nextH),
+    };
+  }
+
+  if (handle.includes('w')) left = Math.max(0, Math.min(right - safeMin, snapVal(rawX)));
+  if (handle.includes('e')) right = Math.min(maxW, Math.max(left + safeMin, snapVal(rawX)));
+  if (handle.includes('n')) top = Math.max(0, Math.min(bottom - safeMin, snapVal(rawY)));
+  if (handle.includes('s')) bottom = Math.min(maxH, Math.max(top + safeMin, snapVal(rawY)));
+
+  return {
+    x: left,
+    y: top,
+    w: Math.max(safeMin, right - left),
+    h: Math.max(safeMin, bottom - top),
+  };
+}
+
+/**
+ * Finds the first non-overlapping tile-aligned slot `(x, y)` for a new Output Pattern box
+ * against both existing placed boxes and opaque base tileset tiles, expanding `requiredRows`
+ * downward if the current sheet is full.
+ */
+export function findOpenSlotForOutputBox(
+  existingBoxes: CropSelection[],
+  tilesetCols: number,
+  tilesetRows: number,
+  tileDim: number,
+  boxW: number,
+  boxH: number,
+  isBaseTileOccupied?: (col: number, row: number) => boolean,
+): { x: number; y: number; requiredRows: number } {
+  const safeCols = Math.max(1, tilesetCols);
+  const safeRows = Math.max(1, tilesetRows);
+  const colsSpan = Math.max(1, Math.min(safeCols, Math.ceil(boxW / Math.max(1, tileDim))));
+  const rowsSpan = Math.max(1, Math.ceil(boxH / Math.max(1, tileDim)));
+
+  const maxStartCol = Math.max(0, safeCols - colsSpan);
+  const fitsAt = (col: number, row: number, checkBase: boolean): boolean => {
+    const cx = col * tileDim;
+    const cy = row * tileDim;
+    for (const b of existingBoxes) {
+      if (cx < b.x + b.w && cx + boxW > b.x && cy < b.y + b.h && cy + boxH > b.y) {
+        return false;
+      }
+    }
+    if (checkBase && isBaseTileOccupied) {
+      for (let r = 0; r < rowsSpan; r++) {
+        for (let c = 0; c < colsSpan; c++) {
+          if (isBaseTileOccupied(col + c, row + r)) return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  for (let row = 0; row <= Math.max(0, safeRows - rowsSpan); row++) {
+    for (let col = 0; col <= maxStartCol; col++) {
+      if (fitsAt(col, row, true)) {
+        return { x: col * tileDim, y: row * tileDim, requiredRows: safeRows };
+      }
+    }
+  }
+
+  // Overflow: scan downward past current bottom row (base below safeRows is blank)
+  let nextRow = safeRows;
+  while (nextRow < safeRows + 64) {
+    for (let col = 0; col <= maxStartCol; col++) {
+      if (fitsAt(col, nextRow, false)) {
+        return {
+          x: col * tileDim,
+          y: nextRow * tileDim,
+          requiredRows: nextRow + rowsSpan,
+        };
+      }
+    }
+    nextRow++;
+  }
+
+  return {
+    x: 0,
+    y: safeRows * tileDim,
+    requiredRows: safeRows + rowsSpan,
+  };
+}
