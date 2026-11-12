@@ -159,6 +159,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
     setStudioError(null);
     try {
       await omniEngine.load(settings.omniModelId.trim(), settings.omniMmproj.trim() || undefined);
+      brainRouter.flushAudioQueue();
       brainRouter.log({
         channel: 'lfm3-omni',
         level: 'success',
@@ -865,7 +866,11 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   <input
                     type="checkbox"
                     checked={settings.enableOmniTts}
-                    onChange={(e) => onUpdateSettings({ enableOmniTts: e.target.checked })}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      if (!next) brainRouter.flushAudioQueue();
+                      onUpdateSettings({ enableOmniTts: next });
+                    }}
                   />
                   <span>Speak villager replies via LFM3-Omni-2B TTS</span>
                 </label>
@@ -873,10 +878,23 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                   <input
                     type="checkbox"
                     checked={settings.enableWebSpeechFallback}
-                    onChange={(e) => onUpdateSettings({ enableWebSpeechFallback: e.target.checked })}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      if (!next) brainRouter.flushAudioQueue();
+                      onUpdateSettings({ enableWebSpeechFallback: next });
+                    }}
                   />
                   <span>Use browser Web Speech TTS fallback when Omni is unloaded</span>
                 </label>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => brainRouter.flushAudioQueue()}
+                    className="inline-flex items-center gap-1.5 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs font-medium hover:border-crimson hover:text-crimson"
+                  >
+                    <span>Flush &amp; Reset Audio Queue</span>
+                  </button>
+                </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"

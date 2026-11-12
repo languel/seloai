@@ -128,6 +128,7 @@ export function drawVillager(
   rt: VillagerRuntime,
   tileDim: number,
   selected: boolean,
+  showLabels = true,
 ) {
   const isMoving = rt.state === 'walking' || rt.path.length > 0;
   const frame = cfg.customSprite
@@ -170,20 +171,22 @@ export function drawVillager(
   }
 
   // Name pill
-  ctx.font = '600 10px Inter, system-ui, sans-serif';
-  const label = cfg.name;
-  const textW = ctx.measureText(label).width;
-  const pillW = textW + 10;
-  const pillX = px + tileDim / 2 - pillW / 2;
-  const pillY = py + tileDim + 1;
-  ctx.fillStyle = 'rgba(24, 22, 20, 0.78)';
-  ctx.beginPath();
-  ctx.roundRect(pillX, pillY, pillW, 14, 4);
-  ctx.fill();
-  ctx.fillStyle = '#fbf7ef';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, px + tileDim / 2, pillY + 7.5);
+  if (showLabels) {
+    ctx.font = '600 10px Inter, system-ui, sans-serif';
+    const label = cfg.name;
+    const textW = ctx.measureText(label).width;
+    const pillW = textW + 10;
+    const pillX = px + tileDim / 2 - pillW / 2;
+    const pillY = py + tileDim + 1;
+    ctx.fillStyle = 'rgba(24, 22, 20, 0.78)';
+    ctx.beginPath();
+    ctx.roundRect(pillX, pillY, pillW, 14, 4);
+    ctx.fill();
+    ctx.fillStyle = '#fbf7ef';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, px + tileDim / 2, pillY + 7.5);
+  }
 
   // Activity status indicator dot
   if (rt.state === 'thinking' || rt.state === 'speaking' || rt.state === 'listening') {
@@ -206,7 +209,12 @@ export function drawVillager(
   ctx.restore();
 }
 
-export function drawPlayer(ctx: CanvasRenderingContext2D, player: PlayerAvatar, tileDim: number) {
+export function drawPlayer(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerAvatar,
+  tileDim: number,
+  showLabels = true,
+) {
   const img = getCachedImage('/assets/player.png');
   const isMoving = player.isMoving || player.path.length > 0;
   const flipHorizontal = player.facing === 'right';
@@ -238,16 +246,18 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, player: PlayerAvatar, 
     }
   }
 
-  ctx.font = '600 10px Inter, system-ui, sans-serif';
-  const tw = ctx.measureText('You').width + 10;
-  ctx.fillStyle = '#23436b';
-  ctx.beginPath();
-  ctx.roundRect(px + tileDim / 2 - tw / 2, py + tileDim + 1, tw, 14, 4);
-  ctx.fill();
-  ctx.fillStyle = '#fbf7ef';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('You', px + tileDim / 2, py + tileDim + 8.5);
+  if (showLabels) {
+    ctx.font = '600 10px Inter, system-ui, sans-serif';
+    const tw = ctx.measureText('You').width + 10;
+    ctx.fillStyle = '#23436b';
+    ctx.beginPath();
+    ctx.roundRect(px + tileDim / 2 - tw / 2, py + tileDim + 1, tw, 14, 4);
+    ctx.fill();
+    ctx.fillStyle = '#fbf7ef';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('You', px + tileDim / 2, py + tileDim + 8.5);
+  }
   ctx.restore();
 }
 

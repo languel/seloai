@@ -14,6 +14,7 @@ import { minicpmEngine } from './minicpmEngine';
 import { chatWithLocalApi } from './localApiClient';
 import {
   StreamingPcmPlayer,
+  cancelActiveWebSpeech,
   speakWebSpeechAsync,
   type SpatialMix,
 } from './audioPipeline';
@@ -1089,14 +1090,23 @@ class BrainRouter {
     await this.speakLine(clean, narratorCfg, settings, spatialResolver);
   }
 
-  stopSpeech() {
+  flushAudioQueue() {
     this.speechEpoch += 1;
+    this.speechQueue = Promise.resolve();
     this.activePlayer?.stop();
     this.activePlayer = null;
     this.activeSpatialResolver = null;
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    cancelActiveWebSpeech();
+    this.log({
+      channel: 'audio',
+      level: 'info',
+      title: 'Audio queue flushed & reset',
+      detail: 'Cleared pending speech turns and reset browser/Omni playback.',
+    });
+  }
+
+  stopSpeech() {
+    this.flushAudioQueue();
   }
 
   /**

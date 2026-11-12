@@ -295,6 +295,20 @@ export class StreamingPcmPlayer {
   }
 }
 
+let activeWebSpeechAbort: (() => void) | null = null;
+
+export function cancelActiveWebSpeech(): void {
+  activeWebSpeechAbort?.();
+  activeWebSpeechAbort = null;
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export function speakWebSpeechFallback(
   text: string,
   volume = 1,
@@ -311,16 +325,23 @@ export function speakWebSpeechFallback(
       onEnd?.();
       return false;
     }
+    // Settle any previous pending utterance immediately before starting a new one
+    activeWebSpeechAbort?.();
+
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(guardTimer);
+      if (activeWebSpeechAbort === finish) {
+        activeWebSpeechAbort = null;
+      }
       onEnd?.();
     };
     const words = Math.max(1, text.trim().split(/\s+/).length);
     const guardMs = Math.max(2500, Math.min(16000, words * 550));
     const guardTimer = setTimeout(finish, guardMs);
+    activeWebSpeechAbort = finish;
 
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);

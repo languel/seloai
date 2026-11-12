@@ -3,12 +3,15 @@ import {
   Bug,
   Compass,
   Headphones,
+  LayoutList,
   Mic,
   MicOff,
   Pause,
   Play,
+  RotateCcw,
   Send,
   Shuffle,
+  Tag,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -28,6 +31,8 @@ import {
   drawTileGrid,
   drawVillager,
   getCachedImage,
+  getCustomSpriteFrame,
+  getPresetSpriteFrame,
 } from '../engine/renderer';
 import type { VillageSimulation } from '../engine/simulation';
 import type { ModelSettings, VillagerConfig, VillagerRuntime } from '../engine/types';
@@ -62,6 +67,48 @@ function findActiveMention(
   return { trigger, start: idx, query: match[2] };
 }
 
+const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }> = ({
+  villager,
+  size = 28,
+}) => {
+  const thumbRef = useRef<HTMLCanvasElement | null>(null);
+  const frame = villager.customSprite
+    ? getCustomSpriteFrame(villager.customSprite, 'down', 0, false)
+    : getPresetSpriteFrame(villager.spritesheetId, 'down', 0, false);
+
+  useEffect(() => {
+    const canvas = thumbRef.current;
+    if (!canvas || !frame) return;
+    const draw = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, size, size);
+      const img = getCachedImage(frame.url);
+      if (img) {
+        ctx.drawImage(img, frame.sx, frame.sy, frame.sw, frame.sh, 0, 0, size, size);
+      } else {
+        ctx.fillStyle = villager.accentColor;
+        ctx.fillRect(4, 4, size - 8, size - 8);
+        const preload = new Image();
+        preload.onload = () => draw();
+        preload.src = frame.url;
+      }
+    };
+    draw();
+  }, [frame?.url, frame?.sx, frame?.sy, frame?.sw, frame?.sh, villager.accentColor, size]);
+
+  return (
+    <canvas
+      ref={thumbRef}
+      width={size}
+      height={size}
+      className="pixel-canvas shrink-0 rounded border border-borderFolk/70 bg-stone-900/20"
+      style={{ width: size, height: size }}
+    />
+  );
+};
+
 export const VillageView: React.FC<VillageViewProps> = ({
   sim,
   villagers,
@@ -74,6 +121,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? 'narrator');
   const [tick, setTick] = useState(0);
   const [showPaths, setShowPaths] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
+  const [rosterView, setRosterView] = useState<'cards' | 'compact'>('cards');
   const [followSelected, setFollowSelected] = useState(false);
   const [feedMode, setFeedMode] = useState<'focused' | 'village'>('focused');
   const [chatInput, setChatInput] = useState('');
@@ -260,6 +309,39 @@ export const VillageView: React.FC<VillageViewProps> = ({
         ctx.restore();
       }
 
+      // Points of Interest (#Tag markers) when labels are enabled
+      if (showLabels && (map.pointsOfInterest ?? []).length > 0) {
+        ctx.save();
+        ctx.font = '700 10px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const poi of map.pointsOfInterest ?? []) {
+          const cx = (poi.x + 0.5) * map.tileDim;
+          const cy = (poi.y + 0.5) * map.tileDim;
+          ctx.fillStyle = 'rgba(217, 119, 6, 0.9)';
+          ctx.strokeStyle = '#fffbeb';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - 6);
+          ctx.lineTo(cx + 6, cy);
+          ctx.lineTo(cx, cy + 6);
+          ctx.lineTo(cx - 6, cy);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          const tagText = `#${poi.tag}`;
+          const tw = ctx.measureText(tagText).width + 10;
+          ctx.fillStyle = 'rgba(24, 22, 20, 0.78)';
+          ctx.beginPath();
+          ctx.roundRect(cx - tw / 2, cy - 22, tw, 14, 4);
+          ctx.fill();
+          ctx.fillStyle = '#fde68a';
+          ctx.fillText(tagText, cx, cy - 14.5);
+        }
+        ctx.restore();
+      }
+
       // Y-sort entities (villagers + player)
       const entities: Array<{ y: number; draw: () => void }> = [];
       for (const rt of sim.runtimes.values()) {
@@ -267,12 +349,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
         if (!cfg) continue;
         entities.push({
           y: rt.y,
-          draw: () => drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId),
+          draw: () => drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId, showLabels),
         });
       }
       entities.push({
         y: sim.player.y,
-        draw: () => drawPlayer(ctx, sim.player, map.tileDim),
+        draw: () => drawPlayer(ctx, sim.player, map.tileDim, showLabels),
       });
       entities.sort((a, b) => a.y - b.y);
       for (const ent of entities) ent.draw();
@@ -282,7 +364,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
     rafId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafId);
-  }, [sim, selectedId, showPaths, followSelected]);
+  }, [sim, selectedId, showPaths, showLabels, followSelected]);
 
   const screenToWorld = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -616,6 +698,18 @@ export const VillageView: React.FC<VillageViewProps> = ({
           </button>
           <button
             type="button"
+            onClick={() => setShowLabels((l) => !l)}
+            aria-pressed={showLabels}
+            title="Toggle character and #POI labels on map"
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
+              showLabels ? 'bg-sage/20 text-ink font-medium' : 'hover:bg-surface text-muted'
+            }`}
+          >
+            <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Labels</span>
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setFollowSelected((f) => !f);
               centerOnSelected();
@@ -711,6 +805,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
             >
               Map
             </button>
+            <button
+              type="button"
+              onClick={() => brainRouter.flushAudioQueue()}
+              title="Flush & reset queued browser/Omni audio"
+              aria-label="Flush audio queue"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface text-muted hover:text-crimson hover:bg-crimson/10"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              <span>Flush</span>
+            </button>
           </div>
         </div>
 
@@ -724,54 +828,130 @@ export const VillageView: React.FC<VillageViewProps> = ({
       <aside className="flex flex-col border-l border-borderFolk bg-surface overflow-hidden" aria-label="Villager Inspector">
         {/* Villager Quick Roster */}
         <div className="border-b border-borderFolk bg-card p-3">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
               Villagers ({villagers.length})
             </h2>
-            <span className="font-mono text-[11px] text-muted">{sim.fps} FPS</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setRosterView((m) => (m === 'cards' ? 'compact' : 'cards'))}
+                aria-pressed={rosterView === 'compact'}
+                title={rosterView === 'cards' ? 'Switch to compact pills' : 'Switch to thumbnail cards'}
+                className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-ink"
+              >
+                <LayoutList className="h-3 w-3" aria-hidden="true" />
+                <span>{rosterView === 'cards' ? 'Compact' : 'Thumbnails'}</span>
+              </button>
+              <span className="font-mono text-[11px] text-muted">{sim.fps} FPS</span>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {villagers.map((v) => {
-              const rt = sim.runtimes.get(v.id);
-              const active = v.id === selectedId;
-              const isBusy =
-                rt?.state === 'conversing' || rt?.state === 'speaking' || rt?.state === 'thinking';
-              return (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setSelectedId(v.id)}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-                    active
-                      ? 'border-crimson bg-crimson text-white'
-                      : 'border-borderFolk bg-surface text-ink hover:border-crimson/60'
-                  }`}
-                >
-                  <span
-                    className={`h-2 w-2 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
-                    style={{ backgroundColor: active ? '#fff' : v.accentColor }}
-                  />
-                  <span>{v.name}</span>
-                  {rt?.state === 'thinking' && <span className="text-[10px] opacity-80">…</span>}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => setSelectedId('narrator')}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-                isScribeSelected
-                  ? 'border-ochre bg-ochre text-white'
-                  : 'border-borderFolk bg-surface text-ink hover:border-ochre/60'
-              }`}
-            >
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: isScribeSelected ? '#fff' : '#c98a3b' }}
-              />
-              <span>{narratorName}</span>
-            </button>
-          </div>
+
+          {rosterView === 'cards' ? (
+            <div className="max-h-44 overflow-y-auto thin-scroll space-y-1.5 pr-0.5">
+              {villagers.map((v) => {
+                const rt = sim.runtimes.get(v.id);
+                const active = v.id === selectedId;
+                const isBusy =
+                  rt?.state === 'conversing' || rt?.state === 'speaking' || rt?.state === 'thinking';
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setSelectedId(v.id)}
+                    className={`flex w-full items-center gap-2.5 rounded-lg border px-2 py-1.5 text-left transition ${
+                      active
+                        ? 'border-crimson bg-crimson/10 ring-1 ring-crimson/40'
+                        : 'border-borderFolk bg-surface hover:border-crimson/60'
+                    }`}
+                  >
+                    <VillagerAvatarThumb villager={v} size={28} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`h-2 w-2 shrink-0 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
+                          style={{ backgroundColor: v.accentColor }}
+                        />
+                        <span className="truncate text-xs font-semibold text-ink">{v.name}</span>
+                      </div>
+                      <p className="truncate text-[11px] text-muted">{v.role}</p>
+                    </div>
+                    <span className="shrink-0 rounded bg-card px-1.5 py-0.5 font-mono text-[10px] capitalize text-muted border border-borderFolk/60">
+                      {rt?.state ?? 'idle'}
+                    </span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setSelectedId('narrator')}
+                className={`flex w-full items-center gap-2.5 rounded-lg border px-2 py-1.5 text-left transition ${
+                  isScribeSelected
+                    ? 'border-ochre bg-ochre/10 ring-1 ring-ochre/40'
+                    : 'border-borderFolk bg-surface hover:border-ochre/60'
+                }`}
+              >
+                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-borderFolk/70 bg-ochre/20 font-serif text-xs font-bold text-ochre">
+                  S
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-ochre" />
+                    <span className="truncate text-xs font-semibold text-ink">{narratorName}</span>
+                  </div>
+                  <p className="truncate text-[11px] text-muted">
+                    Village Scribe · {settings.narratorStyle}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted border border-borderFolk/60">
+                  DM
+                </span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {villagers.map((v) => {
+                const rt = sim.runtimes.get(v.id);
+                const active = v.id === selectedId;
+                const isBusy =
+                  rt?.state === 'conversing' || rt?.state === 'speaking' || rt?.state === 'thinking';
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setSelectedId(v.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                      active
+                        ? 'border-crimson bg-crimson text-white'
+                        : 'border-borderFolk bg-surface text-ink hover:border-crimson/60'
+                    }`}
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
+                      style={{ backgroundColor: active ? '#fff' : v.accentColor }}
+                    />
+                    <span>{v.name}</span>
+                    {rt?.state === 'thinking' && <span className="text-[10px] opacity-80">…</span>}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setSelectedId('narrator')}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                  isScribeSelected
+                    ? 'border-ochre bg-ochre text-white'
+                    : 'border-borderFolk bg-surface text-ink hover:border-ochre/60'
+                }`}
+              >
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: isScribeSelected ? '#fff' : '#c98a3b' }}
+                />
+                <span>{narratorName}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Selected Villager or Scribe Details + Shared Chat */}
@@ -926,11 +1106,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   )}
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const next = !settings.enableOmniTts;
+                      if (!next) brainRouter.flushAudioQueue();
                       onUpdateSettings({
-                        enableOmniTts: !settings.enableOmniTts,
-                      })
-                    }
+                        enableOmniTts: next,
+                      });
+                    }}
                     aria-pressed={settings.enableOmniTts}
                     className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface"
                   >
