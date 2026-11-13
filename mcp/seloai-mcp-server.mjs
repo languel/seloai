@@ -156,19 +156,33 @@ function runHeadlessTool(name, args = {}) {
       };
     }
     case 'create_world': {
-      const isShevitsa = args.preset === 'shevitsa';
-      const w = Math.max(12, Math.min(80, Number(args.width ?? (isShevitsa ? 64 : 36))));
-      const h = Math.max(12, Math.min(64, Number(args.height ?? (isShevitsa ? 48 : 28))));
+      const preset = String(args.preset || '').toLowerCase();
+      const isBalkanMyth = preset === 'balkan-myth' || preset === 'zmeyovo' || preset === 'lamia';
+      const isShevitsa = !isBalkanMyth && preset === 'shevitsa';
+      const w = Math.max(12, Math.min(80, Number(args.width ?? (isBalkanMyth ? 48 : isShevitsa ? 64 : 36))));
+      const h = Math.max(12, Math.min(64, Number(args.height ?? (isBalkanMyth ? 36 : isShevitsa ? 48 : 28))));
       const tileDim = Number(args.tileDim ?? 32);
       headlessState.map = {
         ...headlessState.map,
-        name: args.name || (isShevitsa ? 'Bulgarian Shevitsa Square' : 'Headless World'),
+        name:
+          args.name ||
+          (isBalkanMyth
+            ? 'Zmeyovo: Well of the Lamia'
+            : isShevitsa
+              ? 'Bulgarian Shevitsa Square'
+              : 'Headless World'),
         width: w,
         height: h,
         tileDim,
-        tileSetUrl: args.tileSetUrl || (isShevitsa ? '/assets/shevitsa-tileset.png' : '/assets/gentle-obj.png'),
-        tileSetDimX: Number(args.tileSetDimX ?? (isShevitsa ? 512 : 1440)),
-        tileSetDimY: Number(args.tileSetDimY ?? (isShevitsa ? 512 : 1024)),
+        tileSetUrl:
+          args.tileSetUrl ||
+          (isBalkanMyth
+            ? '/assets/balkan-myth-tileset.png'
+            : isShevitsa
+              ? '/assets/shevitsa-tileset.png'
+              : '/assets/gentle-obj.png'),
+        tileSetDimX: Number(args.tileSetDimX ?? (isBalkanMyth || isShevitsa ? 512 : 1440)),
+        tileSetDimY: Number(args.tileSetDimY ?? (isBalkanMyth || isShevitsa ? 512 : 1024)),
         bgTiles: [Array.from({ length: w }, () => Array(h).fill(0))],
         objectTiles: [Array.from({ length: w }, () => Array(h).fill(-1))],
         collisionGrid: Array.from({ length: w }, () => Array(h).fill(false)),
@@ -182,7 +196,13 @@ function runHeadlessTool(name, args = {}) {
               y: Math.round(Number(p.y ?? h / 2)),
               description: p.description,
             }))
-          : [{ id: 'poi-center', tag: 'Center', label: 'Center', x: Math.floor(w / 2), y: Math.floor(h / 2) }],
+          : isBalkanMyth
+            ? [
+                { id: 'poi-balkan-well', tag: 'LamiaWell', label: 'Well of the Lamia', x: 23, y: 16 },
+                { id: 'poi-balkan-khoro', tag: 'KhoroStar', label: 'Elbetitsa Khoro Square', x: 23, y: 23 },
+                { id: 'poi-balkan-spring', tag: 'SamodivaSpring', label: 'Samodiva Pure Spring', x: 8, y: 10 },
+              ]
+            : [{ id: 'poi-center', tag: 'Center', label: 'Center', x: Math.floor(w / 2), y: Math.floor(h / 2) }],
       };
       if (args.clearDatabase) {
         headlessState.conversations = [];
@@ -191,7 +211,7 @@ function runHeadlessTool(name, args = {}) {
       return {
         ok: true,
         mode: 'headless',
-        preset: isShevitsa ? 'shevitsa' : 'blank',
+        preset: isBalkanMyth ? 'balkan-myth' : isShevitsa ? 'shevitsa' : 'blank',
         map: headlessState.map.name,
         pointsOfInterest: headlessState.map.pointsOfInterest,
       };

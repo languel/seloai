@@ -83,9 +83,10 @@
           "type": "string",
           "enum": [
             "blank",
-            "shevitsa"
+            "shevitsa",
+            "balkan-myth"
           ],
-          "description": "Optional starter template preset ('shevitsa' loads the Bulgarian Shevitsa embroidery world & tileset)."
+          "description": "Optional starter template preset ('balkan-myth' loads Zmeyovo: Well of the Lamia with custom Balkan embroidery tiles & folklore cast; 'shevitsa' loads Embroidered Bulgaria)."
         },
         "name": {
           "type": "string"
@@ -455,7 +456,8 @@
           "type": "string",
           "enum": [
             "blank",
-            "shevitsa"
+            "shevitsa",
+            "balkan-myth"
           ]
         },
         "width": {

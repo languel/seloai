@@ -32,6 +32,7 @@ import type {
 } from '../engine/types';
 import { resolvePublicUrl } from '../utils/assetUrl';
 import {
+  createBalkanMythWorld,
   createBlankWorldMap,
   createBulgarianShevitsaMap,
   exportCharactersJson,
@@ -194,16 +195,32 @@ export class SeloToolHost {
       }
 
       case 'create_world': {
+        const presetStr = String(args.preset || '').toLowerCase();
+        const nameStr = String(args.name || '').toLowerCase();
+        const isBalkanMyth =
+          presetStr === 'balkan-myth' ||
+          presetStr === 'zmeyovo' ||
+          presetStr === 'lamia' ||
+          nameStr.includes('zmeyovo') ||
+          nameStr.includes('lamia');
         const isShevitsa =
-          String(args.preset || '').toLowerCase() === 'shevitsa' ||
-          String(args.preset || '').toLowerCase() === 'bulgaria' ||
-          String(args.name || '').toLowerCase().includes('shevitsa') ||
-          String(args.name || '').toLowerCase().includes('bulgaria');
-        const width = Math.max(isShevitsa ? 64 : 12, Math.min(80, Number(args.width ?? (isShevitsa ? 64 : 36))));
-        const height = Math.max(isShevitsa ? 48 : 12, Math.min(64, Number(args.height ?? (isShevitsa ? 48 : 28))));
-        const nextMap = isShevitsa
-          ? createBulgarianShevitsaMap(width, height)
-          : createBlankWorldMap(args.name || 'Agent World', width, height);
+          !isBalkanMyth &&
+          (presetStr === 'shevitsa' ||
+            presetStr === 'bulgaria' ||
+            nameStr.includes('shevitsa') ||
+            nameStr.includes('bulgaria'));
+        const width = isBalkanMyth
+          ? Math.max(48, Math.min(80, Number(args.width ?? 48)))
+          : Math.max(isShevitsa ? 64 : 12, Math.min(80, Number(args.width ?? (isShevitsa ? 64 : 36))));
+        const height = isBalkanMyth
+          ? Math.max(36, Math.min(64, Number(args.height ?? 36)))
+          : Math.max(isShevitsa ? 48 : 12, Math.min(64, Number(args.height ?? (isShevitsa ? 48 : 28))));
+        const balkanBundle = isBalkanMyth ? createBalkanMythWorld(width, height) : null;
+        const nextMap = balkanBundle
+          ? balkanBundle.map
+          : isShevitsa
+            ? createBulgarianShevitsaMap(width, height)
+            : createBlankWorldMap(args.name || 'Agent World', width, height);
         if (args.name) nextMap.name = String(args.name);
         if (typeof args.tileDim === 'number' && args.tileDim >= 8) nextMap.tileDim = args.tileDim;
         if (typeof args.tileSetUrl === 'string' && args.tileSetUrl.trim()) {
@@ -223,14 +240,19 @@ export class SeloToolHost {
           sim.clearDatabase();
         }
         this.hooks.applyMap(nextMap);
+        if (balkanBundle && args.includeCast !== false) {
+          this.hooks.applyVillagers(balkanBundle.villagers);
+        }
         return {
           ok: true,
+          preset: isBalkanMyth ? 'balkan-myth' : isShevitsa ? 'shevitsa' : 'blank',
           map: {
             name: nextMap.name,
             width: nextMap.width,
             height: nextMap.height,
             pointsOfInterest: nextMap.pointsOfInterest,
           },
+          villagersApplied: balkanBundle && args.includeCast !== false ? balkanBundle.villagers.length : 0,
         };
       }
 

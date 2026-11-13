@@ -1507,6 +1507,15 @@ const DM_ENCOUNTER_CLOSINGS = [
     `The tension loosens by a single degree, though ${a} and ${b} both know the rumor around ${place} is only half-buried.`,
 ];
 
+const BALKAN_DM_OPENINGS = [
+  (a: string, b: string, place: string) =>
+    `Dry wind hisses up from the stone mouth near ${place}; ${a} eyes the empty water pitchers between them as ${b} fingers a silver coin.`,
+  (a: string, b: string, place: string) =>
+    `A bronze kuker bell chimes once in the dusty air around ${place}, drawing ${a} and ${b} toward the Lamia's warning ribbon.`,
+  (a: string, b: string, place: string) =>
+    `Emerald mist coils over the cracked mortar beside ${place}; ${a} whispers of the well's sacrifice demand while ${b} grips a bundle of basil.`,
+];
+
 function synthesizeDungeonMasterBeat(params: {
   phase: 'opening' | 'closing';
   villagerA: VillagerConfig;
@@ -1517,9 +1526,68 @@ function synthesizeDungeonMasterBeat(params: {
 }): string {
   const { phase, villagerA, villagerB, landmarkName } = params;
   const idx = dmBeatCursor++;
-  const pool = phase === 'opening' ? DM_ENCOUNTER_OPENINGS : DM_ENCOUNTER_CLOSINGS;
+  const combinedLore = `${villagerA.identity} ${villagerB.identity} ${landmarkName}`.toLowerCase();
+  const isBalkanMyth = /lamia|zmeyovo|kuker|samodiva|shevitsa|well/.test(combinedLore);
+  const pool =
+    phase === 'opening'
+      ? isBalkanMyth
+        ? [...BALKAN_DM_OPENINGS, ...DM_ENCOUNTER_OPENINGS]
+        : DM_ENCOUNTER_OPENINGS
+      : DM_ENCOUNTER_CLOSINGS;
   const rendered = pool.map((fn) => fn(villagerA.name, villagerB.name, landmarkName));
   return pickFreshCandidate(rendered, recentDmBeats, idx);
+}
+
+function buildPersonaLoreCandidates(
+  villager: VillagerConfig,
+  partnerName: string,
+  dmBeat: string,
+  lastTextLower: string,
+): string[] {
+  const persona = `${villager.role} ${villager.identity} ${villager.plan}`.toLowerCase();
+  const lines: string[] = [];
+
+  if (persona.includes('lamia') || lastTextLower.includes('lamia') || lastTextLower.includes('well')) {
+    if (persona.includes('lamia') || villager.id === 'lamia') {
+      lines.push(
+        `Come no closer with hollow jugs, ${partnerName}. The springs stay chained in darkness until Zmeyovo lays true tribute on my altar stone.`,
+        `Gold rings hollow and steel breaks against river-stone, ${partnerName}. Bring honeyed wheat, silver obols, or an oath worth my thirst.`,
+        `I taste the Samodiva brook upon your boots, ${partnerName}. Would you bargain for rain, or test how deep my coils reach?`,
+      );
+    } else if (persona.includes('kuker') || persona.includes('bell')) {
+      lines.push(
+        `Let the Lamia hiss from the shaft, ${partnerName}—three chimes of bronze chanove bells at #KukeriHearth will rattle every stone around #LamiaWell!`,
+        `My mask is carved to frighten winter spirits, ${partnerName}, yet even I heard brass groan down #LamiaWell before dawn.`,
+      );
+    } else if (persona.includes('znaharka') || persona.includes('herb')) {
+      lines.push(
+        `Hush your iron boasting, ${partnerName}. Our grandmothers appeased the Lamia with sweet kolivo, basil, and braided martenitsa wool—never drawn knives.`,
+        `Every gourd along #BabaHerbhouse stays parched, ${partnerName}, until someone sets an honest offering on #LamiaWell's threshold.`,
+      );
+    } else if (persona.includes('samodiva') || persona.includes('vila')) {
+      lines.push(
+        `Only the birch-ringed basin at #SamodivaSpring still sings sweet and clear, ${partnerName}—never cross my glade with angry steel.`,
+        `The Lamia fears living water freely shared, ${partnerName}. Leave scarlet thread by the moss stone and draw what you need.`,
+      );
+    } else if (persona.includes('weaver') || persona.includes('shevitsa')) {
+      lines.push(
+        `Look at the Elbetitsa stars in #KhoroStar, ${partnerName}—eight directions stitched in red thread will turn the Lamia's drought into autumn rain.`,
+        `I am finishing the covenant border at #WeaverCardak, ${partnerName}; will you stand witness with me at #LamiaWell?`,
+      );
+    } else if (persona.includes('blacksmith') || persona.includes('yunak')) {
+      lines.push(
+        `My forge quench-trough is bone dry, ${partnerName}. Whether by iron hook or honest riddle at #LamiaWell, water runs for Zmeyovo before dusk.`,
+        `Cross #YunakBridge with me, ${partnerName}—we either trade with Samodiva Raina or settle terms with the serpent herself.`,
+      );
+    }
+  }
+
+  if (lastTextLower.includes('sacrifice') || lastTextLower.includes('tribute') || lastTextLower.includes('offering') || dmBeat.includes('coin')) {
+    lines.push(
+      `Look at the silver coins and honey jar left before #LamiaWell, ${partnerName}—half the village thinks appeasement works, the other half wants to break the chains.`,
+    );
+  }
+  return lines;
 }
 
 function synthesizeStorySimReply(
@@ -1533,10 +1601,12 @@ function synthesizeStorySimReply(
   const last = spokenHistory[spokenHistory.length - 1];
   const turn = spokenHistory.length;
   const seed = turn + villager.name.charCodeAt(0) + avoidLines.length;
+  const lastTextLower = last?.text.toLowerCase() ?? '';
+  const personaLines = buildPersonaLoreCandidates(villager, partnerName, dmBeat, lastTextLower);
 
   // React directly to concrete DM scene hooks when opening (unless we've already used that reaction)
   if (!last) {
-    const openers: string[] = [];
+    const openers: string[] = [...personaLines];
     if (dmBeat.includes('key')) {
       openers.push(`Hold on, ${partnerName}—did that brass key just drop out of nowhere, or did somebody leave it on purpose?`);
     }
@@ -1560,8 +1630,8 @@ function synthesizeStorySimReply(
     return pickFreshCandidate(openers, avoidLines, seed);
   }
 
-  const lower = last.text.toLowerCase();
-  const candidates: string[] = [];
+  const lower = lastTextLower;
+  const candidates: string[] = [...personaLines];
   if (lower.includes('key') || lower.includes('lock') || lower.includes('box')) {
     candidates.push(`If it fits the old cellar latch by the mill, we're not telling a soul until nightfall—agreed, ${partnerName}?`);
   }

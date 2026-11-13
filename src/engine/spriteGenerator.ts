@@ -1082,7 +1082,7 @@ function makePngChunk(type: string, data: Uint8Array): Uint8Array {
   return chunk;
 }
 
-function encodeRgbaUncompressedPng(width: number, height: number, rgba: Uint8ClampedArray): string {
+export function encodeRgbaUncompressedPng(width: number, height: number, rgba: Uint8ClampedArray): string {
   const rowBytes = width * 4 + 1;
   const raw = new Uint8Array(rowBytes * height);
   for (let y = 0; y < height; y++) {

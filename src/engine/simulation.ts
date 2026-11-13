@@ -3,6 +3,7 @@ import { brainRouter, isTextTooSimilar, parseDialogueAndNarration } from '../ai/
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
 import { ensureVillagerAppearanceSprite } from './spriteGenerator';
 import type {
+  BubbleEntry,
   ChatMessage,
   Conversation,
   Direction,
@@ -13,6 +14,35 @@ import type {
   VillagerRuntime,
 } from './types';
 
+interface BubbleKeyframe {
+  text: string;
+  ageMs: number;
+  totalMs: number;
+}
+
+interface VillagerKeyframe {
+  id: string;
+  x: number;
+  y: number;
+  facing: Direction;
+  animFrame: number;
+  state: VillagerRuntime['state'];
+  currentIntention?: string;
+  activeConversationId?: string;
+  path: Array<{ x: number; y: number }>;
+  currentBubble?: BubbleKeyframe;
+  currentThoughtBubble?: BubbleKeyframe;
+  memories: MemoryEntry[];
+  worldFeed?: string[];
+}
+
+interface TimelineKeyframe {
+  simTimeMs: number;
+  tickCount: number;
+  conversations: Conversation[];
+  villagers: VillagerKeyframe[];
+}
+
 export interface MentionTarget {
   kind: 'narrator' | 'villager';
   id: string;
@@ -20,6 +50,14 @@ export interface MentionTarget {
 }
 
 export const CHAR_COLLISION_RADIUS = 0.78;
+
+export function computeBubbleDurationMs(
+  text: string,
+  minMs = 5500,
+  maxMs = 16000,
+): number {
+  return Math.max(minMs, Math.min(maxMs, 3200 + text.length * 70));
+}
 
 /**
  * Parses @mentions from user text (case-insensitive) matching villagers by full
@@ -138,6 +176,7 @@ export class VillageSimulation {
   public paused = false;
   public speedMultiplier = 1;
   public tickCount = 0;
+  public simTimeMs = 0;
   public fps = 60;
   public modelSettings: ModelSettings;
   public focalWorldlineId: string | 'traveler' = 'traveler';
@@ -147,6 +186,16 @@ export class VillageSimulation {
   private busyConversations = new Set<string>();
   private planningVillagers = new Set<string>();
   private lastNotifyAt = 0;
+  private lastMoveSimMs = new Map<string, number>();
+  private lastThinkSimMs = new Map<string, number>();
+  private timeline: TimelineKeyframe[] = [];
+  private maxTimelineFrames = 750;
+  private lastConvSignature = '';
+  private lastCachedConvSnapshot: Conversation[] = [];
+  private lastMemCache = new Map<string, { sig: string; list: MemoryEntry[] }>();
+  private lastFeedCache = new Map<string, { sig: string; list: string[] }>();
+  private lastAppliedConvRef: Conversation[] | null = null;
+  private wasRewinding = false;
 
   constructor(
     map: VillageMap,
@@ -250,7 +299,12 @@ export class VillageSimulation {
           lastMoveAt: Date.now() - 2000 - Math.random() * 2000,
           animFrame: 0,
         });
+        this.lastMoveSimMs.set(v.id, this.simTimeMs - 2200 - Math.random() * 2000);
+        this.lastThinkSimMs.set(v.id, this.simTimeMs - 5500 - Math.random() * 2500);
       }
+    }
+    if (this.timeline.length === 0) {
+      this.recordTimelineKeyframe();
     }
     this.notify(true);
   }
@@ -292,11 +346,13 @@ export class VillageSimulation {
         rt.worldFeed = [...hist.worldFeed];
       }
     }
+    this.resetTimelineHistory();
     this.notify(true);
   }
 
   replaceConversations(conversations: Conversation[]) {
     this.conversations = structuredClone(conversations);
+    this.resetTimelineHistory();
     this.notify(true);
   }
 
@@ -320,6 +376,7 @@ export class VillageSimulation {
           ]
         : [];
     }
+    this.resetTimelineHistory();
     this.notify(true);
   }
 
@@ -441,9 +498,45 @@ export class VillageSimulation {
       this.player.path.length > 0 || performance.now() - this.player.lastNudgeAt < 120;
     brainRouter.refreshActiveSpatialMix();
 
-    if (this.paused) return;
-    const dt = Math.min(0.1, rawDt) * this.speedMultiplier;
+    if (this.paused || Math.abs(this.speedMultiplier) < 0.001) {
+      this.shiftAllBubbleClocks(Math.min(0.1, Math.max(0, rawDt)) * 1000);
+      return;
+    }
+
+    const clampedRaw = Math.min(0.1, Math.max(0, rawDt));
+
+    if (this.speedMultiplier < 0) {
+      if (!this.wasRewinding) {
+        brainRouter.flushAudioQueue();
+        this.wasRewinding = true;
+      }
+      this.stepRewind(clampedRaw);
+      return;
+    }
+
+    if (this.wasRewinding) {
+      this.wasRewinding = false;
+      // Branch forward cleanly from the rewound point by dropping superseded future keyframes
+      while (this.timeline.length > 1 && this.timeline[this.timeline.length - 1].simTimeMs > this.simTimeMs) {
+        this.timeline.pop();
+      }
+      for (const vId of this.runtimes.keys()) {
+        if ((this.lastMoveSimMs.get(vId) ?? -Infinity) > this.simTimeMs) {
+          this.lastMoveSimMs.set(vId, this.simTimeMs);
+        }
+        if ((this.lastThinkSimMs.get(vId) ?? -Infinity) > this.simTimeMs) {
+          this.lastThinkSimMs.set(vId, this.simTimeMs);
+        }
+      }
+    }
+
+    const dt = clampedRaw * this.speedMultiplier;
+    this.simTimeMs += dt * 1000;
     this.tickCount++;
+
+    if (this.speedMultiplier !== 1) {
+      this.shiftAllBubbleClocks((1 - this.speedMultiplier) * clampedRaw * 1000);
+    }
 
     const now = Date.now();
     for (const rt of this.runtimes.values()) {
@@ -453,6 +546,9 @@ export class VillageSimulation {
       if (rt.currentBubble && rt.currentBubble.expiresAt <= now) {
         rt.currentBubble = undefined;
       }
+      if (rt.currentThoughtBubble && rt.currentThoughtBubble.expiresAt <= now) {
+        rt.currentThoughtBubble = undefined;
+      }
 
       if (rt.path.length > 0 && rt.state !== 'conversing' && rt.state !== 'thinking' && rt.state !== 'speaking') {
         rt.state = 'walking';
@@ -460,6 +556,7 @@ export class VillageSimulation {
         if (!hasMore && rt.path.length === 0) {
           rt.state = 'idle';
           rt.lastMoveAt = now;
+          this.lastMoveSimMs.set(rt.id, this.simTimeMs);
         }
       } else if (rt.state === 'walking') {
         rt.state = 'idle';
@@ -467,40 +564,254 @@ export class VillageSimulation {
     }
 
     this.aiAccumulator += dt;
-    if (this.aiAccumulator >= 1.1) {
+    if (this.aiAccumulator >= 1.65) {
       this.aiAccumulator = 0;
       this.runAutonomousDecisions();
       this.notify();
     }
+
+    const lastKf = this.timeline[this.timeline.length - 1];
+    const convSig = this.computeConversationSignature();
+    if (
+      !lastKf ||
+      convSig !== this.lastConvSignature ||
+      this.simTimeMs - lastKf.simTimeMs >= 200
+    ) {
+      this.recordTimelineKeyframe();
+    }
+  }
+
+  getRewindInfo(): { oldestSimMs: number; newestSimMs: number; behindPresentSec: number; canRewind: boolean } {
+    const oldest = this.timeline[0]?.simTimeMs ?? this.simTimeMs;
+    const newest = this.timeline[this.timeline.length - 1]?.simTimeMs ?? this.simTimeMs;
+    return {
+      oldestSimMs: oldest,
+      newestSimMs: newest,
+      behindPresentSec: Math.max(0, (newest - this.simTimeMs) / 1000),
+      canRewind: this.timeline.length > 1 && this.simTimeMs > oldest + 20,
+    };
+  }
+
+  private resetTimelineHistory() {
+    this.timeline = [];
+    this.simTimeMs = 0;
+    this.lastConvSignature = '';
+    this.lastCachedConvSnapshot = [];
+    this.lastMemCache.clear();
+    this.lastFeedCache.clear();
+    this.lastAppliedConvRef = null;
+    this.wasRewinding = false;
+    this.recordTimelineKeyframe();
+  }
+
+  private computeConversationSignature(): string {
+    if (this.conversations.length === 0) return '0';
+    return this.conversations
+      .map(
+        (c) =>
+          `${c.id}:${c.messages.length}:${c.updatedAt}:${c.messages[c.messages.length - 1]?.text.length ?? 0}`,
+      )
+      .join('|');
+  }
+
+  private shiftBubbleEntry(entry: BubbleEntry | undefined, deltaMs: number) {
+    if (!entry || deltaMs === 0) return;
+    entry.expiresAt += deltaMs;
+    if (entry.startedAt !== undefined) {
+      entry.startedAt += deltaMs;
+    }
+  }
+
+  private shiftAllBubbleClocks(deltaMs: number) {
+    if (deltaMs === 0) return;
+    for (const rt of this.runtimes.values()) {
+      this.shiftBubbleEntry(rt.currentBubble, deltaMs);
+      this.shiftBubbleEntry(rt.currentThoughtBubble, deltaMs);
+    }
+  }
+
+  private snapshotBubbleEntry(entry: BubbleEntry | undefined, now: number): BubbleKeyframe | undefined {
+    if (!entry?.text) return undefined;
+    const start = entry.startedAt ?? now;
+    const totalMs = Math.max(500, entry.expiresAt - start);
+    const ageMs = Math.max(0, Math.min(totalMs, now - start));
+    return { text: entry.text, ageMs, totalMs };
+  }
+
+  private restoreBubbleEntry(snap: BubbleKeyframe | undefined, now: number): BubbleEntry | undefined {
+    if (!snap) return undefined;
+    const startedAt = now - snap.ageMs;
+    const expiresAt = startedAt + snap.totalMs;
+    if (expiresAt <= now) return undefined;
+    return { text: snap.text, startedAt, expiresAt };
+  }
+
+  private recordTimelineKeyframe() {
+    const now = Date.now();
+    const convSig = this.computeConversationSignature();
+    if (convSig !== this.lastConvSignature || this.timeline.length === 0) {
+      this.lastConvSignature = convSig;
+      this.lastCachedConvSnapshot = structuredClone(this.conversations);
+    }
+    const villagers: VillagerKeyframe[] = [];
+    for (const rt of this.runtimes.values()) {
+      const memSig = `${rt.memories.length}:${rt.memories[rt.memories.length - 1]?.id ?? ''}`;
+      let memSnap = this.lastMemCache.get(rt.id);
+      if (!memSnap || memSnap.sig !== memSig) {
+        memSnap = { sig: memSig, list: structuredClone(rt.memories) };
+        this.lastMemCache.set(rt.id, memSnap);
+      }
+      const feedArr = rt.worldFeed ?? [];
+      const feedSig = `${feedArr.length}:${feedArr[feedArr.length - 1] ?? ''}`;
+      let feedSnap = this.lastFeedCache.get(rt.id);
+      if (!feedSnap || feedSnap.sig !== feedSig) {
+        feedSnap = { sig: feedSig, list: [...feedArr] };
+        this.lastFeedCache.set(rt.id, feedSnap);
+      }
+      villagers.push({
+        id: rt.id,
+        x: rt.x,
+        y: rt.y,
+        facing: rt.facing,
+        animFrame: rt.animFrame,
+        state: rt.state,
+        currentIntention: rt.currentIntention,
+        activeConversationId: rt.activeConversationId,
+        path: rt.path.map((p) => ({ ...p })),
+        currentBubble: this.snapshotBubbleEntry(rt.currentBubble, now),
+        currentThoughtBubble: this.snapshotBubbleEntry(rt.currentThoughtBubble, now),
+        memories: memSnap.list,
+        worldFeed: feedSnap.list,
+      });
+    }
+
+    this.timeline.push({
+      simTimeMs: this.simTimeMs,
+      tickCount: this.tickCount,
+      conversations: this.lastCachedConvSnapshot,
+      villagers,
+    });
+    if (this.timeline.length > this.maxTimelineFrames) {
+      this.timeline.shift();
+    }
+  }
+
+  private stepRewind(clampedRaw: number) {
+    if (this.timeline.length === 0) {
+      this.shiftAllBubbleClocks(clampedRaw * 1000);
+      return;
+    }
+    const oldest = this.timeline[0];
+    const newest = this.timeline[this.timeline.length - 1];
+    const targetMs = Math.max(
+      oldest.simTimeMs,
+      this.simTimeMs + clampedRaw * this.speedMultiplier * 1000,
+    );
+
+    let lo = 0;
+    let hi = this.timeline.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (this.timeline[mid].simTimeMs <= targetMs) lo = mid;
+      else hi = mid;
+    }
+    const frameA = this.timeline[lo] ?? oldest;
+    const frameB = this.timeline[Math.min(this.timeline.length - 1, lo + 1)] ?? newest;
+    const span = frameB.simTimeMs - frameA.simTimeMs;
+    const alpha = span > 0 ? Math.max(0, Math.min(1, (targetMs - frameA.simTimeMs) / span)) : 0;
+    const discrete = alpha >= 0.5 ? frameB : frameA;
+    const now = Date.now();
+
+    const aById = new Map(frameA.villagers.map((v) => [v.id, v]));
+    const bById = new Map(frameB.villagers.map((v) => [v.id, v]));
+
+    let discreteChanged = false;
+    for (const rt of this.runtimes.values()) {
+      const a = aById.get(rt.id);
+      const b = bById.get(rt.id) ?? a;
+      if (!a || !b) continue;
+
+      rt.x = a.x + (b.x - a.x) * alpha;
+      rt.y = a.y + (b.y - a.y) * alpha;
+      rt.animFrame = a.animFrame + (b.animFrame - a.animFrame) * alpha;
+
+      const d = alpha >= 0.5 ? b : a;
+      rt.facing = d.facing;
+      rt.state = d.state;
+      rt.currentIntention = d.currentIntention;
+      rt.activeConversationId = d.activeConversationId;
+      rt.path = d.path.map((p) => ({ ...p }));
+      rt.currentBubble = this.restoreBubbleEntry(d.currentBubble, now);
+      rt.currentThoughtBubble = this.restoreBubbleEntry(d.currentThoughtBubble, now);
+      if (
+        rt.memories.length !== d.memories.length ||
+        rt.memories[rt.memories.length - 1]?.id !== d.memories[d.memories.length - 1]?.id
+      ) {
+        rt.memories = structuredClone(d.memories);
+        discreteChanged = true;
+      }
+      if (d.worldFeed && rt.worldFeed?.length !== d.worldFeed.length) {
+        rt.worldFeed = [...d.worldFeed];
+      }
+    }
+
+    if (discrete.conversations !== this.lastAppliedConvRef) {
+      this.lastAppliedConvRef = discrete.conversations;
+      this.conversations = structuredClone(discrete.conversations);
+      this.lastConvSignature = this.computeConversationSignature();
+      this.lastCachedConvSnapshot = discrete.conversations;
+      discreteChanged = true;
+    }
+
+    this.simTimeMs = targetMs;
+    this.tickCount = discrete.tickCount;
+    this.notify(discreteChanged);
   }
 
   private stepAlongPathWithCollision(
-    entity: { x: number; y: number; path: Array<{ x: number; y: number }>; facing: Direction; animFrame: number },
+    entity: {
+      x: number;
+      y: number;
+      path: Array<{ x: number; y: number }>;
+      facing: Direction;
+      animFrame: number;
+      avoidSign?: 1 | -1;
+      avoidTargetId?: string;
+    },
     stepSize: number,
     animDelta: number,
     selfId: string,
-  ): { progressed: boolean; reachedEnd: boolean; blockerId: string | null } {
+  ): { progressed: boolean; sidestepped: boolean; reachedEnd: boolean; blockerId: string | null } {
     if (entity.path.length === 0) {
-      return { progressed: false, reachedEnd: true, blockerId: null };
+      return { progressed: false, sidestepped: false, reachedEnd: true, blockerId: null };
     }
     const next = entity.path[0];
     const dx = next.x - entity.x;
     const dy = next.y - entity.y;
     const dist = Math.hypot(dx, dy);
-    entity.facing = computeFacing(entity, next, entity.facing);
-    entity.animFrame += animDelta;
 
     const targetX = dist <= stepSize ? next.x : entity.x + (dx / dist) * stepSize;
     const targetY = dist <= stepSize ? next.y : entity.y + (dy / dist) * stepSize;
 
     const direct = this.isStepWalkableAndUnblocked(targetX, targetY, entity.x, entity.y, selfId);
     if (direct.ok) {
+      if (dist > 0.015) {
+        entity.facing = computeFacing(entity, next, entity.facing);
+      }
+      entity.animFrame += animDelta;
       entity.x = targetX;
       entity.y = targetY;
+      entity.avoidSign = undefined;
+      entity.avoidTargetId = undefined;
       if (dist <= stepSize) {
         entity.path.shift();
       }
-      return { progressed: true, reachedEnd: entity.path.length === 0, blockerId: null };
+      return {
+        progressed: true,
+        sidestepped: false,
+        reachedEnd: entity.path.length === 0,
+        blockerId: null,
+      };
     }
 
     // Try sliding along forward axes for wall corners (only when not colliding with a character,
@@ -509,21 +820,28 @@ export class VillageSimulation {
       if (Math.abs(dx) > 0.05) {
         const slideX = entity.x + Math.sign(dx) * Math.min(stepSize, Math.abs(dx));
         if (this.isStepWalkableAndUnblocked(slideX, entity.y, entity.x, entity.y, selfId).ok) {
+          entity.facing = dx >= 0 ? 'right' : 'left';
+          entity.animFrame += animDelta * 0.7;
           entity.x = slideX;
-          return { progressed: true, reachedEnd: false, blockerId: null };
+          return { progressed: true, sidestepped: false, reachedEnd: false, blockerId: null };
         }
       }
       if (Math.abs(dy) > 0.05) {
         const slideY = entity.y + Math.sign(dy) * Math.min(stepSize, Math.abs(dy));
         if (this.isStepWalkableAndUnblocked(entity.x, slideY, entity.x, entity.y, selfId).ok) {
+          entity.facing = dy >= 0 ? 'down' : 'up';
+          entity.animFrame += animDelta * 0.7;
           entity.y = slideY;
-          return { progressed: true, reachedEnd: false, blockerId: null };
+          return { progressed: true, sidestepped: false, reachedEnd: false, blockerId: null };
         }
       }
     }
 
-    // Perpendicular sidestep so characters never deadlock head-on along cardinal A* segments
-    const pickSideOrder = (axis: 'x' | 'y'): [number, number] => {
+    // Perpendicular sidestep with locked avoidance side per blocker so characters never oscillate left-right
+    const pickSideOrder = (axis: 'x' | 'y'): [1 | -1, 1 | -1] => {
+      if (direct.blockerId && entity.avoidTargetId === direct.blockerId && entity.avoidSign) {
+        return [entity.avoidSign, (entity.avoidSign === 1 ? -1 : 1) as 1 | -1];
+      }
       if (direct.blockerId) {
         const blocker =
           direct.blockerId === this.player.id ? this.player : this.runtimes.get(direct.blockerId);
@@ -544,7 +862,17 @@ export class VillageSimulation {
         const sideX = entity.x + s * sideStep;
         if (this.isStepWalkableAndUnblocked(sideX, entity.y, entity.x, entity.y, selfId).ok) {
           entity.x = sideX;
-          return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+          entity.animFrame += animDelta * 0.55;
+          if (direct.blockerId) {
+            entity.avoidTargetId = direct.blockerId;
+            entity.avoidSign = s;
+          }
+          return {
+            progressed: true,
+            sidestepped: true,
+            reachedEnd: false,
+            blockerId: direct.blockerId,
+          };
         }
       }
     } else {
@@ -552,12 +880,22 @@ export class VillageSimulation {
         const sideY = entity.y + s * sideStep;
         if (this.isStepWalkableAndUnblocked(entity.x, sideY, entity.x, entity.y, selfId).ok) {
           entity.y = sideY;
-          return { progressed: true, reachedEnd: false, blockerId: direct.blockerId };
+          entity.animFrame += animDelta * 0.55;
+          if (direct.blockerId) {
+            entity.avoidTargetId = direct.blockerId;
+            entity.avoidSign = s;
+          }
+          return {
+            progressed: true,
+            sidestepped: true,
+            reachedEnd: false,
+            blockerId: direct.blockerId,
+          };
         }
       }
     }
 
-    return { progressed: false, reachedEnd: false, blockerId: direct.blockerId };
+    return { progressed: false, sidestepped: false, reachedEnd: false, blockerId: direct.blockerId };
   }
 
   private advanceEntityPath(
@@ -579,9 +917,56 @@ export class VillageSimulation {
       rt.y = safe.y;
     }
     const res = this.stepAlongPathWithCollision(rt, speed * dt, dt * 5, rt.id);
+    const now = Date.now();
 
-    // If a character blocked our direct step, immediately reroute around their tile if we aren't about to converse
-    if (res.blockerId && rt.path.length > 0 && (rt.blockedTicks ?? 0) === 0) {
+    if (res.progressed && !res.sidestepped) {
+      rt.blockedTicks = 0;
+      rt.sidestepTicks = 0;
+      return !res.reachedEnd;
+    }
+
+    if (res.sidestepped) {
+      rt.sidestepTicks = (rt.sidestepTicks ?? 0) + 1;
+      // Throttle A* reroutes while sidestepping so villagers do not 60Hz ping-pong around each other
+      if (
+        res.blockerId &&
+        rt.path.length > 0 &&
+        (rt.sidestepTicks === 4 || rt.sidestepTicks === 12) &&
+        now - (rt.lastRerouteAt ?? 0) >= 420
+      ) {
+        const goal = rt.path[rt.path.length - 1];
+        const rerouted = findPath(
+          this.map,
+          { x: rt.x, y: rt.y },
+          goal,
+          this.getOccupiedTileSet(rt.id),
+        );
+        rt.lastRerouteAt = now;
+        if (rerouted.length > 0) {
+          rt.path = rerouted;
+        }
+      }
+      if (rt.sidestepTicks > 20) {
+        rt.path = [];
+        rt.sidestepTicks = 0;
+        rt.blockedTicks = 0;
+        rt.avoidSign = undefined;
+        rt.avoidTargetId = undefined;
+        rt.lastMoveAt = now - 2200;
+        return false;
+      }
+      return true;
+    }
+
+    rt.blockedTicks = (rt.blockedTicks ?? 0) + 1;
+
+    // If a character blocked our initial step, reroute once cleanly with a cooldown
+    if (
+      res.blockerId &&
+      rt.path.length > 0 &&
+      rt.blockedTicks === 1 &&
+      now - (rt.lastRerouteAt ?? 0) >= 420
+    ) {
       const goal = rt.path[rt.path.length - 1];
       const rerouted = findPath(
         this.map,
@@ -589,17 +974,11 @@ export class VillageSimulation {
         goal,
         this.getOccupiedTileSet(rt.id),
       );
+      rt.lastRerouteAt = now;
       if (rerouted.length > 0) {
         rt.path = rerouted;
       }
     }
-
-    if (res.progressed) {
-      rt.blockedTicks = 0;
-      return !res.reachedEnd;
-    }
-
-    rt.blockedTicks = (rt.blockedTicks ?? 0) + 1;
 
     // Meeting another villager up close sparks a natural conversation when autoConverse is on
     if (
@@ -609,7 +988,6 @@ export class VillageSimulation {
       !rt.activeConversationId
     ) {
       const otherRt = this.runtimes.get(res.blockerId);
-      const now = Date.now();
       if (
         otherRt &&
         !otherRt.activeConversationId &&
@@ -621,19 +999,23 @@ export class VillageSimulation {
         rt.path = [];
         otherRt.path = [];
         rt.blockedTicks = 0;
+        rt.sidestepTicks = 0;
+        rt.avoidSign = undefined;
+        rt.avoidTargetId = undefined;
         this.startAutonomousConversation(rt.id, otherRt.id);
         return false;
       }
     }
 
     // Reroute cleanly around persistent obstacles instead of staying frozen
-    if (rt.blockedTicks === 6 || rt.blockedTicks === 12) {
+    if ((rt.blockedTicks === 6 || rt.blockedTicks === 12) && now - (rt.lastRerouteAt ?? 0) >= 350) {
       const goal = rt.path[rt.path.length - 1];
       if (goal) {
         const distToGoal = Math.hypot(goal.x - rt.x, goal.y - rt.y);
         if (distToGoal < 1.35) {
           rt.path = [];
           rt.blockedTicks = 0;
+          rt.sidestepTicks = 0;
           return false;
         }
         const rerouted = findPath(
@@ -642,6 +1024,7 @@ export class VillageSimulation {
           goal,
           this.getOccupiedTileSet(rt.id),
         );
+        rt.lastRerouteAt = now;
         if (rerouted.length > 0) {
           rt.path = rerouted;
           return true;
@@ -652,8 +1035,11 @@ export class VillageSimulation {
     if (rt.blockedTicks > 18) {
       rt.path = [];
       rt.blockedTicks = 0;
+      rt.sidestepTicks = 0;
+      rt.avoidSign = undefined;
+      rt.avoidTargetId = undefined;
       // Shorten wait before next autonomous move so villager immediately picks a clear path
-      rt.lastMoveAt = Date.now() - 2200;
+      rt.lastMoveAt = now - 2200;
       return false;
     }
     return true;
@@ -675,7 +1061,8 @@ export class VillageSimulation {
         ) {
           continue;
         }
-        if (now - a.lastThinkAt < 6500) continue;
+        const lastThinkSim = this.lastThinkSimMs.get(a.id) ?? -9999;
+        if (this.simTimeMs - lastThinkSim < 10500 || now - a.lastThinkAt < 3500) continue;
 
         for (let j = i + 1; j < runtimesList.length; j++) {
           const b = runtimesList[j];
@@ -687,10 +1074,13 @@ export class VillageSimulation {
           ) {
             continue;
           }
-          if (now - b.lastThinkAt < 6500) continue;
+          const bThinkSim = this.lastThinkSimMs.get(b.id) ?? -9999;
+          if (this.simTimeMs - bThinkSim < 10500 || now - b.lastThinkAt < 3500) continue;
 
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
-          if (dist <= 3.8 && Math.random() < 0.85) {
+          if (dist <= 3.8 && Math.random() < 0.65) {
+            this.lastThinkSimMs.set(a.id, this.simTimeMs);
+            this.lastThinkSimMs.set(b.id, this.simTimeMs);
             this.startAutonomousConversation(a.id, b.id);
             break;
           }
@@ -702,12 +1092,14 @@ export class VillageSimulation {
     for (const rt of runtimesList) {
       if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0) continue;
       if (this.planningVillagers.has(rt.id)) continue;
-      if (now - rt.lastMoveAt < 2800 + Math.random() * 3000) continue;
+      const lastMoveSim = this.lastMoveSimMs.get(rt.id) ?? -9999;
+      if (this.simTimeMs - lastMoveSim < 4200 + Math.random() * 4400) continue;
 
       const cfg = this.configs.get(rt.id);
       if (!cfg) continue;
 
       this.planningVillagers.add(rt.id);
+      this.lastMoveSimMs.set(rt.id, this.simTimeMs);
       void this.planNextVillagerAction(cfg, rt).finally(() => {
         this.planningVillagers.delete(rt.id);
       });
@@ -747,7 +1139,7 @@ export class VillageSimulation {
   private async planNextVillagerAction(cfg: VillagerConfig, rt: VillagerRuntime) {
     const now = Date.now();
     const others = [...this.configs.values()].filter((v) => v.id !== cfg.id);
-    const landmarks = this.getLandmarks().map((l) => (l.tag ? `#${l.tag} (${l.label})` : l.label));
+    const landmarks = this.getLandmarks().map((l) => l.label);
 
     const decision = await brainRouter.decideVillagerNextAction({
       villager: cfg,
@@ -815,6 +1207,15 @@ export class VillageSimulation {
       rt.path = path;
       rt.state = 'walking';
       this.appendWorldEvent(rt, `Decided: ${decision.motive}`);
+      if (!isTextTooSimilar(decision.motive, rt.recentUtterances ?? [], 0.52)) {
+        rt.recentUtterances = [...(rt.recentUtterances ?? []), decision.motive].slice(-6);
+        const nowBubble = Date.now();
+        rt.currentThoughtBubble = {
+          text: decision.motive,
+          startedAt: nowBubble,
+          expiresAt: nowBubble + computeBubbleDurationMs(decision.motive, 4800, 12000),
+        };
+      }
       if (this.modelSettings.eavesdropThoughts && this.modelSettings.proximityRadiusTiles > 0) {
         const thoughtResolver = () => {
           const listener = this.getListenerPosition();
@@ -827,9 +1228,7 @@ export class VillageSimulation {
           );
         };
         const mix = thoughtResolver();
-        if (mix.inRange && !isTextTooSimilar(decision.motive, rt.recentUtterances ?? [], 0.52)) {
-          rt.recentUtterances = [...(rt.recentUtterances ?? []), decision.motive].slice(-6);
-          rt.currentBubble = { text: `(${decision.motive})`, expiresAt: Date.now() + 3600 };
+        if (mix.inRange) {
           void brainRouter.speakThought(decision.motive, cfg, this.modelSettings, thoughtResolver);
         }
       }
@@ -925,7 +1324,7 @@ export class VillageSimulation {
         best = lm;
       }
     }
-    return best.tag ? `#${best.tag} (${best.label})` : best.label;
+    return best.label;
   }
 
   private async emitNarrationTurn(
@@ -1062,21 +1461,30 @@ export class VillageSimulation {
 
         const parsed = parseDialogueAndNarration(res.text, speakerCfg.name);
 
-        if (parsed.thoughts.length > 0 && this.modelSettings.eavesdropThoughts) {
-          for (const thought of parsed.thoughts) {
-            conv.messages.push({
-              id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              senderId: speakerCfg.id,
-              senderName: speakerCfg.name,
-              text: thought,
-              timestamp: Date.now(),
-              kind: 'thought',
-              source: res.source,
-            });
-            conv.updatedAt = Date.now();
-            this.notify(true);
-            if (hearThoughts) {
-              await brainRouter.speakThought(thought, speakerCfg, this.modelSettings, resolver);
+        if (parsed.thoughts.length > 0) {
+          const joinedThought = parsed.thoughts.join(' ');
+          const nowTh = Date.now();
+          speakerRt.currentThoughtBubble = {
+            text: joinedThought,
+            startedAt: nowTh,
+            expiresAt: nowTh + computeBubbleDurationMs(joinedThought, 5000, 14000),
+          };
+          if (this.modelSettings.eavesdropThoughts) {
+            for (const thought of parsed.thoughts) {
+              conv.messages.push({
+                id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                senderId: speakerCfg.id,
+                senderName: speakerCfg.name,
+                text: thought,
+                timestamp: Date.now(),
+                kind: 'thought',
+                source: res.source,
+              });
+              conv.updatedAt = Date.now();
+              this.notify(true);
+              if (hearThoughts) {
+                await brainRouter.speakThought(thought, speakerCfg, this.modelSettings, resolver);
+              }
             }
           }
         }
@@ -1094,11 +1502,13 @@ export class VillageSimulation {
         }
 
         const spokenLine = parsed.spoken || parsed.display;
+        const nowSp = Date.now();
         speakerRt.lastLatencyMs = res.durationMs;
         speakerRt.state = 'speaking';
         speakerRt.currentBubble = {
           text: spokenLine,
-          expiresAt: Date.now() + 5500,
+          startedAt: nowSp,
+          expiresAt: nowSp + computeBubbleDurationMs(spokenLine, 5800, 16000),
         };
         conv.messages.push({
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1246,7 +1656,7 @@ export class VillageSimulation {
     const pois = this.map.pointsOfInterest ?? [];
     if (pois.length > 0) {
       lines.push(
-        `Points of interest: ${pois.map((p) => `#${p.tag} (${p.label}${p.description ? `: ${p.description}` : ''})`).join(', ')}`,
+        `Points of interest: ${pois.map((p) => `${p.label}${p.description ? ` (${p.description})` : ''}`).join(', ')}`,
       );
     }
 
@@ -1359,7 +1769,7 @@ export class VillageSimulation {
       const off = ringOffsets[slotIndex % ringOffsets.length];
       const goal = findNearestWalkableTile(this.map, landmark.x + off.dx, landmark.y + off.dy);
       const path = findBestPath(goal);
-      rt.currentIntention = landmark.tag ? `Headed to #${landmark.tag} (${landmark.label})` : `Headed to ${landmark.label}`;
+      rt.currentIntention = `Headed to ${landmark.label}`;
       rt.activityLabel = rt.currentIntention;
       if (path.length > 0) {
         rt.path = path;
@@ -1475,19 +1885,28 @@ export class VillageSimulation {
       });
 
       const parsed = parseDialogueAndNarration(res.text, cfg.name);
-      if (parsed.thoughts.length > 0 && this.modelSettings.eavesdropThoughts) {
-        for (const thought of parsed.thoughts) {
-          conv.messages.push({
-            id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            senderId: cfg.id,
-            senderName: cfg.name,
-            text: thought,
-            timestamp: Date.now(),
-            kind: 'thought',
-            source: res.source,
-          });
-          if (hearThoughts) {
-            await brainRouter.speakThought(thought, cfg, this.modelSettings, resolver);
+      if (parsed.thoughts.length > 0) {
+        const joinedThought = parsed.thoughts.join(' ');
+        const nowTh = Date.now();
+        rt.currentThoughtBubble = {
+          text: joinedThought,
+          startedAt: nowTh,
+          expiresAt: nowTh + computeBubbleDurationMs(joinedThought, 5000, 14000),
+        };
+        if (this.modelSettings.eavesdropThoughts) {
+          for (const thought of parsed.thoughts) {
+            conv.messages.push({
+              id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              senderId: cfg.id,
+              senderName: cfg.name,
+              text: thought,
+              timestamp: Date.now(),
+              kind: 'thought',
+              source: res.source,
+            });
+            if (hearThoughts) {
+              await brainRouter.speakThought(thought, cfg, this.modelSettings, resolver);
+            }
           }
         }
       }
@@ -1504,12 +1923,17 @@ export class VillageSimulation {
       }
 
       const finalSpoken = parsed.spoken || parsed.display;
+      const nowSp = Date.now();
       streamingMsg.text = finalSpoken;
       streamingMsg.reasoning = parsed.reasoning.join('\n\n') || undefined;
       streamingMsg.kind = 'speech';
       streamingMsg.source = res.source;
       rt.lastLatencyMs = res.durationMs;
-      rt.currentBubble = { text: finalSpoken, expiresAt: Date.now() + 7000 };
+      rt.currentBubble = {
+        text: finalSpoken,
+        startedAt: nowSp,
+        expiresAt: nowSp + computeBubbleDurationMs(finalSpoken, 6500, 17000),
+      };
       const summary = `${this.player.name} said: "${userText.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`;
       rt.memories.push({
         id: `mem-u-${Date.now()}`,

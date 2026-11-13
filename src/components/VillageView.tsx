@@ -1,13 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bug,
+  Captions,
   ChevronDown,
   ChevronRight,
+  Cloud,
   Compass,
   Headphones,
   LayoutList,
+  MessageSquare,
   Mic,
   MicOff,
+  Palette,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Play,
   RotateCcw,
@@ -16,12 +22,22 @@ import {
   Tag,
   Volume2,
   VolumeX,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 import { resolvePublicUrl } from '../utils/assetUrl';
+import { AestheticStudioPanel } from './AestheticStudioPanel';
+import { generateProceduralPlayerCustomSprite } from '../engine/playerSpriteGenerator';
+import {
+  detectWorldTheme,
+  loadAestheticSettings,
+  resolveAestheticTokens,
+  saveAestheticSettings,
+  type AestheticSettings,
+} from '../utils/aestheticThemes';
 import {
   computeSpatialMix,
   EAVESDROP_SLIDER_MAX,
@@ -30,8 +46,11 @@ import {
   MicRecorder,
 } from '../ai/audioPipeline';
 import {
+  createOverlayCollector,
   drawAnimatedSprites,
   drawPlayer,
+  drawPoiMarkers,
+  drawResolvedOverlays,
   drawTileGrid,
   drawVillager,
   getCachedImage,
@@ -39,7 +58,21 @@ import {
   getPresetSpriteFrame,
 } from '../engine/renderer';
 import type { VillageSimulation } from '../engine/simulation';
-import type { ModelSettings, VillagerConfig, VillagerRuntime } from '../engine/types';
+import type {
+  ModelSettings,
+  PointOfInterest,
+  VillagerConfig,
+  VillagerRuntime,
+} from '../engine/types';
+import { abbreviatePersonName, tokenizeRichText } from '../utils/formatNames';
+import {
+  SLIDER_MAX_POS,
+  SPEED_LOG_MARKS,
+  formatSpeedLabel,
+  sliderPosToSpeed,
+  speedToSliderPos,
+  speedToTrackPercent,
+} from '../utils/speedSlider';
 
 interface VillageViewProps {
   sim: VillageSimulation;
@@ -52,6 +85,8 @@ interface VillageViewProps {
 interface MentionCandidate {
   id: string;
   name: string;
+  displayLabel: string;
+  tokenText: string;
   role: string;
   accentColor: string;
   prefix?: '@' | '#';
@@ -59,16 +94,108 @@ interface MentionCandidate {
   searchAliases?: string;
 }
 
-function findActiveMention(
+function renderRichLabels(
   text: string,
-  caret: number,
-): { trigger: '@' | '#'; start: number; query: string } | null {
-  const before = text.slice(0, caret);
+  villagers: VillagerConfig[],
+  pois: PointOfInterest[],
+  narratorName: string,
+  variant: 'light' | 'dark' = 'light',
+): React.ReactNode {
+  if (!text) return text;
+  const actorNames = ['all', 'world', narratorName, ...villagers.map((v) => v.name)].filter(Boolean);
+  const segments = tokenizeRichText(text, pois, actorNames);
+  return segments.map((seg, idx) => {
+    if (seg.kind === 'poi') {
+      return (
+        <strong
+          key={`poi-${idx}`}
+          className={`font-bold ${variant === 'dark' ? 'text-amber-200' : 'text-amber-700 dark:text-amber-300'}`}
+        >
+          {seg.text}
+        </strong>
+      );
+    }
+    if (seg.kind === 'actor') {
+      return (
+        <strong
+          key={`at-${idx}`}
+          className={`font-bold ${variant === 'dark' ? 'text-sky-200' : 'text-indigoFolk'}`}
+        >
+          {seg.text}
+        </strong>
+      );
+    }
+    return <React.Fragment key={`txt-${idx}`}>{seg.text}</React.Fragment>;
+  });
+}
+
+interface ActiveComposerMention {
+  trigger: '@' | '#';
+  query: string;
+  node: Text;
+  startOffset: number;
+  endOffset: number;
+}
+
+function detectActiveMentionInComposer(root: HTMLElement | null): ActiveComposerMention | null {
+  if (!root) return null;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed || !root.contains(range.startContainer)) return null;
+  if (range.startContainer.nodeType !== Node.TEXT_NODE) return null;
+
+  const textNode = range.startContainer as Text;
+  const before = (textNode.textContent ?? '').slice(0, range.startOffset);
   const match = before.match(/(?:^|\s)([@#])([^\s\n@#]*)$/);
   if (!match) return null;
   const trigger = match[1] as '@' | '#';
-  const idx = before.lastIndexOf(trigger);
-  return { trigger, start: idx, query: match[2] };
+  const query = match[2] ?? '';
+  const startOffset = range.startOffset - (query.length + 1);
+  if (startOffset < 0) return null;
+  return {
+    trigger,
+    query,
+    node: textNode,
+    startOffset,
+    endOffset: range.startOffset,
+  };
+}
+
+function serializeComposerNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? '';
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return '';
+  }
+  const el = node as HTMLElement;
+  if (el.dataset.mentionToken) {
+    return el.dataset.mentionToken;
+  }
+  if (el.tagName === 'BR') {
+    return '\n';
+  }
+  let out = '';
+  for (const child of el.childNodes) {
+    out += serializeComposerNode(child);
+  }
+  return out;
+}
+
+function serializeComposerText(root: HTMLElement | null): string {
+  if (!root) return '';
+  let out = '';
+  root.childNodes.forEach((child, idx) => {
+    const isBlock =
+      child.nodeType === Node.ELEMENT_NODE &&
+      ((child as HTMLElement).tagName === 'DIV' || (child as HTMLElement).tagName === 'P');
+    if (isBlock && idx > 0 && !out.endsWith('\n')) {
+      out += '\n';
+    }
+    out += serializeComposerNode(child);
+  });
+  return out;
 }
 
 const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }> = ({
@@ -90,7 +217,12 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
       ctx.clearRect(0, 0, size, size);
       const img = getCachedImage(frame.url);
       if (img) {
-        ctx.drawImage(img, frame.sx, frame.sy, frame.sw, frame.sh, 0, 0, size, size);
+        const scale = Math.min(size / frame.sw, size / frame.sh);
+        const dw = Math.max(1, Math.round(frame.sw * scale));
+        const dh = Math.max(1, Math.round(frame.sh * scale));
+        const dx = Math.round((size - dw) / 2);
+        const dy = Math.round((size - dh) / 2);
+        ctx.drawImage(img, frame.sx, frame.sy, frame.sw, frame.sh, dx, dy, dw, dh);
       } else {
         ctx.fillStyle = villager.accentColor;
         ctx.fillRect(4, 4, size - 8, size - 8);
@@ -107,7 +239,7 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
       ref={thumbRef}
       width={size}
       height={size}
-      className="pixel-canvas shrink-0 rounded border border-borderFolk/70 bg-stone-900/20"
+      className="pixel-canvas shrink-0"
       style={{ width: size, height: size }}
     />
   );
@@ -121,11 +253,39 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onOpenMonitor,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const lastRangeRef = useRef<Range | null>(null);
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? 'narrator');
   const [tick, setTick] = useState(0);
   const [showPaths, setShowPaths] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
+  const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
+  const [showThoughtBubbles, setShowThoughtBubbles] = useState(true);
+  const [showScribeSubtitles, setShowScribeSubtitles] = useState(true);
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [aestheticSettings, setAestheticSettings] = useState<AestheticSettings>(() =>
+    loadAestheticSettings(),
+  );
+  const handleUpdateAesthetic = (next: AestheticSettings) => {
+    setAestheticSettings(next);
+    saveAestheticSettings(next);
+  };
+  const worldTheme = detectWorldTheme(sim.map);
+  const aestheticTokens = resolveAestheticTokens(aestheticSettings, worldTheme);
+  const playerCustomSprite = generateProceduralPlayerCustomSprite(
+    aestheticSettings.player,
+    worldTheme,
+  );
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('seloai:sidebar-open');
+      if (saved === 'false') return false;
+    } catch {
+      // ignore storage errors
+    }
+    return true;
+  });
+  const subtitleBoxRef = useRef<HTMLDivElement | null>(null);
   const [rosterView, setRosterView] = useState<'cards' | 'compact'>('cards');
   const [rosterCollapsed, setRosterCollapsed] = useState(false);
   const [detailCollapsed, setDetailCollapsed] = useState(false);
@@ -140,7 +300,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [scriptSearch, setScriptSearch] = useState('');
   const [activeSpeech, setActiveSpeech] = useState(brainRouter.activeSpeechInfo);
   const [chatInput, setChatInput] = useState('');
-  const [mentionMatch, setMentionMatch] = useState<{ trigger: '@' | '#'; start: number; query: string } | null>(null);
+  const [mentionMatch, setMentionMatch] = useState<ActiveComposerMention | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -181,7 +341,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
     window.addEventListener('pointerup', onUp);
   };
 
-  const cameraRef = useRef({ x: 0, y: 0, zoom: 1.15 });
+  const cameraRef = useRef<{
+    x: number;
+    y: number;
+    zoom: number;
+    targetZoom: number;
+    anchor: { dx: number; dy: number } | null;
+  }>({ x: 0, y: 0, zoom: 1.15, targetZoom: 1.15, anchor: null });
+  const lastActiveSpeedRef = useRef<number>(1);
   const dragRef = useRef<{ active: boolean; moved: boolean; lastX: number; lastY: number }>({
     active: false,
     moved: false,
@@ -219,8 +386,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
   // Keyboard movement (WASD / Arrows) when not typing in input
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const targetEl = e.target as HTMLElement | null;
+      const tag = targetEl?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || targetEl?.isContentEditable) return;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(e.key)) {
         keysRef.current.add(e.key.toLowerCase());
       }
@@ -279,13 +447,29 @@ export const VillageView: React.FC<VillageViewProps> = ({
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           ctx.imageSmoothingEnabled = false;
 
+          const cam = cameraRef.current;
+          const zoomDiff = cam.targetZoom - cam.zoom;
+          if (Math.abs(zoomDiff) > 0.0004) {
+            const prevZoom = cam.zoom;
+            const easeAlpha = 1 - Math.exp(-Math.max(0.001, dt) * 12);
+            cam.zoom += zoomDiff * easeAlpha;
+            if (Math.abs(cam.targetZoom - cam.zoom) <= 0.0004) {
+              cam.zoom = cam.targetZoom;
+            }
+            if (cam.anchor && !followSelected && !dragRef.current.active) {
+              cam.x += cam.anchor.dx * (1 / prevZoom - 1 / cam.zoom);
+              cam.y += cam.anchor.dy * (1 / prevZoom - 1 / cam.zoom);
+            }
+          }
+
           if (followSelected && selectedId) {
             const rt = sim.runtimes.get(selectedId);
             if (rt) {
               const tx = (rt.x + 0.5) * sim.map.tileDim;
               const ty = (rt.y + 0.5) * sim.map.tileDim;
-              cameraRef.current.x += (tx - cameraRef.current.x) * 0.12;
-              cameraRef.current.y += (ty - cameraRef.current.y) * 0.12;
+              cam.anchor = null;
+              cam.x += (tx - cam.x) * 0.12;
+              cam.y += (ty - cam.y) * 0.12;
             }
           }
 
@@ -361,37 +545,17 @@ export const VillageView: React.FC<VillageViewProps> = ({
         ctx.restore();
       }
 
+      const overlayCollector = createOverlayCollector();
+
       // Points of Interest (#Tag markers) when labels are enabled
       if (showLabels && (map.pointsOfInterest ?? []).length > 0) {
-        ctx.save();
-        ctx.font = '700 10px Inter, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        for (const poi of map.pointsOfInterest ?? []) {
-          const cx = (poi.x + 0.5) * map.tileDim;
-          const cy = (poi.y + 0.5) * map.tileDim;
-          ctx.fillStyle = 'rgba(217, 119, 6, 0.9)';
-          ctx.strokeStyle = '#fffbeb';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(cx, cy - 6);
-          ctx.lineTo(cx + 6, cy);
-          ctx.lineTo(cx, cy + 6);
-          ctx.lineTo(cx - 6, cy);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-
-          const tagText = `#${poi.tag}`;
-          const tw = ctx.measureText(tagText).width + 10;
-          ctx.fillStyle = 'rgba(24, 22, 20, 0.78)';
-          ctx.beginPath();
-          ctx.roundRect(cx - tw / 2, cy - 22, tw, 14, 4);
-          ctx.fill();
-          ctx.fillStyle = '#fde68a';
-          ctx.fillText(tagText, cx, cy - 14.5);
-        }
-        ctx.restore();
+        drawPoiMarkers(
+          ctx,
+          map.pointsOfInterest ?? [],
+          map.tileDim,
+          aestheticTokens.canvasTheme,
+          overlayCollector,
+        );
       }
 
       // Y-sort entities (villagers + player)
@@ -401,22 +565,49 @@ export const VillageView: React.FC<VillageViewProps> = ({
         if (!cfg) continue;
         entities.push({
           y: rt.y,
-          draw: () => drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId, showLabels),
+          draw: () =>
+            drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId, showLabels, {
+              showSpeechBubbles,
+              showThoughtBubbles,
+              pois: map.pointsOfInterest,
+              theme: aestheticTokens.canvasTheme,
+              collector: overlayCollector,
+            }),
         });
       }
       entities.push({
         y: sim.player.y,
-        draw: () => drawPlayer(ctx, sim.player, map.tileDim, showLabels),
+        draw: () =>
+          drawPlayer(ctx, sim.player, map.tileDim, {
+            showLabels,
+            playerSprite: playerCustomSprite,
+            theme: aestheticTokens.canvasTheme,
+            collector: overlayCollector,
+          }),
       });
       entities.sort((a, b) => a.y - b.y);
       for (const ent of entities) ent.draw();
+
+      // Pass 2: de-overlapped name pills, POI markers, thought & speech bubbles
+      drawResolvedOverlays(ctx, overlayCollector, aestheticSettings.deoverlapLabels);
 
       ctx.restore();
     };
 
     rafId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafId);
-  }, [sim, selectedId, showPaths, showLabels, followSelected]);
+  }, [
+    sim,
+    selectedId,
+    showPaths,
+    showLabels,
+    followSelected,
+    showSpeechBubbles,
+    showThoughtBubbles,
+    aestheticSettings,
+    worldTheme,
+    playerCustomSprite,
+  ]);
 
   const screenToWorld = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -441,6 +632,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       dragRef.current.moved = true;
       setFollowSelected(false);
     }
+    cameraRef.current.anchor = null;
     cameraRef.current.x -= dx / cameraRef.current.zoom;
     cameraRef.current.y -= dy / cameraRef.current.zoom;
     dragRef.current.lastX = e.clientX;
@@ -477,8 +669,23 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    cameraRef.current.zoom = Math.min(3.5, Math.max(0.45, cameraRef.current.zoom * factor));
+    const rect = e.currentTarget.getBoundingClientRect();
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;
+    else if (e.deltaMode === 2) dy *= 320;
+    const clampedDy = Math.max(-90, Math.min(90, dy));
+    if (clampedDy === 0) return;
+
+    const sensitivity = e.ctrlKey ? 0.0045 : 0.0014;
+    const factor = Math.exp(-clampedDy * sensitivity);
+    cameraRef.current.targetZoom = Math.min(
+      3.5,
+      Math.max(0.45, cameraRef.current.targetZoom * factor),
+    );
+    cameraRef.current.anchor = {
+      dx: e.clientX - rect.left - rect.width / 2,
+      dy: e.clientY - rect.top - rect.height / 2,
+    };
   };
 
   const narratorName = settings.narratorName.trim() || 'Scribe';
@@ -553,7 +760,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
     {
       id: 'all',
       name: 'all',
-      role: 'Broadcast instruction to every villager (@world)',
+      displayLabel: 'all',
+      tokenText: '@all',
+      role: 'Broadcast instruction to every villager (world)',
       accentColor: '#2a9d8f',
       statusHint: `${villagers.length} folk`,
       searchAliases: 'all world everyone village',
@@ -561,7 +770,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
     {
       id: 'world',
       name: 'world',
-      role: 'Broadcast instruction across Selo (@all)',
+      displayLabel: 'world',
+      tokenText: '@world',
+      role: 'Broadcast instruction across Selo (all)',
       accentColor: '#2a9d8f',
       statusHint: `${villagers.length} folk`,
       searchAliases: 'world all everyone village',
@@ -569,6 +780,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
     {
       id: 'narrator',
       name: narratorName,
+      displayLabel: narratorName,
+      tokenText: `@${narratorName}`,
       role: `Narrator (${settings.narratorStyle})`,
       accentColor: '#c98a3b',
       statusHint: settings.narratorEnabled ? 'voice on' : 'text',
@@ -576,6 +789,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
     ...villagers.map((v) => ({
       id: v.id,
       name: v.name,
+      displayLabel: v.name,
+      tokenText: `@${v.name}`,
       role: v.role,
       accentColor: v.accentColor,
       statusHint: sim.runtimes.get(v.id)?.state,
@@ -585,7 +800,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const poiCandidates: MentionCandidate[] = (sim.map.pointsOfInterest ?? []).map((p) => ({
     id: `poi-${p.id}`,
     name: p.tag,
-    role: p.description ? `${p.label} — ${p.description}` : p.label,
+    displayLabel: p.label || p.tag,
+    tokenText: `#${p.tag}`,
+    role: p.description ?? p.tag,
     accentColor: '#d97706',
     prefix: '#',
     statusHint: `(${p.x}, ${p.y})`,
@@ -597,6 +814,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     ? activePool.filter((c) => {
         const q = mentionMatch.query.toLowerCase();
         return (
+          c.displayLabel.toLowerCase().includes(q) ||
           c.name.toLowerCase().includes(q) ||
           c.role.toLowerCase().includes(q) ||
           Boolean(c.searchAliases?.toLowerCase().includes(q))
@@ -607,47 +825,135 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const clampedMentionIdx =
     filteredMentions.length > 0 ? Math.min(mentionIdx, filteredMentions.length - 1) : 0;
 
-  const insertMentionCandidate = (cand: MentionCandidate) => {
-    const start = mentionMatch?.start ?? chatInput.length;
-    const caret = textareaRef.current?.selectionStart ?? chatInput.length;
-    const before = chatInput.slice(0, start);
-    const after = chatInput.slice(caret);
-    const inserted = `${cand.prefix ?? '@'}${cand.name} `;
-    const nextText = `${before}${inserted}${after}`;
-    setChatInput(nextText);
-    setMentionMatch(null);
-    setMentionIdx(0);
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.focus();
-      const nextCaret = before.length + inserted.length;
-      el.setSelectionRange(nextCaret, nextCaret);
-    });
+  const syncComposerState = () => {
+    const root = composerRef.current;
+    if (!root) return;
+    const rawText = serializeComposerText(root);
+    if (!rawText && root.childNodes.length > 0) {
+      root.innerHTML = '';
+    }
+    setChatInput(rawText);
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) {
+      lastRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+    const nextMatch = detectActiveMentionInComposer(root);
+    setMentionMatch(nextMatch);
+    if (nextMatch) {
+      setMentionIdx((prev) => prev);
+    } else {
+      setMentionIdx(0);
+    }
   };
 
-  const handleChatChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const next = e.target.value;
-    setChatInput(next);
-    const match = findActiveMention(next, e.target.selectionStart ?? next.length);
-    setMentionMatch(match);
+  const insertPlainTextAtCaret = (plain: string) => {
+    const root = composerRef.current;
+    if (!root) return;
+    root.focus();
+    const sel = window.getSelection();
+    let range: Range | null = null;
+    if (sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) {
+      range = sel.getRangeAt(0);
+    } else if (lastRangeRef.current && root.contains(lastRangeRef.current.startContainer)) {
+      range = lastRangeRef.current.cloneRange();
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(root);
+      range.collapse(false);
+    }
+    range.deleteContents();
+    if (range.startContainer.nodeType === Node.TEXT_NODE) {
+      const tn = range.startContainer as Text;
+      const off = range.startOffset;
+      const existing = tn.textContent ?? '';
+      tn.textContent = existing.slice(0, off) + plain + existing.slice(off);
+      const nextCaret = document.createRange();
+      nextCaret.setStart(tn, off + plain.length);
+      nextCaret.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(nextCaret);
+      lastRangeRef.current = nextCaret.cloneRange();
+    } else {
+      const tn = document.createTextNode(plain);
+      range.insertNode(tn);
+      const nextCaret = document.createRange();
+      nextCaret.setStart(tn, plain.length);
+      nextCaret.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(nextCaret);
+      lastRangeRef.current = nextCaret.cloneRange();
+    }
     setMentionIdx(0);
+    syncComposerState();
+  };
+
+  const insertMentionCandidate = (cand: MentionCandidate) => {
+    const root = composerRef.current;
+    if (!root) return;
+    root.focus();
+    const active = mentionMatch && root.contains(mentionMatch.node)
+      ? mentionMatch
+      : detectActiveMentionInComposer(root);
+
+    const replaceRange = document.createRange();
+    if (active) {
+      const maxLen = active.node.textContent?.length ?? 0;
+      replaceRange.setStart(active.node, Math.min(active.startOffset, maxLen));
+      replaceRange.setEnd(active.node, Math.min(active.endOffset, maxLen));
+      replaceRange.deleteContents();
+    } else if (lastRangeRef.current && root.contains(lastRangeRef.current.startContainer)) {
+      replaceRange.setStart(lastRangeRef.current.startContainer, lastRangeRef.current.startOffset);
+      replaceRange.collapse(true);
+    } else {
+      replaceRange.selectNodeContents(root);
+      replaceRange.collapse(false);
+    }
+
+    const chip = document.createElement('strong');
+    chip.setAttribute('contenteditable', 'false');
+    chip.dataset.mentionToken = cand.tokenText;
+    chip.className =
+      cand.prefix === '#'
+        ? 'font-bold text-amber-700 dark:text-amber-300'
+        : 'font-bold text-indigoFolk';
+    chip.textContent = cand.displayLabel;
+
+    const trailingSpace = document.createTextNode(' ');
+    replaceRange.insertNode(trailingSpace);
+    replaceRange.insertNode(chip);
+
+    const sel = window.getSelection();
+    const nextRange = document.createRange();
+    nextRange.setStart(trailingSpace, trailingSpace.length);
+    nextRange.collapse(true);
+    sel?.removeAllRanges();
+    sel?.addRange(nextRange);
+    lastRangeRef.current = nextRange.cloneRange();
+
+    setMentionMatch(null);
+    setMentionIdx(0);
+    setChatInput(serializeComposerText(root));
+  };
+
+  const handleComposerInput = () => {
+    setMentionIdx(0);
+    syncComposerState();
   };
 
   const insertTriggerChar = (trigger: '@' | '#') => {
-    const el = textareaRef.current;
-    const caret = el?.selectionStart ?? chatInput.length;
-    const needsSpace = caret > 0 && !/\s$/.test(chatInput.slice(0, caret));
-    const inserted = `${needsSpace ? ' ' : ''}${trigger}`;
-    const nextText = `${chatInput.slice(0, caret)}${inserted}${chatInput.slice(caret)}`;
-    const nextCaret = caret + inserted.length;
-    setChatInput(nextText);
-    setMentionMatch(findActiveMention(nextText, nextCaret));
-    setMentionIdx(0);
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(nextCaret, nextCaret);
-    });
+    const root = composerRef.current;
+    if (!root) return;
+    const rawBefore = serializeComposerText(root);
+    let needsSpace = rawBefore.length > 0 && !/\s$/.test(rawBefore);
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) {
+      const r = sel.getRangeAt(0);
+      if (r.startContainer.nodeType === Node.TEXT_NODE) {
+        const beforeAtCaret = (r.startContainer.textContent ?? '').slice(0, r.startOffset);
+        needsSpace = beforeAtCaret.length > 0 && !/\s$/.test(beforeAtCaret);
+      }
+    }
+    insertPlainTextAtCaret(`${needsSpace ? ' ' : ''}${trigger}`);
   };
 
   const handleTriggerAtMention = () => insertTriggerChar('@');
@@ -655,8 +961,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || sending) return;
-    const text = chatInput.trim();
+    const raw = serializeComposerText(composerRef.current) || chatInput;
+    const text = raw.trim();
+    if (!text || sending) return;
+    if (composerRef.current) {
+      composerRef.current.innerHTML = '';
+    }
+    lastRangeRef.current = null;
     setChatInput('');
     setMentionMatch(null);
     setSending(true);
@@ -720,13 +1031,64 @@ export const VillageView: React.FC<VillageViewProps> = ({
     cameraRef.current.y = (selectedRt.y + 0.5) * sim.map.tileDim;
   };
 
+  const toggleSidebarOpen = () => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('seloai:sidebar-open', String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  let latestScribeSubtitle: {
+    id: string;
+    senderName: string;
+    text: string;
+    timestamp: number;
+  } | null = null;
+  for (const conv of sim.conversations) {
+    for (const msg of conv.messages) {
+      if (msg.kind === 'narration' && msg.text.trim()) {
+        if (!latestScribeSubtitle || msg.timestamp >= latestScribeSubtitle.timestamp) {
+          latestScribeSubtitle = {
+            id: msg.id,
+            senderName: msg.senderName || narratorName,
+            text: msg.text.trim(),
+            timestamp: msg.timestamp,
+          };
+        }
+      }
+    }
+  }
+
+  useEffect(() => {
+    const el = subtitleBoxRef.current;
+    if (!el || !latestScribeSubtitle) return;
+    el.scrollTop = 0;
+    if (el.scrollHeight <= el.clientHeight + 2) return;
+    const timer = window.setInterval(() => {
+      if (el.scrollTop + el.clientHeight < el.scrollHeight - 1) {
+        el.scrollTop += 1;
+      }
+    }, 55);
+    return () => window.clearInterval(timer);
+  }, [latestScribeSubtitle?.id, latestScribeSubtitle?.text]);
+
   // Suppress unused tick warning while keeping live reactivity
   void tick;
 
   return (
     <div
       className="flex h-full flex-col lg:flex-row overflow-hidden"
-      style={{ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
+      style={
+        {
+          '--sidebar-w': `${sidebarWidth}px`,
+          fontFamily: aestheticTokens.fontFamilyCss,
+        } as React.CSSProperties
+      }
     >
       {/* Left: Interactive Village World */}
       <section className="relative flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-neutral-900" aria-label="Village Canvas">
@@ -739,243 +1101,545 @@ export const VillageView: React.FC<VillageViewProps> = ({
           className="pixel-canvas h-full w-full cursor-grab active:cursor-grabbing touch-none"
         />
 
-        {/* Floating Top-Left Simulation Controls */}
-        <div
-          role="toolbar"
-          aria-label="Village simulation controls"
-          className="absolute left-2 top-2 flex flex-wrap items-center gap-1 rounded-sm border border-borderFolk bg-card/95 px-1.5 py-1 backdrop-blur"
-        >
-          <button
-            type="button"
-            onClick={() => {
-              sim.paused = !sim.paused;
-              setTick((t) => t + 1);
-            }}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium hover:bg-surface"
-            aria-label={sim.paused ? 'Resume simulation' : 'Pause simulation'}
+        {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
+        <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
+          <div
+            role="toolbar"
+            aria-label="Village simulation controls"
+            style={aestheticTokens.hudStyle}
+            className={`pointer-events-auto relative flex min-w-0 flex-wrap items-center gap-1 overflow-hidden rounded-md px-2 py-1.5 ${
+              aestheticSettings.showDecorations ? 'pt-2' : ''
+            }`}
           >
-            {sim.paused ? <Play className="h-3.5 w-3.5 text-sage" /> : <Pause className="h-3.5 w-3.5 text-crimson" />}
-            <span>{sim.paused ? 'Resume' : 'Pause'}</span>
-          </button>
+            {aestheticSettings.showDecorations && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+                style={{ backgroundImage: aestheticTokens.ribbonGradient }}
+              />
+            )}
 
-          <div className="h-4 w-px bg-borderFolk" />
-
-          {[1, 2, 4].map((spd) => (
             <button
-              key={spd}
               type="button"
               onClick={() => {
-                sim.speedMultiplier = spd;
+                if (sim.paused) {
+                  if (Math.abs(sim.speedMultiplier) < 0.001) {
+                    sim.speedMultiplier = lastActiveSpeedRef.current || 1;
+                  }
+                  sim.paused = false;
+                } else {
+                  sim.paused = true;
+                }
                 setTick((t) => t + 1);
               }}
-              className={`rounded px-2 py-0.5 text-xs font-mono ${
-                sim.speedMultiplier === spd ? 'bg-crimson text-white' : 'hover:bg-surface text-muted'
-              }`}
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition hover:bg-white/10"
+              style={{ color: aestheticTokens.hudTextColor }}
+              aria-label={sim.paused ? 'Resume simulation' : 'Pause simulation'}
             >
-              {spd}×
+              {sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? (
+                <Play className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <Pause className="h-3.5 w-3.5" style={{ color: aestheticTokens.accentHex }} />
+              )}
+              <span>{sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? 'Resume' : 'Pause'}</span>
             </button>
-          ))}
 
-          <div className="h-4 w-px bg-borderFolk" />
+            <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />
 
-          <button
-            type="button"
-            onClick={() => (cameraRef.current.zoom = Math.min(3.5, cameraRef.current.zoom + 0.25))}
-            className="rounded p-1 hover:bg-surface"
-            aria-label="Zoom in"
-          >
-            <ZoomIn className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => (cameraRef.current.zoom = Math.max(0.45, cameraRef.current.zoom - 0.25))}
-            className="rounded p-1 hover:bg-surface"
-            aria-label="Zoom out"
-          >
-            <ZoomOut className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowPaths((p) => !p)}
-            aria-pressed={showPaths}
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
-              showPaths ? 'bg-indigoFolk text-white' : 'hover:bg-surface'
-            }`}
-          >
-            <Bug className="h-3.5 w-3.5" />
-            <span>Paths</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowLabels((l) => !l)}
-            aria-pressed={showLabels}
-            title="Toggle character and #POI labels on map"
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
-              showLabels ? 'bg-sage/20 text-ink font-medium' : 'hover:bg-surface text-muted'
-            }`}
-          >
-            <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Labels</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setFollowSelected((f) => !f);
-              centerOnSelected();
-            }}
-            aria-pressed={followSelected}
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
-              followSelected ? 'bg-ochre text-white' : 'hover:bg-surface'
-            }`}
-          >
-            <Compass className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Follow</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!isScribeSelected && selectedCfg) {
-                sim.setFocalWorldline(
-                  sim.focalWorldlineId === selectedCfg.id ? 'traveler' : selectedCfg.id,
-                );
+            {/* Signed logarithmic time-pace & rewind slider (-10× .. 0 .. +10×) */}
+            {(() => {
+              const effectiveSpeed = sim.paused ? 0 : sim.speedMultiplier;
+              const sliderPos = speedToSliderPos(effectiveSpeed);
+              const rewindInfo = sim.getRewindInfo();
+              const isRewinding = effectiveSpeed < 0;
+              const isStopped = Math.abs(effectiveSpeed) < 0.001;
+              const applySpeed = (nextSpeed: number) => {
+                if (Math.abs(nextSpeed) < 0.001) {
+                  sim.speedMultiplier = 0;
+                  sim.paused = true;
+                } else {
+                  lastActiveSpeedRef.current = nextSpeed;
+                  sim.speedMultiplier = nextSpeed;
+                  sim.paused = false;
+                }
                 setTick((t) => t + 1);
-              } else {
-                sim.setFocalWorldline('traveler');
+              };
+              const speedBadgeStyle: React.CSSProperties = isRewinding
+                ? { backgroundColor: aestheticTokens.accentHex, color: '#ffffff' }
+                : isStopped
+                  ? { backgroundColor: aestheticTokens.activeSubtitleBg, color: aestheticTokens.activeSubtitleText }
+                  : effectiveSpeed < 1
+                    ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText }
+                    : effectiveSpeed > 1
+                      ? { backgroundColor: aestheticTokens.activeSpeechBg, color: aestheticTokens.activeSpeechText }
+                      : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor };
+              return (
+                <div className="flex items-center gap-2 px-1" role="group" aria-label="Time pace and rewind">
+                  <button
+                    type="button"
+                    onClick={() => applySpeed(1)}
+                    title="Simulation speed multiplier (click to reset to 1×)"
+                    style={speedBadgeStyle}
+                    className="min-w-[40px] rounded px-1.5 py-0.5 text-center font-mono text-[11px] font-semibold transition"
+                  >
+                    {formatSpeedLabel(effectiveSpeed)}
+                  </button>
+                  <div className="relative flex w-56 sm:w-64 flex-col justify-center">
+                    <div className="relative flex h-3.5 items-center">
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute top-0.5 bottom-0.5 left-1/2 w-px -translate-x-1/2"
+                        style={{ backgroundColor: aestheticTokens.hudBorderColor }}
+                      />
+                      <input
+                        type="range"
+                        min={-SLIDER_MAX_POS}
+                        max={SLIDER_MAX_POS}
+                        step={1}
+                        value={sliderPos}
+                        aria-label="Simulation speed and rewind"
+                        title="Drag left for negative speed to rewind events, center (0) to pause, right for 1/4× to 10×"
+                        onChange={(e) => applySpeed(sliderPosToSpeed(Number(e.target.value)))}
+                        className="h-1.5 w-full cursor-pointer accent-amber-400"
+                      />
+                    </div>
+                    <div className="relative h-3 w-full select-none">
+                      {SPEED_LOG_MARKS.map((mark) => {
+                        const pct = speedToTrackPercent(mark.value);
+                        const active =
+                          mark.value === 0
+                            ? isStopped
+                            : Math.abs(effectiveSpeed - mark.value) < 0.02;
+                        const activeMarkColor =
+                          mark.value < 0
+                            ? aestheticTokens.accentHex
+                            : mark.value === 0
+                              ? aestheticTokens.poiHighlightHex
+                              : aestheticTokens.activeThoughtText;
+                        return (
+                          <button
+                            key={mark.value}
+                            type="button"
+                            onClick={() => applySpeed(mark.value)}
+                            style={{
+                              left: `${pct}%`,
+                              color: active ? activeMarkColor : aestheticTokens.hudMutedColor,
+                              fontWeight: active ? 700 : 500,
+                            }}
+                            title={`Set pace to ${mark.label}×`}
+                            className="absolute top-0 -translate-x-1/2 font-mono text-[8.5px] leading-none transition hover:opacity-100"
+                          >
+                            {mark.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {(isRewinding || rewindInfo.behindPresentSec >= 0.4) && (
+                    <span
+                      className="whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
+                      style={{
+                        backgroundColor: aestheticTokens.activeSpeechBg,
+                        color: aestheticTokens.activeSpeechText,
+                      }}
+                      title="Rewind offset behind present time"
+                    >
+                      ◀ -{rewindInfo.behindPresentSec.toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />
+
+            <button
+              type="button"
+              onClick={() => {
+                cameraRef.current.anchor = null;
+                cameraRef.current.targetZoom = Math.min(3.5, cameraRef.current.targetZoom * 1.18);
+              }}
+              className="rounded p-1 transition hover:bg-white/10"
+              style={{ color: aestheticTokens.hudTextColor }}
+              aria-label="Zoom in"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                cameraRef.current.anchor = null;
+                cameraRef.current.targetZoom = Math.max(0.45, cameraRef.current.targetZoom / 1.18);
+              }}
+              className="rounded p-1 transition hover:bg-white/10"
+              style={{ color: aestheticTokens.hudTextColor }}
+              aria-label="Zoom out"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPaths((p) => !p)}
+              aria-pressed={showPaths}
+              style={
+                showPaths
+                  ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <Bug className="h-3.5 w-3.5" />
+              <span>Paths</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowLabels((l) => !l)}
+              aria-pressed={showLabels}
+              title="Toggle character and POI labels on map"
+              style={
+                showLabels
+                  ? { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Labels</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSpeechBubbles((s) => !s)}
+              aria-pressed={showSpeechBubbles}
+              title="Toggle speech bubbles over villagers"
+              style={
+                showSpeechBubbles
+                  ? { backgroundColor: aestheticTokens.activeSpeechBg, color: aestheticTokens.activeSpeechText, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Speech</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowThoughtBubbles((t) => !t)}
+              aria-pressed={showThoughtBubbles}
+              title="Toggle dashed thought bubbles over villagers"
+              style={
+                showThoughtBubbles
+                  ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Thoughts</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowScribeSubtitles((s) => !s)}
+              aria-pressed={showScribeSubtitles}
+              title="Toggle docked Scribe subtitle narration bar"
+              style={
+                showScribeSubtitles
+                  ? { backgroundColor: aestheticTokens.activeSubtitleBg, color: aestheticTokens.activeSubtitleText, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <Captions className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Subtitles</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFollowSelected((f) => !f);
+                centerOnSelected();
+              }}
+              aria-pressed={followSelected}
+              style={
+                followSelected
+                  ? { backgroundColor: aestheticTokens.activeSubtitleBg, color: aestheticTokens.activeSubtitleText, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <Compass className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Follow</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!isScribeSelected && selectedCfg) {
+                  sim.setFocalWorldline(
+                    sim.focalWorldlineId === selectedCfg.id ? 'traveler' : selectedCfg.id,
+                  );
+                  setTick((t) => t + 1);
+                } else {
+                  sim.setFocalWorldline('traveler');
+                  setTick((t) => t + 1);
+                }
+              }}
+              aria-pressed={sim.focalWorldlineId !== 'traveler'}
+              title="Hop Scribe & spatial audio POV to selected character (or click again to return to You)"
+              style={
+                sim.focalWorldlineId !== 'traveler'
+                  ? { backgroundColor: aestheticTokens.accentHex, color: '#ffffff', fontWeight: 600 }
+                  : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:opacity-90"
+            >
+              <span className="whitespace-nowrap">
+                POV:{' '}
+                {sim.focalWorldlineId === 'traveler'
+                  ? 'You'
+                  : abbreviatePersonName(
+                      sim.configs.get(sim.focalWorldlineId)?.name ?? 'Char',
+                      11,
+                    )}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                sim.scatterVillagers();
                 setTick((t) => t + 1);
-              }
-            }}
-            aria-pressed={sim.focalWorldlineId !== 'traveler'}
-            title="Hop Scribe & spatial audio POV to selected character (or click again to return to You)"
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${
-              sim.focalWorldlineId !== 'traveler'
-                ? 'bg-crimson text-white'
-                : 'hover:bg-surface text-muted'
-            }`}
-          >
-            <span>
-              POV:{' '}
-              {sim.focalWorldlineId === 'traveler'
-                ? 'You'
-                : sim.configs.get(sim.focalWorldlineId)?.name ?? 'Char'}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              sim.scatterVillagers();
-              setTick((t) => t + 1);
-            }}
-            title="Unstick and scatter villagers around the map"
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-surface"
-          >
-            <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Scatter</span>
-          </button>
-          <div
-            role="group"
-            aria-label="Eavesdrop distance"
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition ${
-              settings.proximityRadiusTiles > 0 ? 'bg-sage/15 text-ink' : 'text-muted'
-            }`}
-          >
-            <Headphones
-              className={`h-3.5 w-3.5 shrink-0 ${
-                settings.proximityRadiusTiles > 0 ? 'text-sage' : 'text-muted'
-              }`}
-              aria-hidden="true"
-            />
-            <label htmlFor="village-eavesdrop-radius" className="whitespace-nowrap font-medium">
-              Eavesdrop
-            </label>
-            <input
-              id="village-eavesdrop-radius"
-              type="range"
-              min={0}
-              max={EAVESDROP_SLIDER_MAX}
-              step={1}
-              value={
-                isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                  ? EAVESDROP_SLIDER_MAX
-                  : Math.max(0, Math.min(EAVESDROP_SLIDER_MAX - 1, Math.round(settings.proximityRadiusTiles)))
-              }
-              aria-valuetext={
-                settings.proximityRadiusTiles <= 0
+              }}
+              title="Unstick and scatter villagers around the map"
+              style={{ color: aestheticTokens.hudTextColor }}
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Scatter</span>
+            </button>
+            <div
+              role="group"
+              aria-label="Eavesdrop distance"
+              style={{
+                backgroundColor:
+                  settings.proximityRadiusTiles > 0
+                    ? aestheticTokens.hudChipIdleBg
+                    : 'transparent',
+                color: aestheticTokens.hudTextColor,
+              }}
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition"
+            >
+              <Headphones
+                className="h-3.5 w-3.5 shrink-0"
+                style={{
+                  color:
+                    settings.proximityRadiusTiles > 0
+                      ? aestheticTokens.poiHighlightHex
+                      : aestheticTokens.hudMutedColor,
+                }}
+                aria-hidden="true"
+              />
+              <label htmlFor="village-eavesdrop-radius" className="whitespace-nowrap font-medium">
+                Eavesdrop
+              </label>
+              <input
+                id="village-eavesdrop-radius"
+                type="range"
+                min={0}
+                max={EAVESDROP_SLIDER_MAX}
+                step={1}
+                value={
+                  isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                    ? EAVESDROP_SLIDER_MAX
+                    : Math.max(0, Math.min(EAVESDROP_SLIDER_MAX - 1, Math.round(settings.proximityRadiusTiles)))
+                }
+                aria-valuetext={
+                  settings.proximityRadiusTiles <= 0
+                    ? 'Off'
+                    : isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                      ? 'Whole map'
+                      : `${settings.proximityRadiusTiles} tiles`
+                }
+                onChange={(e) => {
+                  const raw = Number(e.target.value);
+                  const nextRadius = raw >= EAVESDROP_SLIDER_MAX ? EAVESDROP_WHOLE_MAP_RADIUS : raw;
+                  if (nextRadius <= 0) {
+                    brainRouter.stopSpeech();
+                  }
+                  onUpdateSettings({ proximityRadiusTiles: nextRadius });
+                }}
+                className="w-20 cursor-pointer accent-emerald-400"
+                title="Eavesdrop hearing radius (0 = Off, right end = Whole Map)"
+              />
+              <span className="w-7 text-right font-mono text-[11px]">
+                {settings.proximityRadiusTiles <= 0
                   ? 'Off'
                   : isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                    ? 'Whole map'
-                    : `${settings.proximityRadiusTiles} tiles`
-              }
-              onChange={(e) => {
-                const raw = Number(e.target.value);
-                const nextRadius = raw >= EAVESDROP_SLIDER_MAX ? EAVESDROP_WHOLE_MAP_RADIUS : raw;
-                if (nextRadius <= 0) {
-                  brainRouter.stopSpeech();
+                    ? 'All'
+                    : `${settings.proximityRadiusTiles}t`}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateSettings({
+                    proximityRadiusTiles: isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                      ? 10
+                      : EAVESDROP_WHOLE_MAP_RADIUS,
+                  })
                 }
-                onUpdateSettings({ proximityRadiusTiles: nextRadius });
-              }}
-              className="w-20 cursor-pointer accent-sage"
-              title="Eavesdrop hearing radius (0 = Off, right end = Whole Map)"
-            />
-            <span className="w-7 text-right font-mono text-[11px]">
-              {settings.proximityRadiusTiles <= 0
-                ? 'Off'
-                : isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                  ? 'All'
-                  : `${settings.proximityRadiusTiles}t`}
-            </span>
+                aria-pressed={isWholeMapEavesdrop(settings.proximityRadiusTiles)}
+                title="Listen across the whole map"
+                style={
+                  isWholeMapEavesdrop(settings.proximityRadiusTiles)
+                    ? { backgroundColor: '#2c7a52', color: '#ffffff' }
+                    : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudMutedColor }
+                }
+                className="rounded px-1.5 py-0.5 text-[10px] font-semibold transition hover:opacity-90"
+              >
+                Map
+              </button>
+              <button
+                type="button"
+                onClick={() => brainRouter.flushAudioQueue()}
+                title="Flush & reset queued browser/Omni audio"
+                aria-label="Flush audio queue"
+                style={{
+                  backgroundColor: aestheticTokens.hudChipIdleBg,
+                  color: aestheticTokens.hudMutedColor,
+                }}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition hover:opacity-90"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <span>Flush</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Right HUD Actions (aligned cleanly inside flex row, never overlaps toolbar) */}
+          <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
             <button
               type="button"
-              onClick={() =>
-                onUpdateSettings({
-                  proximityRadiusTiles: isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                    ? 10
-                    : EAVESDROP_WHOLE_MAP_RADIUS,
-                })
-              }
-              aria-pressed={isWholeMapEavesdrop(settings.proximityRadiusTiles)}
-              title="Listen across the whole map"
-              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                  ? 'bg-sage text-white'
-                  : 'bg-surface text-muted hover:text-ink'
-              }`}
+              onClick={() => setStylePanelOpen((o) => !o)}
+              aria-pressed={stylePanelOpen}
+              title="Customize world theme, bubble glass, typography & procedural player sprite"
+              style={{
+                ...aestheticTokens.hudStyle,
+                borderColor: stylePanelOpen ? aestheticTokens.accentHex : aestheticTokens.hudBorderColor,
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition hover:opacity-90"
             >
-              Map
+              <Palette className="h-3.5 w-3.5" style={{ color: aestheticTokens.poiHighlightHex }} aria-hidden="true" />
+              <span>Style</span>
             </button>
             <button
               type="button"
-              onClick={() => brainRouter.flushAudioQueue()}
-              title="Flush & reset queued browser/Omni audio"
-              aria-label="Flush audio queue"
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface text-muted hover:text-crimson hover:bg-crimson/10"
+              onClick={toggleSidebarOpen}
+              title={sidebarOpen ? 'Hide inspector sidebar' : 'Show inspector sidebar'}
+              aria-label={sidebarOpen ? 'Hide inspector sidebar' : 'Show inspector sidebar'}
+              style={aestheticTokens.hudStyle}
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition hover:opacity-90"
             >
-              <RotateCcw className="h-3 w-3" aria-hidden="true" />
-              <span>Flush</span>
+              {sidebarOpen ? (
+                <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <PanelRightOpen className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span>{sidebarOpen ? 'Hide Panel' : 'Show Panel'}</span>
             </button>
           </div>
         </div>
 
+        {/* Separate Live Appearance & Procedural Player Studio Drawer */}
+        {stylePanelOpen && (
+          <AestheticStudioPanel
+            settings={aestheticSettings}
+            tokens={aestheticTokens}
+            playerSprite={playerCustomSprite}
+            worldName={sim.map.name}
+            onChange={handleUpdateAesthetic}
+            onClose={() => setStylePanelOpen(false)}
+          />
+        )}
+
+        {/* Bottom-Center Docked Scribe Subtitle Field */}
+        {showScribeSubtitles && latestScribeSubtitle && (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Scribe subtitles"
+            style={aestheticTokens.subtitleStyle}
+            className="absolute bottom-10 left-1/2 z-10 w-[min(92%,42rem)] -translate-x-1/2 overflow-hidden rounded-md px-3.5 py-2"
+          >
+            {aestheticSettings.showDecorations && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+                style={{ backgroundImage: aestheticTokens.ribbonGradient }}
+              />
+            )}
+            <div
+              className="mb-0.5 flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider"
+              style={{ color: aestheticTokens.poiHighlightHex }}
+            >
+              <span className="inline-flex items-center gap-1 font-semibold">
+                <Captions className="h-3 w-3" aria-hidden="true" />
+                <span>{latestScribeSubtitle.senderName}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowScribeSubtitles(false)}
+                title="Hide Scribe subtitles"
+                aria-label="Hide Scribe subtitles"
+                className="rounded p-0.5 transition hover:bg-white/10"
+                style={{ color: aestheticTokens.hudMutedColor }}
+              >
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </div>
+            <div
+              ref={subtitleBoxRef}
+              style={{
+                fontSize: `${(12 * aestheticSettings.fontScale).toFixed(1)}px`,
+                color: aestheticTokens.hudTextColor,
+              }}
+              className="max-h-16 overflow-y-auto pr-1 leading-relaxed"
+            >
+              {renderRichLabels(
+                latestScribeSubtitle.text,
+                villagers,
+                sim.map.pointsOfInterest ?? [],
+                narratorName,
+                aestheticTokens.isLightSurface ? 'light' : 'dark',
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Bottom-left quick controls hint */}
-        <div className="pointer-events-none absolute bottom-2 left-2 rounded-sm border border-borderFolk bg-card/90 px-2 py-1 text-[11px] text-muted backdrop-blur">
+        <div
+          style={{
+            ...aestheticTokens.hudStyle,
+            color: aestheticTokens.hudMutedColor,
+          }}
+          className="pointer-events-none absolute bottom-2 left-2 rounded-md px-2.5 py-1 text-[11px]"
+        >
           Click villager to inspect · Click ground or <kbd className="font-mono">WASD</kbd> to walk · Drag to pan · Scroll to zoom
         </div>
       </section>
 
-      {/* Draggable Sidebar Resize Handle */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize inspector sidebar"
-        onPointerDown={handleSidebarResizeStart}
-        title="Drag to resize sidebar"
-        className="hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center border-l border-borderFolk bg-surface hover:bg-ink/20 active:bg-ink/30 transition-colors"
-      />
+      {sidebarOpen && (
+        <>
+          {/* Draggable Sidebar Resize Handle */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize inspector sidebar"
+            onPointerDown={handleSidebarResizeStart}
+            title="Drag to resize sidebar"
+            className="hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center border-l border-borderFolk bg-surface hover:bg-ink/20 active:bg-ink/30 transition-colors"
+          />
 
-      {/* Right: Villager Inspector + Voice & Chat */}
-      <aside
-        className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col bg-surface overflow-hidden max-h-[52vh] lg:max-h-none"
-        aria-label="Villager Inspector"
-      >
+          {/* Right: Villager Inspector + Voice & Chat */}
+          <aside
+            className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col bg-surface overflow-hidden max-h-[52vh] lg:max-h-none"
+            aria-label="Villager Inspector"
+          >
         {/* Villager Quick Roster */}
         <div className="border-b border-borderFolk bg-card p-2">
           <div className={`flex items-center justify-between gap-2 ${rosterCollapsed ? '' : 'mb-2'}`}>
@@ -1015,7 +1679,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
           </div>
 
           {!rosterCollapsed && (rosterView === 'cards' ? (
-            <div className="max-h-40 overflow-y-auto thin-scroll space-y-1 pr-0.5">
+            <div className="max-h-56 overflow-y-auto thin-scroll space-y-1 pr-0.5">
               {villagers.map((v) => {
                 const rt = sim.runtimes.get(v.id);
                 const active = v.id === selectedId;
@@ -1026,14 +1690,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     key={v.id}
                     type="button"
                     onClick={() => setSelectedId(v.id)}
-                    className={`flex w-full items-center gap-2 rounded-sm border px-1.5 py-1 text-left transition ${
+                    className={`flex w-full items-center gap-1.5 rounded-sm border py-0.5 pl-0.5 pr-2 text-left transition ${
                       active
                         ? 'border-ink/50 bg-linen'
                         : 'border-borderFolk bg-surface hover:border-ink/30'
                     }`}
                   >
-                    <VillagerAvatarThumb villager={v} size={24} />
-                    <div className="min-w-0 flex-1">
+                    <VillagerAvatarThumb villager={v} size={46} />
+                    <div className="min-w-0 flex-1 py-0.5">
                       <div className="flex items-center gap-1.5">
                         <span
                           className={`h-2 w-2 shrink-0 rounded-full ${isBusy ? 'animate-pulse' : ''}`}
@@ -1043,7 +1707,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       </div>
                       <p className="truncate text-[10px] text-muted">{v.role}</p>
                     </div>
-                    <span className="shrink-0 rounded-sm bg-card px-1 py-0.5 font-mono text-[10px] capitalize text-muted border border-borderFolk">
+                    <span className="shrink-0 rounded-sm bg-card px-1.5 py-0.5 font-mono text-[10px] capitalize text-muted border border-borderFolk">
                       {rt?.state ?? 'idle'}
                     </span>
                   </button>
@@ -1052,16 +1716,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedId('narrator')}
-                className={`flex w-full items-center gap-2 rounded-sm border px-1.5 py-1 text-left transition ${
+                className={`flex w-full items-center gap-1.5 rounded-sm border py-0.5 pl-0.5 pr-2 text-left transition ${
                   isScribeSelected
                     ? 'border-ochre bg-linen'
                     : 'border-borderFolk bg-surface hover:border-ochre/60'
                 }`}
               >
-                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-card font-serif text-[11px] font-bold text-ochre">
+                <span className="inline-flex h-[46px] w-[46px] shrink-0 items-center justify-center font-serif text-xl font-bold text-ochre">
                   S
                 </span>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 py-0.5">
                   <div className="flex items-center gap-1.5">
                     <span className="h-2 w-2 shrink-0 rounded-full bg-ochre" />
                     <span className="truncate text-xs font-semibold text-ink">{narratorName}</span>
@@ -1070,7 +1734,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     Village Scribe · {settings.narratorStyle}
                   </p>
                 </div>
-                <span className="shrink-0 rounded-sm bg-card px-1 py-0.5 font-mono text-[10px] text-muted border border-borderFolk">
+                <span className="shrink-0 rounded-sm bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted border border-borderFolk">
                   DM
                 </span>
               </button>
@@ -1150,7 +1814,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 {!detailCollapsed && (
                   <p className="text-[11px] leading-snug text-ink/90">
                     Chronicler of Selo. Reads non-dialogue scene beats in turn, and answers directly
-                    when addressed with <code className="font-mono">@{narratorName}</code>.
+                    when addressed as <strong className="font-bold text-indigoFolk">{narratorName}</strong>.
                   </p>
                 )}
               </div>
@@ -1184,7 +1848,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       <p className="text-xs leading-relaxed text-ink/90">{selectedCfg.identity}</p>
                       <div className="rounded border border-borderFolk bg-surface/80 px-2.5 py-1.5 text-xs">
                         <span className="font-semibold text-ochre">Motive:</span>{' '}
-                        {selectedRt.currentIntention || selectedCfg.plan}
+                        {renderRichLabels(
+                          selectedRt.currentIntention || selectedCfg.plan,
+                          villagers,
+                          sim.map.pointsOfInterest ?? [],
+                          narratorName,
+                        )}
                       </div>
 
                       <div className="flex flex-col gap-1 text-xs">
@@ -1402,7 +2071,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                             Now Hearing · {activeSpeech.speakerName} ({activeSpeech.engine})
                           </span>
                         </div>
-                        <p className="text-ink mt-0.5 line-clamp-2">{activeSpeech.text}</p>
+                        <p className="text-ink mt-0.5 line-clamp-2">
+                          {renderRichLabels(
+                            activeSpeech.text,
+                            villagers,
+                            sim.map.pointsOfInterest ?? [],
+                            narratorName,
+                          )}
+                        </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         {sim.configs.has(activeSpeech.speakerId) && (
@@ -1427,9 +2103,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
                   {displayedMessages.length === 0 ? (
                     <div className="rounded-sm border border-dashed border-borderFolk p-3 text-center text-xs text-muted">
-                      Type a message below or use <code className="font-mono">@Name</code>,{' '}
-                      <code className="font-mono">@all</code> / <code className="font-mono">@world</code>, or{' '}
-                      <code className="font-mono">@{narratorName}</code> to guide one or many characters.
+                      Type a message below — press <kbd className="font-mono">@</kbd> to mention someone or{' '}
+                      <kbd className="font-mono">#</kbd> to pick a place to guide characters.
                     </div>
                   ) : (
                     <ul className="space-y-1.5">
@@ -1469,7 +2144,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
                                 {isNarration ? 'scribe' : isThought ? 'thought' : msg.source}
                               </span>
                             </div>
-                            <p className="leading-relaxed whitespace-pre-wrap">{msg.text || '…'}</p>
+                            <p className="leading-relaxed whitespace-pre-wrap">
+                              {msg.text
+                                ? renderRichLabels(
+                                    msg.text,
+                                    villagers,
+                                    sim.map.pointsOfInterest ?? [],
+                                    narratorName,
+                                  )
+                                : '…'}
+                            </p>
                             {settings.showReasoning && msg.reasoning && (
                               <aside
                                 aria-label="Model reasoning"
@@ -1546,9 +2230,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
                               className="h-2.5 w-2.5 shrink-0 rounded-full"
                               style={{ backgroundColor: active ? '#fff' : cand.accentColor }}
                             />
-                            <span className="font-semibold truncate">
-                              {cand.prefix ?? '@'}
-                              {cand.name}
+                            <span className="font-bold truncate">
+                              {cand.displayLabel}
                             </span>
                             <span className={`truncate text-[11px] ${active ? 'text-white/80' : 'text-muted'}`}>
                               {cand.role}
@@ -1566,17 +2249,28 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 </div>
               )}
 
-              <form onSubmit={handleSendText} className="flex items-end gap-1.5">
-                <div className="flex-1">
+              <form onSubmit={handleSendText} className="space-y-1.5">
+                <div className="relative w-full">
                   <label htmlFor="village-chat-input" className="visually-hidden">
-                    Message {isScribeSelected ? narratorName : selectedCfg?.name ?? 'village'} (use @ to mention a character)
+                    Message {isScribeSelected ? narratorName : selectedCfg?.name ?? 'village'} (use @ for characters or # for places)
                   </label>
-                  <textarea
-                    ref={textareaRef}
+                  {!chatInput && (
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-2.5 right-2.5 top-2 text-xs leading-relaxed text-muted select-none"
+                    >
+                      {isScribeSelected
+                        ? `Ask ${narratorName}, or address characters (@) and places (#)…`
+                        : `Talk to ${selectedCfg?.name ?? ''} — type @ for people or # for places…`}
+                    </span>
+                  )}
+                  <div
+                    ref={composerRef}
                     id="village-chat-input"
-                    rows={2}
-                    value={chatInput}
-                    onChange={handleChatChange}
+                    role="textbox"
+                    aria-multiline="true"
+                    contentEditable={!sending}
+                    suppressContentEditableWarning
                     aria-expanded={isMentionMenuOpen}
                     aria-controls={isMentionMenuOpen ? 'mention-listbox' : undefined}
                     aria-activedescendant={
@@ -1585,6 +2279,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         : undefined
                     }
                     aria-describedby="chat-mention-hint"
+                    onInput={handleComposerInput}
+                    onClick={() => syncComposerState()}
+                    onKeyUp={() => syncComposerState()}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      const plain = e.clipboardData.getData('text/plain');
+                      if (plain) insertPlainTextAtCaret(plain);
+                    }}
                     onKeyDown={(e) => {
                       if (e.nativeEvent.isComposing) return;
                       if (isMentionMenuOpen) {
@@ -1612,73 +2314,105 @@ export const VillageView: React.FC<VillageViewProps> = ({
                           return;
                         }
                       }
+                      if (e.key === 'Backspace') {
+                        const root = composerRef.current;
+                        const sel = window.getSelection();
+                        if (root && sel && sel.rangeCount > 0 && sel.isCollapsed) {
+                          const r = sel.getRangeAt(0);
+                          let targetChip: HTMLElement | null = null;
+                          if (r.startContainer.nodeType === Node.TEXT_NODE && r.startOffset === 0) {
+                            const prev = r.startContainer.previousSibling;
+                            if (prev instanceof HTMLElement && prev.dataset.mentionToken) {
+                              targetChip = prev;
+                            }
+                          } else if (r.startContainer === root && r.startOffset > 0) {
+                            const prev = root.childNodes[r.startOffset - 1];
+                            if (prev instanceof HTMLElement && prev.dataset.mentionToken) {
+                              targetChip = prev;
+                            }
+                          }
+                          if (targetChip) {
+                            e.preventDefault();
+                            targetChip.remove();
+                            syncComposerState();
+                            return;
+                          }
+                        }
+                      }
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        handleSendText(e);
+                        void handleSendText(e);
                       }
                     }}
-                    placeholder={
-                      isScribeSelected
-                        ? `Ask @${narratorName}, or broadcast with @all / @world / @Name…`
-                        : `Talk to ${selectedCfg?.name ?? ''} or use @all, @world, @${narratorName}, @Name…`
-                    }
-                    className="w-full resize-none rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs text-ink placeholder:text-muted"
+                    className="min-h-[82px] max-h-[168px] w-full overflow-y-auto thin-scroll rounded border border-borderFolk bg-surface px-2.5 py-2 text-xs leading-relaxed text-ink focus:outline-none focus:ring-1 focus:ring-indigoFolk whitespace-pre-wrap break-words"
                   />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleTriggerAtMention}
-                  aria-label="Address a character with @"
-                  className="inline-flex h-8 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
-                >
-                  @
-                </button>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={handleTriggerAtMention}
+                      aria-label="Address a character with @"
+                      title="Insert @ character mention"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
+                    >
+                      @
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={handleTriggerHashMention}
-                  aria-label="Reference a Point of Interest with #"
-                  className="inline-flex h-8 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
-                >
-                  #
-                </button>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={handleTriggerHashMention}
+                      aria-label="Reference a Point of Interest with #"
+                      title="Insert # landmark place"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
+                    >
+                      #
+                    </button>
 
-                {!isScribeSelected && (
+                    {!isScribeSelected && (
+                      <button
+                        type="button"
+                        onClick={toggleVoiceRecording}
+                        aria-pressed={recording}
+                        aria-label={recording ? 'Stop voice recording and send' : 'Talk with microphone'}
+                        title={recording ? 'Stop voice recording' : 'Voice message'}
+                        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border transition ${
+                          recording
+                            ? 'border-crimson bg-crimson text-white'
+                            : 'border-borderFolk bg-surface text-ink hover:border-crimson'
+                        }`}
+                      >
+                        {recording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                      </button>
+                    )}
+
+                    <span id="chat-mention-hint" className="text-[10px] text-muted truncate">
+                      Type <kbd className="font-mono">@</kbd> person · <kbd className="font-mono">#</kbd> place
+                    </span>
+                  </div>
+
                   <button
-                    type="button"
-                    onClick={toggleVoiceRecording}
-                    aria-pressed={recording}
-                    aria-label={recording ? 'Stop voice recording and send' : 'Talk with microphone'}
-                    className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border transition ${
-                      recording
-                        ? 'border-crimson bg-crimson text-white'
-                        : 'border-borderFolk bg-surface text-ink hover:border-crimson'
-                    }`}
+                    type="submit"
+                    disabled={sending || !chatInput.trim()}
+                    aria-label="Send message"
+                    title="Send message"
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-ink/30 bg-ink text-linen hover:opacity-90 disabled:opacity-45"
                   >
-                    {recording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                    <Send className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={sending || !chatInput.trim()}
-                  aria-label="Send message"
-                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-sm border border-ink/30 bg-ink px-2.5 text-xs font-semibold text-linen hover:opacity-90 disabled:opacity-45"
-                >
-                  <Send className="h-3 w-3" />
-                  <span>Send</span>
-                </button>
+                </div>
               </form>
-              <p id="chat-mention-hint" className="text-[10px] text-muted">
-                Tip: use <code className="font-mono">@Name</code>, <code className="font-mono">@{narratorName}</code>, or <code className="font-mono">#POI</code> to direct characters (e.g. &ldquo;@Mara meet Bram at #Windmill&rdquo;).
-              </p>
             </div>
           </>
         ) : (
           <div className="p-6 text-center text-xs text-muted">No villagers in the village yet.</div>
         )}
-      </aside>
+          </aside>
+        </>
+      )}
     </div>
   );
 };

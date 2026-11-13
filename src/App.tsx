@@ -2,14 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   BookOpen,
+  ChevronDown,
   Database,
   Download,
+  FolderOpen,
   Map as MapIcon,
   Moon,
   Network,
   Palette,
   RotateCcw,
+  Save,
+  Sparkles,
   Sun,
+  Trash2,
   Upload,
   Users,
   Trees,
@@ -18,6 +23,7 @@ import { brainRouter } from './ai/brainRouter';
 import { omniEngine } from './ai/omniEngine';
 import { seloToolHost, type WorkspaceTabId } from './api/seloToolRegistry';
 import { installSeloWebMcpAndApi } from './api/webMcpBridge';
+import { abbreviateWorldName } from './utils/formatNames';
 import { AssetGuideView } from './components/AssetGuideView';
 import { CharacterEditorView } from './components/CharacterEditorView';
 import { LevelEditorView } from './components/LevelEditorView';
@@ -28,18 +34,44 @@ import { VillageView } from './components/VillageView';
 import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
 import {
+  createBalkanMythWorld,
   createBlankWorldMap,
   createBulgarianShevitsaMap,
+  deleteSavedWorld,
   exportCharactersJson,
   exportCharactersWithHistoriesJson,
   exportDatabaseJson,
   exportLevelJson,
   exportProjectJson,
+  listSavedWorlds,
   loadPersistedState,
   parseImportedVillageJson,
   resetPersistedState,
   savePersistedState,
+  saveWorldToMemory,
+  type PersistedVillageState,
+  type SavedWorldSlot,
 } from './storage/villageStore';
+
+type DemoWorldId = 'balkan-myth' | 'shevitsa' | 'starter';
+
+const DEMO_WORLDS: Array<{ id: DemoWorldId; label: string; description: string }> = [
+  {
+    id: 'balkan-myth',
+    label: 'Zmeyovo: Well of the Lamia',
+    description: '48×36 Balkan myth map, 6 embroidered characters, Wang brook & Lamia sacrifice lore',
+  },
+  {
+    id: 'shevitsa',
+    label: 'Шевици: Embroidered Bulgaria',
+    description: '44×32 regional Shevitsa motifs (Elbetitsa, Kanatitsa, Tree of Life) & POIs',
+  },
+  {
+    id: 'starter',
+    label: 'SeloAI Starter Village',
+    description: 'Classic SeloAI starter meadow village, plaza, cottage & default cast',
+  },
+];
 
 type TabId = 'village' | 'observatory' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
 
@@ -53,6 +85,10 @@ export function App() {
   const [textStatus, setTextStatus] = useState<ModelProgress>(brainRouter.textProgress);
   const [omniStatus, setOmniStatus] = useState<ModelProgress>(omniEngine.progress);
   const [dataNotice, setDataNotice] = useState<string | null>(null);
+  const [savedWorlds, setSavedWorlds] = useState<SavedWorldSlot[]>([]);
+  const [selectedDemoId, setSelectedDemoId] = useState<DemoWorldId>('balkan-myth');
+  const [selectedSavedWorldId, setSelectedSavedWorldId] = useState<string>('');
+  const [saveWorldName, setSaveWorldName] = useState<string>('');
 
   const simRef = useRef<VillageSimulation | null>(null);
   const resetDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -84,7 +120,7 @@ export function App() {
 
   useEffect(() => {
     let mounted = true;
-    loadPersistedState().then((persisted) => {
+    Promise.all([loadPersistedState(), listSavedWorlds()]).then(([persisted, saved]) => {
       if (!mounted) return;
       simRef.current = new VillageSimulation(
         persisted.map,
@@ -101,6 +137,10 @@ export function App() {
       setMap(persisted.map);
       setVillagers(persisted.villagers);
       setSettings(persisted.modelSettings);
+      setSavedWorlds(saved);
+      if (saved.length > 0) {
+        setSelectedSavedWorldId(saved[0].id);
+      }
       latestRef.current = {
         tab: latestRef.current.tab,
         map: persisted.map,
@@ -322,8 +362,98 @@ export function App() {
     setDataNotice('Started a fresh story (cleared conversations & character memories).');
   };
 
-  const handleNewBlankWorld = () => {
+  const captureCurrentWorldState = (): PersistedVillageState | null => {
+    const curMap = latestRef.current.map;
+    const curSettings = latestRef.current.settings;
+    if (!curMap || !curSettings) return null;
+    return {
+      map: curMap,
+      villagers: latestRef.current.villagers,
+      modelSettings: curSettings,
+      conversations: simRef.current?.conversations ?? [],
+      characterHistories: simRef.current?.exportCharacterHistories() ?? {},
+      focalWorldlineId: simRef.current?.focalWorldlineId ?? 'scribe',
+      savedAt: Date.now(),
+    };
+  };
+
+  const refreshSavedWorlds = async (selectId?: string) => {
+    const list = await listSavedWorlds();
+    setSavedWorlds(list);
+    if (selectId) {
+      setSelectedSavedWorldId(selectId);
+    } else if (list.length > 0 && !list.some((w) => w.id === selectedSavedWorldId)) {
+      setSelectedSavedWorldId(list[0].id);
+    }
+  };
+
+  const autoBackupCurrentWorld = async () => {
+    const cur = captureCurrentWorldState();
+    if (!cur) return;
+    if (cur.conversations.length > 0 || (cur.map.stamps?.length ?? 0) > 0) {
+      const slot = await saveWorldToMemory(`Auto-Backup: ${cur.map.name}`, cur, 'auto-backup');
+      await refreshSavedWorlds(slot.id);
+    }
+  };
+
+  const handleSaveWorldToMemory = async (overwriteId?: string) => {
+    const cur = captureCurrentWorldState();
+    if (!cur) return;
+    const chosenName =
+      overwriteId
+        ? savedWorlds.find((w) => w.id === overwriteId)?.name ?? cur.map.name
+        : saveWorldName.trim() || `${cur.map.name} (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`;
+    const slot = await saveWorldToMemory(chosenName, cur, overwriteId);
+    await refreshSavedWorlds(slot.id);
+    if (!overwriteId) setSaveWorldName('');
+    setDataNotice(`Saved "${slot.name}" to browser memory (${slot.width}×${slot.height}, ${slot.villagerCount} folk).`);
+  };
+
+  const handleLoadSavedWorld = (worldId: string) => {
+    const target = savedWorlds.find((w) => w.id === worldId);
+    if (!target) return;
+    brainRouter.flushAudioQueue();
+    const s = target.state;
+    const nextSim = new VillageSimulation(
+      structuredClone(s.map),
+      structuredClone(s.villagers),
+      structuredClone(s.conversations ?? []),
+      { ...s.modelSettings },
+    );
+    if (s.characterHistories) {
+      nextSim.applyCharacterHistories(structuredClone(s.characterHistories));
+    }
+    if (s.focalWorldlineId) {
+      nextSim.setFocalWorldline(s.focalWorldlineId);
+    }
+    simRef.current = nextSim;
+    latestRef.current.map = nextSim.map;
+    latestRef.current.villagers = s.villagers;
+    latestRef.current.settings = s.modelSettings;
+    setMap(nextSim.map);
+    setVillagers(structuredClone(s.villagers));
+    setSettings({ ...s.modelSettings });
+    savePersistedState({ ...s, savedAt: Date.now() });
+    setSelectedSavedWorldId(target.id);
+    dataDialogRef.current?.close();
+    setDataNotice(`Loaded saved world "${target.name}" from memory.`);
+  };
+
+  const handleDeleteSavedWorld = async (worldId: string) => {
+    const target = savedWorlds.find((w) => w.id === worldId);
+    const remaining = await deleteSavedWorld(worldId);
+    setSavedWorlds(remaining);
+    if (selectedSavedWorldId === worldId) {
+      setSelectedSavedWorldId(remaining[0]?.id ?? '');
+    }
+    if (target) {
+      setDataNotice(`Removed saved world "${target.name}" from memory.`);
+    }
+  };
+
+  const handleNewBlankWorld = async () => {
     if (!settings) return;
+    await autoBackupCurrentWorld();
     brainRouter.flushAudioQueue();
     const blankMap = createBlankWorldMap(`World ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
     setMap(blankMap);
@@ -333,8 +463,9 @@ export function App() {
     setDataNotice('Created a new blank world and cleared the story database.');
   };
 
-  const handleLoadShevitsaRealm = () => {
+  const handleLoadShevitsaRealm = async () => {
     if (!settings) return;
+    await autoBackupCurrentWorld();
     brainRouter.flushAudioQueue();
     const shevitsaMap = createBulgarianShevitsaMap();
     setMap(shevitsaMap);
@@ -345,7 +476,28 @@ export function App() {
     setDataNotice('Loaded "Шевици: The Embroidered Realm of Bulgaria" with regional embroidery motifs & POIs.');
   };
 
+  const handleLoadBalkanMythWorld = async () => {
+    if (!settings) return;
+    await autoBackupCurrentWorld();
+    brainRouter.flushAudioQueue();
+    const balkan = createBalkanMythWorld();
+    latestRef.current.map = balkan.map;
+    latestRef.current.villagers = balkan.villagers;
+    setMap(balkan.map);
+    setVillagers(balkan.villagers);
+    simRef.current?.updateMap(balkan.map);
+    simRef.current?.syncVillagers(balkan.villagers);
+    simRef.current?.clearDatabase();
+    simRef.current?.setFocalWorldline('lamia');
+    void simRef.current?.sendUserAddressedMessage('lamia', balkan.openingDirective, false);
+    persistAll(balkan.map, balkan.villagers, settings);
+    dataDialogRef.current?.close();
+    setTab('village');
+    setDataNotice('Loaded "Zmeyovo: Well of the Lamia" — Balkan embroidery village & myth cast.');
+  };
+
   const handleConfirmReset = async () => {
+    await autoBackupCurrentWorld();
     const fresh = await resetPersistedState();
     simRef.current = new VillageSimulation(
       fresh.map,
@@ -356,6 +508,19 @@ export function App() {
     setMap(fresh.map);
     setVillagers(fresh.villagers);
     setSettings(fresh.modelSettings);
+  };
+
+  const handleLoadDemoWorld = async (demoId: DemoWorldId) => {
+    setSelectedDemoId(demoId);
+    if (demoId === 'balkan-myth') {
+      await handleLoadBalkanMythWorld();
+    } else if (demoId === 'shevitsa') {
+      await handleLoadShevitsaRealm();
+    } else {
+      await handleConfirmReset();
+      dataDialogRef.current?.close();
+      setDataNotice('Loaded "SeloAI Starter Village" demo.');
+    }
   };
 
   if (!ready || !map || !settings || !simRef.current) {
@@ -420,8 +585,58 @@ export function App() {
           })}
         </nav>
 
-        {/* Global Utilities (glyph-only with hover labels) */}
+        {/* Global Utilities */}
         <div className="flex items-center gap-1">
+          <div
+            title={`Current world: ${map.name} (click to switch demo or saved world)`}
+            className="relative inline-flex h-7 max-w-[165px] sm:max-w-[200px] items-center gap-1 rounded-sm border border-sage/45 bg-surface px-2 text-[11px] font-medium text-ink hover:bg-card focus-within:ring-1 focus-within:ring-sage"
+          >
+            <Sparkles className="pointer-events-none h-3.5 w-3.5 shrink-0 text-sage" />
+            <span className="min-w-0 truncate whitespace-nowrap">
+              {abbreviateWorldName(map.name, 20)}
+            </span>
+            <ChevronDown className="pointer-events-none h-3 w-3 shrink-0 text-muted" />
+            <select
+              aria-label="Switch demo or saved world"
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v) return;
+                if (v.startsWith('demo:')) {
+                  void handleLoadDemoWorld(v.slice(5) as DemoWorldId);
+                } else if (v.startsWith('saved:')) {
+                  handleLoadSavedWorld(v.slice(6));
+                } else if (v === 'action:save-current') {
+                  setDataNotice(null);
+                  setSaveWorldName(map.name);
+                  dataDialogRef.current?.showModal();
+                }
+              }}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            >
+              <option value="" disabled>
+                Current: {map.name}
+              </option>
+              <optgroup label="Demo Worlds">
+                {DEMO_WORLDS.map((demo) => (
+                  <option key={demo.id} value={`demo:${demo.id}`}>
+                    {demo.label}
+                  </option>
+                ))}
+              </optgroup>
+              {savedWorlds.length > 0 && (
+                <optgroup label="Saved Worlds (Memory)">
+                  {savedWorlds.map((slot) => (
+                    <option key={slot.id} value={`saved:${slot.id}`}>
+                      {slot.name} ({slot.width}×{slot.height})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <option value="action:save-current">+ Save Current World to Memory…</option>
+            </select>
+          </div>
+
           <button
             type="button"
             onClick={() => {
@@ -551,7 +766,7 @@ export function App() {
       <dialog
         ref={dataDialogRef}
         aria-labelledby="data-dialog-title"
-        className="w-full max-w-md rounded-sm border border-borderFolk bg-card p-3.5 text-ink"
+        className="w-full max-w-lg rounded-sm border border-borderFolk bg-card p-3.5 text-ink"
       >
         <div className="flex items-center justify-between gap-2 border-b border-borderFolk pb-2">
           <h2 id="data-dialog-title" className="text-sm font-bold">
@@ -574,19 +789,126 @@ export function App() {
             </div>
           )}
 
-          <section className="space-y-1.5">
+          {/* Demo Worlds Dropdown */}
+          <section className="space-y-1.5 rounded-sm border border-borderFolk/80 bg-surface/60 p-2.5">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-              New World / Story &amp; Database
+              Demo Worlds
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <select
+                aria-label="Select demo world"
+                value={selectedDemoId}
+                onChange={(e) => setSelectedDemoId(e.target.value as DemoWorldId)}
+                className="min-w-0 flex-1 rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-xs text-ink"
+              >
+                {DEMO_WORLDS.map((demo) => (
+                  <option key={demo.id} value={demo.id}>
+                    {demo.label}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
-                onClick={handleLoadShevitsaRealm}
-                className="rounded-sm border border-ochre/60 bg-surface px-2 py-1.5 text-left hover:border-ochre"
+                onClick={() => void handleLoadDemoWorld(selectedDemoId)}
+                className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-sage bg-sage px-2.5 py-1.5 text-xs font-semibold text-white hover:opacity-90"
               >
-                <div className="font-semibold text-ochre">Embroidered Bulgaria</div>
-                <div className="text-[10px] text-muted">7 Shevitsa motifs &amp; lore</div>
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Load Demo</span>
               </button>
+            </div>
+            <p className="text-[11px] text-muted">
+              {DEMO_WORLDS.find((d) => d.id === selectedDemoId)?.description}
+            </p>
+          </section>
+
+          {/* Saved Worlds in Browser Memory */}
+          <section className="space-y-2 rounded-sm border border-borderFolk/80 bg-surface/60 p-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                Saved Worlds in Memory ({savedWorlds.length})
+              </span>
+              <span className="text-[10px] text-muted">Stored locally in IndexedDB</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={saveWorldName}
+                onChange={(e) => setSaveWorldName(e.target.value)}
+                placeholder={`Save current: ${map.name}`}
+                aria-label="Saved world name"
+                className="min-w-0 flex-1 rounded-sm border border-borderFolk bg-surface px-2 py-1 text-xs text-ink"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSaveWorldToMemory()}
+                className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-ink/30 bg-ink px-2.5 py-1 text-xs font-semibold text-linen hover:opacity-90"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>Save Copy</span>
+              </button>
+            </div>
+
+            {savedWorlds.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <select
+                  aria-label="Select saved world from memory"
+                  value={selectedSavedWorldId}
+                  onChange={(e) => setSelectedSavedWorldId(e.target.value)}
+                  className="min-w-[180px] flex-1 rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-xs text-ink"
+                >
+                  {savedWorlds.map((slot) => (
+                    <option key={slot.id} value={slot.id}>
+                      {slot.name} — {slot.width}×{slot.height} · {slot.villagerCount} folk · {new Date(slot.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => selectedSavedWorldId && handleLoadSavedWorld(selectedSavedWorldId)}
+                  disabled={!selectedSavedWorldId}
+                  className="inline-flex items-center gap-1 rounded-sm border border-sage/60 bg-surface px-2 py-1.5 text-xs font-semibold text-sage hover:border-sage disabled:opacity-45"
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  <span>Load</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectedSavedWorldId && void handleSaveWorldToMemory(selectedSavedWorldId)
+                  }
+                  disabled={!selectedSavedWorldId}
+                  title="Overwrite selected saved world with current live world"
+                  className="rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-xs text-muted hover:text-ink disabled:opacity-45"
+                >
+                  Overwrite
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectedSavedWorldId && void handleDeleteSavedWorld(selectedSavedWorldId)
+                  }
+                  disabled={!selectedSavedWorldId}
+                  title="Delete selected saved world"
+                  aria-label="Delete selected saved world"
+                  className="rounded-sm border border-crimson/40 bg-surface p-1.5 text-crimson hover:border-crimson disabled:opacity-45"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="text-[11px] text-muted">
+                No saved worlds in memory yet — click <strong>Save Copy</strong> above to keep a snapshot.
+              </div>
+            )}
+          </section>
+
+          {/* Story & Blank / Reset Actions */}
+          <section className="space-y-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+              Story &amp; Clean Slate Actions
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
               <button
                 type="button"
                 onClick={handleNewStoryClearDb}
@@ -597,7 +919,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                onClick={handleNewBlankWorld}
+                onClick={() => void handleNewBlankWorld()}
                 className="rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-left hover:border-ink/40"
               >
                 <div className="font-semibold">New Blank World</div>

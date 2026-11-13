@@ -1,4 +1,7 @@
 import {
+  createBalkanMythMap,
+  createBalkanMythVillagers,
+  createBalkanMythWorld,
   createBulgarianShevitsaMap,
   createDefaultMap,
   DEFAULT_MODEL_SETTINGS,
@@ -32,6 +35,20 @@ export interface PersistedVillageState {
   focalWorldlineId?: string;
   savedAt: number;
 }
+
+export interface SavedWorldSlot {
+  id: string;
+  name: string;
+  villagerCount: number;
+  width: number;
+  height: number;
+  conversationCount: number;
+  savedAt: number;
+  state: PersistedVillageState;
+}
+
+const SAVED_WORLDS_KEY = 'saved_worlds_v1';
+let memorySavedWorldsCache: SavedWorldSlot[] | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -144,7 +161,81 @@ export async function resetPersistedState(): Promise<PersistedVillageState> {
   return fresh;
 }
 
-export { createBulgarianShevitsaMap };
+export async function listSavedWorlds(): Promise<SavedWorldSlot[]> {
+  if (memorySavedWorldsCache) {
+    return memorySavedWorldsCache;
+  }
+  try {
+    const raw = await idbGet<SavedWorldSlot[]>(SAVED_WORLDS_KEY);
+    if (Array.isArray(raw)) {
+      memorySavedWorldsCache = raw
+        .filter((s) => s && typeof s.id === 'string' && s.state?.map)
+        .sort((a, b) => b.savedAt - a.savedAt);
+      return memorySavedWorldsCache;
+    }
+  } catch {
+    // ignore storage errors and fall back to memory cache
+  }
+  memorySavedWorldsCache = [];
+  return memorySavedWorldsCache;
+}
+
+export async function saveWorldToMemory(
+  name: string,
+  state: PersistedVillageState,
+  existingId?: string,
+): Promise<SavedWorldSlot> {
+  const cleanName = name.trim() || state.map.name || 'Untitled World';
+  const clonedState: PersistedVillageState = {
+    ...structuredClone(state),
+    map: { ...structuredClone(state.map), name: cleanName },
+    savedAt: Date.now(),
+  };
+  const slotId =
+    existingId && existingId.trim()
+      ? existingId.trim()
+      : `world-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const slot: SavedWorldSlot = {
+    id: slotId,
+    name: cleanName,
+    villagerCount: clonedState.villagers.length,
+    width: clonedState.map.width,
+    height: clonedState.map.height,
+    conversationCount: clonedState.conversations.length,
+    savedAt: clonedState.savedAt,
+    state: clonedState,
+  };
+  const existing = await listSavedWorlds();
+  const next = [slot, ...existing.filter((item) => item.id !== slotId)].sort(
+    (a, b) => b.savedAt - a.savedAt,
+  );
+  memorySavedWorldsCache = next;
+  try {
+    await idbSet(SAVED_WORLDS_KEY, next);
+  } catch {
+    // keep working in memory even if IndexedDB is unavailable
+  }
+  return slot;
+}
+
+export async function deleteSavedWorld(id: string): Promise<SavedWorldSlot[]> {
+  const existing = await listSavedWorlds();
+  const next = existing.filter((item) => item.id !== id);
+  memorySavedWorldsCache = next;
+  try {
+    await idbSet(SAVED_WORLDS_KEY, next);
+  } catch {
+    // keep memory state updated
+  }
+  return next;
+}
+
+export {
+  createBalkanMythMap,
+  createBalkanMythVillagers,
+  createBalkanMythWorld,
+  createBulgarianShevitsaMap,
+};
 
 export function createBlankWorldMap(name = 'New World', width = 36, height = 28): VillageMap {
   const base = createDefaultMap();

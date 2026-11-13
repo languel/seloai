@@ -233,6 +233,12 @@ export type VillagerActivityState =
   | 'speaking'
   | 'listening';
 
+export interface BubbleEntry {
+  text: string;
+  startedAt?: number;
+  expiresAt: number;
+}
+
 export interface VillagerRuntime {
   id: string;
   x: number; // tile space float
@@ -241,10 +247,8 @@ export interface VillagerRuntime {
   path: Array<{ x: number; y: number }>;
   state: VillagerActivityState;
   activityLabel: string;
-  currentBubble?: {
-    text: string;
-    expiresAt: number;
-  };
+  currentBubble?: BubbleEntry;
+  currentThoughtBubble?: BubbleEntry;
   activeConversationId?: string;
   memories: MemoryEntry[];
   worldFeed?: string[];
@@ -252,6 +256,10 @@ export interface VillagerRuntime {
   recentMotives?: string[];
   recentUtterances?: string[];
   blockedTicks?: number;
+  sidestepTicks?: number;
+  avoidSign?: 1 | -1;
+  avoidTargetId?: string;
+  lastRerouteAt?: number;
   lastThinkAt: number;
   lastMoveAt: number;
   lastLatencyMs?: number;

@@ -15,15 +15,68 @@ import {
   Trash2,
   Undo2,
   Upload,
+  Wand2,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import { ANIMATION_CATALOG, TILESET_PRESETS } from '../data/defaultData';
+import { createBalkanMythMap } from '../data/balkanMythMap';
 import { createBulgarianShevitsaMap } from '../data/shevitsaMap';
+import { BALKAN_TILES } from '../engine/balkanTileset';
 import { drawAnimatedSprites, drawTileGrid, getCachedImage } from '../engine/renderer';
 import type { PointOfInterest, TileGrid, TileMacroStamp, VillageMap } from '../engine/types';
+import { paintWangCornerCell, paintWangEdgeCell } from '../engine/wangTiling';
 import { resolvePublicUrl } from '../utils/assetUrl';
+
+type WangBrushId = 'road' | 'drought' | 'brook' | 'wall';
+
+const WANG_BRUSHES: Array<{
+  id: WangBrushId;
+  label: string;
+  mode: 'edge' | 'corner';
+  baseTileId: number;
+  emptyTileId: number;
+  defaultLayer: 'bg0' | 'obj0';
+  blocksMovement: boolean;
+}> = [
+  {
+    id: 'road',
+    label: 'Khoro Road (4-Edge)',
+    mode: 'edge',
+    baseTileId: BALKAN_TILES.WANG_ROAD_BASE,
+    emptyTileId: BALKAN_TILES.GRASS_MEADOW,
+    defaultLayer: 'bg0',
+    blocksMovement: false,
+  },
+  {
+    id: 'drought',
+    label: 'Drought Hollow (4-Corner)',
+    mode: 'corner',
+    baseTileId: BALKAN_TILES.WANG_DROUGHT_BASE,
+    emptyTileId: BALKAN_TILES.GRASS_MEADOW,
+    defaultLayer: 'bg0',
+    blocksMovement: false,
+  },
+  {
+    id: 'brook',
+    label: '3/4 Brook Water (4-Corner)',
+    mode: 'corner',
+    baseTileId: BALKAN_TILES.WANG_BROOK_BASE,
+    emptyTileId: BALKAN_TILES.GRASS_MEADOW,
+    defaultLayer: 'bg0',
+    blocksMovement: true,
+  },
+  {
+    id: 'wall',
+    label: '3/4 Stone Wall (4-Edge)',
+    mode: 'edge',
+    baseTileId: BALKAN_TILES.WANG_WALL_BASE,
+    emptyTileId: -1,
+    defaultLayer: 'obj0',
+    blocksMovement: true,
+  },
+];
 
 interface LevelEditorViewProps {
   map: VillageMap;
@@ -41,7 +94,7 @@ type EditorLayer =
   | 'spawns'
   | 'pois';
 
-type Tool = 'brush' | 'eraser' | 'fill' | 'eyedropper';
+type Tool = 'brush' | 'eraser' | 'fill' | 'eyedropper' | 'wang';
 
 interface PaletteSelection {
   startX: number;
@@ -86,6 +139,8 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
     h: 1,
   });
   const [brushSize, setBrushSize] = useState<number>(1);
+  const [wangBrushId, setWangBrushId] = useState<WangBrushId>('road');
+  const [wangErase, setWangErase] = useState(false);
   const [activeStampId, setActiveStampId] = useState<string | null>(null);
   const [newStampName, setNewStampName] = useState('House');
   const [newStampBlocks, setNewStampBlocks] = useState(true);
@@ -321,10 +376,17 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
             ctx.closePath();
             ctx.fill();
             ctx.stroke();
+            const labelText = poi.label || poi.tag;
             ctx.font = '700 10px Inter, sans-serif';
+            const tw = ctx.measureText(labelText).width + 10;
+            ctx.fillStyle = 'rgba(24, 22, 20, 0.78)';
+            ctx.beginPath();
+            ctx.roundRect(cx - tw / 2, cy - 25, tw, 14, 4);
+            ctx.fill();
             ctx.fillStyle = '#fef3c7';
             ctx.textAlign = 'center';
-            ctx.fillText(`#${poi.tag}`, cx, cy - 14);
+            ctx.textBaseline = 'middle';
+            ctx.fillText(labelText, cx, cy - 17.5);
             ctx.restore();
           }
         }
@@ -448,6 +510,55 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
         setActiveStampId(null);
         setTool('brush');
       }
+      return;
+    }
+
+    if (tool === 'wang') {
+      const preset = WANG_BRUSHES.find((b) => b.id === wangBrushId) ?? WANG_BRUSHES[0];
+      if (isInitialClick) pushUndo(draft);
+      setDraft((prev) => {
+        const next = cloneMap(prev);
+        const layerGrid =
+          preset.defaultLayer === 'obj0' ? next.objectTiles[0] : next.bgTiles[0];
+        if (!layerGrid) return next;
+        for (let dx = 0; dx < brushSize; dx++) {
+          for (let dy = 0; dy < brushSize; dy++) {
+            const gx = tx + dx;
+            const gy = ty + dy;
+            if (gx < 0 || gy < 0 || gx >= next.width || gy >= next.height) continue;
+            const changes =
+              preset.mode === 'edge'
+                ? paintWangEdgeCell(
+                    layerGrid,
+                    gx,
+                    gy,
+                    !wangErase,
+                    preset.baseTileId,
+                    preset.emptyTileId,
+                  )
+                : paintWangCornerCell(
+                    layerGrid,
+                    gx,
+                    gy,
+                    !wangErase,
+                    preset.baseTileId,
+                    preset.emptyTileId,
+                  );
+            if (preset.blocksMovement) {
+              for (const ch of changes) {
+                next.collisionGrid[ch.x][ch.y] = ch.tileId !== preset.emptyTileId;
+              }
+            } else {
+              for (const ch of changes) {
+                if (ch.tileId !== preset.emptyTileId) {
+                  next.collisionGrid[ch.x][ch.y] = false;
+                }
+              }
+            }
+          }
+        }
+        return next;
+      });
       return;
     }
 
@@ -828,6 +939,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
             {(
               [
                 ['brush', Paintbrush, 'Brush'],
+                ['wang', Wand2, 'Wang Auto-Tile'],
                 ['fill', PaintBucket, 'Flood Fill'],
                 ['eraser', Eraser, 'Eraser'],
                 ['eyedropper', Pipette, 'Pick Tile'],
@@ -836,9 +948,16 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
               <button
                 key={id}
                 type="button"
-                onClick={() => setTool(id)}
+                onClick={() => {
+                  setTool(id);
+                  if (id === 'wang') {
+                    const preset = WANG_BRUSHES.find((b) => b.id === wangBrushId);
+                    if (preset) setActiveLayer(preset.defaultLayer);
+                  }
+                }}
                 aria-label={label}
                 aria-pressed={tool === id}
+                title={label}
                 className={`inline-flex flex-1 items-center justify-center gap-1 rounded border py-1.5 text-xs ${
                   tool === id
                     ? 'border-indigoFolk bg-indigoFolk text-white'
@@ -849,6 +968,46 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
               </button>
             ))}
           </div>
+
+          {tool === 'wang' && (
+            <div className="space-y-1.5 rounded border border-indigoFolk/40 bg-indigoFolk/5 p-2 text-[11px]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-indigoFolk">Wang Auto-Brush</span>
+                <button
+                  type="button"
+                  onClick={() => setWangErase((v) => !v)}
+                  aria-pressed={wangErase}
+                  className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                    wangErase
+                      ? 'border-crimson bg-crimson text-white'
+                      : 'border-borderFolk bg-card text-muted hover:text-ink'
+                  }`}
+                >
+                  {wangErase ? 'Erase Wang' : 'Paint Wang'}
+                </button>
+              </div>
+              <select
+                aria-label="Select Wang terrain or path brush"
+                value={wangBrushId}
+                onChange={(e) => {
+                  const nextId = e.target.value as WangBrushId;
+                  setWangBrushId(nextId);
+                  const preset = WANG_BRUSHES.find((b) => b.id === nextId);
+                  if (preset) setActiveLayer(preset.defaultLayer);
+                }}
+                className="w-full rounded border border-borderFolk bg-card px-2 py-1 text-xs text-ink"
+              >
+                {WANG_BRUSHES.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted">
+                Automatically joins neighbors (4-edge or 4-corner bitmasks on Balkan Myth tileset rows 12–15).
+              </p>
+            </div>
+          )}
           {/* Brush Size */}
           <div className="flex items-center justify-between gap-2 pt-1">
             <span className="text-[11px] font-medium text-muted">Brush Size</span>
@@ -991,8 +1150,9 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
                     className="flex items-center justify-between gap-2 rounded border border-borderFolk bg-card px-2 py-1 text-xs"
                   >
                     <div className="min-w-0">
-                      <span className="font-mono font-semibold text-amberFolk">#{poi.tag}</span>{' '}
-                      <span className="truncate">{poi.label}</span>{' '}
+                      <strong className="font-semibold text-amberFolk truncate">
+                        {poi.label || poi.tag}
+                      </strong>{' '}
                       <span className="font-mono text-[10px] text-muted">({poi.x},{poi.y})</span>
                     </div>
                     <button
@@ -1003,7 +1163,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
                           pointsOfInterest: (p.pointsOfInterest ?? []).filter((x) => x.id !== poi.id),
                         }))
                       }
-                      aria-label={`Remove #${poi.tag}`}
+                      aria-label={`Remove ${poi.label || poi.tag}`}
                       className="text-crimson hover:opacity-80 shrink-0"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1419,6 +1579,20 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
                 <span>Tapestry Studio</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => {
+                pushUndo(draft);
+                const myth = createBalkanMythMap();
+                setDraft(cloneMap(myth));
+                setActiveStampId(null);
+              }}
+              title="Load Zmeyovo: Well of the Lamia (Balkan Myth & Embroidery Map)"
+              className="inline-flex items-center gap-1 rounded border border-sage/60 bg-surface px-2.5 py-1 text-xs font-medium text-sage hover:bg-card"
+            >
+              <span>Lamia’s Well</span>
+            </button>
 
             <button
               type="button"

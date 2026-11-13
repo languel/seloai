@@ -13,6 +13,11 @@ import gentlesplashAnim from './animations/gentlesplash.json';
 import gentlewaterfallAnim from './animations/gentlewaterfall.json';
 import windmillAnim from './animations/windmill.json';
 import { createBulgarianShevitsaMap } from './shevitsaMap';
+import {
+  createBalkanMythMap,
+  createBalkanMythVillagers,
+  createBalkanMythWorld,
+} from './balkanMythMap';
 import type {
   ApiBrainProvider,
   BrainEngineKind,
@@ -232,13 +237,14 @@ export const SPRITESHEET_PRESETS: SpritesheetPreset[] = [
 ];
 
 export const TILESET_PRESETS = [
+  { label: 'Balkan Myth Embroidery (Lamia & Zmeyovo)', url: '/assets/balkan-myth-tileset.png', w: 512, h: 512, tileDim: 32 },
   { label: 'Bulgarian Shevitsa (Folk Embroidery)', url: '/assets/shevitsa-tileset.png', w: 512, h: 512, tileDim: 32 },
   { label: 'Gentle Village (Placeholder)', url: '/assets/gentle-obj.png', w: 1440, h: 1024, tileDim: 32 },
   { label: 'RPG Classic Tileset', url: '/assets/rpg-tileset.png', w: 1600, h: 1600, tileDim: 80 },
   { label: 'Mage City Tileset', url: '/assets/magecity.png', w: 256, h: 1450, tileDim: 32 },
 ];
 
-export { createBulgarianShevitsaMap };
+export { createBulgarianShevitsaMap, createBalkanMythMap, createBalkanMythVillagers, createBalkanMythWorld };
 
 function buildInitialCollisionGrid(objectTiles: TileGrid[], width: number, height: number): boolean[][] {
   const grid: boolean[][] = Array.from({ length: width }, () => Array(height).fill(false));

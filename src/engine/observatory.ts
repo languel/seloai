@@ -160,7 +160,7 @@ function getLandmarkLabel(sim: VillageSimulation, x: number, y: number): string 
     const d = Math.hypot(p.x - x, p.y - y);
     if (d < bestDist) {
       bestDist = d;
-      bestLabel = `#${p.tag}`;
+      bestLabel = p.label || p.tag;
     }
   }
   for (const sp of sim.map.spawnPoints) {
@@ -336,8 +336,8 @@ export function buildPsychophysicalGraph(sim: VillageSimulation): Psychophysical
     nodes.push({
       id: `poi-${poi.id}`,
       type: 'poi',
-      label: `#${poi.tag}`,
-      subtitle: poi.label,
+      label: poi.label || poi.tag,
+      subtitle: poi.description ?? poi.tag,
       color: '#d97706',
       x: poi.x,
       y: poi.y,

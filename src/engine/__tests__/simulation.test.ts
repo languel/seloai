@@ -32,7 +32,27 @@ import {
   buildWorldDatabase,
   queryWorldDatabase,
 } from '../observatory';
-import { CHAR_COLLISION_RADIUS, parseMentionTargets, VillageSimulation } from '../simulation';
+import {
+  CHAR_COLLISION_RADIUS,
+  computeBubbleDurationMs,
+  parseMentionTargets,
+  VillageSimulation,
+} from '../simulation';
+import {
+  applyWangCornerVertices,
+  applyWangEdgeMask,
+  createVertexMaskFromTileMask,
+  paintWangCornerCell,
+  paintWangEdgeCell,
+  resolveWangCornerIndex,
+  resolveWangEdgeIndex,
+} from '../wangTiling';
+import { BALKAN_TILES } from '../balkanTileset';
+import {
+  deleteSavedWorld,
+  listSavedWorlds,
+  saveWorldToMemory,
+} from '../../storage/villageStore';
 import {
   buildCustomSpriteFromAppearance,
   renderAppearanceSpritePixels,
@@ -70,6 +90,7 @@ import {
   sliceSelectionToTiles,
 } from '../tapestrySampler';
 import {
+  createBalkanMythWorld,
   createBlankWorldMap,
   createBulgarianShevitsaMap,
   exportCharactersJson,
@@ -80,6 +101,11 @@ import {
   exportVillageJson,
   parseImportedVillageJson,
 } from '../../storage/villageStore';
+import {
+  BALKAN_CHARACTER_SPRITE_IDS,
+  renderBalkanCharacterSheetPixels,
+} from '../balkanSprites';
+import { BALKAN_TILESET_COLS, renderBalkanTilesetPixels } from '../balkanTileset';
 
 describe('SeloAI core engine', () => {
   it('creates default map and finds walkable paths around collisions', () => {
@@ -669,7 +695,8 @@ describe('SeloAI core engine', () => {
 
     await sim.sendUserAddressedMessage(undefined, '@Mara go to #Plaza', false);
     const maraRt = sim.runtimes.get('v-mara')!;
-    expect(maraRt.currentIntention).toContain('#Plaza');
+    expect(maraRt.currentIntention).toContain('Village Square');
+    expect(maraRt.currentIntention).not.toContain('#');
     expect(maraRt.path.length).toBeGreaterThan(0);
 
     const json = exportVillageJson({
@@ -1763,5 +1790,280 @@ describe('SeloAI core engine', () => {
     expect(SEGMENTATION_MODEL_PRESETS.find((p) => p.id === 'sam3-tracker')?.repoId).toBe(
       'onnx-community/sam3-tracker-ONNX',
     );
+  });
+
+  it('builds Zmeyovo Balkan Myth Village with scratch-generated embroidered sprites, tileset, walkable well POIs, and Lamia sacrifice lore', async () => {
+    const world = createBalkanMythWorld();
+    expect(world.map.name).toBe('Zmeyovo: Well of the Lamia');
+    expect(world.map.width).toBe(48);
+    expect(world.map.height).toBe(36);
+    expect(world.map.tileSetUrl).toBe('/assets/balkan-myth-tileset.png');
+    expect(world.villagers).toHaveLength(6);
+
+    const tileset = renderBalkanTilesetPixels();
+    expect(tileset.width).toBe(512);
+    expect(tileset.height).toBe(512);
+
+    // Every tile index placed anywhere on the Balkan map must correspond to painted non-empty pixels in the tileset
+    const tileHasOpaquePixels = (tileIndex: number): boolean => {
+      const sx = (tileIndex % BALKAN_TILESET_COLS) * 32;
+      const sy = Math.floor(tileIndex / BALKAN_TILESET_COLS) * 32;
+      for (let py = 0; py < 32; py++) {
+        for (let px = 0; px < 32; px++) {
+          const alpha = tileset.data[((sy + py) * tileset.width + (sx + px)) * 4 + 3];
+          if (alpha > 0) return true;
+        }
+      }
+      return false;
+    };
+
+    for (const layer of [...world.map.bgTiles, ...world.map.objectTiles]) {
+      for (let x = 0; x < world.map.width; x++) {
+        for (let y = 0; y < world.map.height; y++) {
+          const idx = layer[x][y];
+          if (idx >= 0) {
+            expect(tileHasOpaquePixels(idx)).toBe(true);
+          }
+        }
+      }
+    }
+
+    // All 6 bespoke character spritesheets must contain distinct 4x4 animated 32x32 frames
+    for (const id of BALKAN_CHARACTER_SPRITE_IDS) {
+      const sheet = renderBalkanCharacterSheetPixels(id);
+      expect(sheet.width).toBe(128);
+      expect(sheet.height).toBe(128);
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 4; col++) {
+          let opaque = 0;
+          for (let py = 0; py < 32; py++) {
+            for (let px = 0; px < 32; px++) {
+              if (sheet.data[((row * 32 + py) * 128 + (col * 32 + px)) * 4 + 3] > 200) opaque++;
+            }
+          }
+          expect(opaque).toBeGreaterThan(80);
+        }
+      }
+    }
+
+    // Centerpiece Lamia well shaft blocks movement while South Sacrifice Altar apron & every POI are walkable + connected
+    expect(isTileWalkable(world.map, 23, 14)).toBe(false);
+    expect(isTileWalkable(world.map, 23, 15)).toBe(true);
+
+    const pois = world.map.pointsOfInterest ?? [];
+    expect(pois.map((p) => p.tag)).toEqual(
+      expect.arrayContaining([
+        'LamiaWell',
+        'KhoroStar',
+        'KukeriHearth',
+        'BabaHerbhouse',
+        'WeaverCardak',
+        'YunakBridge',
+        'SamodivaSpring',
+      ]),
+    );
+    const wellPoi = pois.find((p) => p.tag === 'LamiaWell')!;
+    for (const poi of pois) {
+      expect(isTileWalkable(world.map, poi.x, poi.y)).toBe(true);
+      if (poi.tag !== 'LamiaWell') {
+        expect(findPath(world.map, wellPoi, poi).length).toBeGreaterThan(0);
+      }
+    }
+
+    // Verify every villager spawns on a walkable tile and Story-Sim agent tooling loads preset: 'balkan-myth'
+    for (const v of world.villagers) {
+      expect(isTileWalkable(world.map, v.homeTile.x, v.homeTile.y)).toBe(true);
+      expect(v.customSprite?.textureUrl).toContain(`/assets/spritesheets/balkan/${v.id}.png`);
+    }
+
+    let appliedMap = createDefaultMap();
+    let appliedVillagers = structuredClone(DEFAULT_VILLAGERS);
+    const sim = new VillageSimulation(appliedMap, appliedVillagers, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+    });
+    seloToolHost.setHooks({
+      getSimulation: () => sim,
+      getMap: () => appliedMap,
+      getVillagers: () => appliedVillagers,
+      getSettings: () => sim.modelSettings,
+      getTab: () => 'village',
+      setTab: () => {},
+      applyMap: (next) => {
+        appliedMap = next;
+        sim.updateMap(next);
+      },
+      applyVillagers: (next) => {
+        appliedVillagers = next;
+        sim.syncVillagers(next);
+      },
+      updateSettings: (patch) => {
+        sim.updateSettings({ ...sim.modelSettings, ...patch });
+      },
+    });
+
+    const loadRes = await seloToolHost.callTool('create_world', {
+      preset: 'balkan-myth',
+      clearDatabase: true,
+    });
+    expect(loadRes.ok).toBe(true);
+    expect(loadRes.preset).toBe('balkan-myth');
+    expect(appliedVillagers.map((v) => v.id)).toContain('lamia');
+
+    // Run a dialogue with Lamia Zmeitsa at the well under Story-Sim mode
+    await sim.sendUserAddressedMessage(
+      'lamia',
+      'We brought silver obols and honeycomb to #LamiaWell. Will you release the water?',
+      false,
+    );
+    const conv = sim.conversations[0];
+    expect(conv).toBeDefined();
+    expect(conv.messages.some((m) => m.senderName === 'Lamia Zmeitsa')).toBe(true);
+    const lamiaLine = conv.messages.find((m) => m.senderName === 'Lamia Zmeitsa')!.text.toLowerCase();
+    expect(/well|tribute|obols|water|zmeyovo|spring|coil/.test(lamiaLine)).toBe(true);
+  });
+
+  it('prevents stuck-character rapid facing oscillation and cleanly resolves pinched sidesteps', () => {
+    const map = createDefaultMap();
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      proximityRadiusTiles: 0,
+      enableWebSpeechFallback: false,
+      autoConverse: false,
+    });
+
+    const v0 = sim.runtimes.get(DEFAULT_VILLAGERS[0].id)!;
+    const v1 = sim.runtimes.get(DEFAULT_VILLAGERS[1].id)!;
+    const v2 = sim.runtimes.get(DEFAULT_VILLAGERS[2].id)!;
+
+    // Wedge v0 between two villagers in a 1-tile corridor segment
+    v0.x = 20;
+    v0.y = 15;
+    v0.facing = 'right';
+    v0.path = [{ x: 21, y: 15 }, { x: 22, y: 15 }];
+    v0.state = 'walking';
+    v1.x = 20.6;
+    v1.y = 15;
+    v1.path = [];
+    v1.state = 'idle';
+    v2.x = 20;
+    v2.y = 16;
+    v2.path = [];
+    v2.state = 'idle';
+
+    let facingFlips = 0;
+    let prevFacing = v0.facing;
+    for (let i = 0; i < 45; i++) {
+      sim.stepFrame(0.05);
+      if (v0.facing !== prevFacing) {
+        facingFlips++;
+        prevFacing = v0.facing;
+      }
+    }
+
+    // Must not oscillate back-and-forth every frame while squeezed/blocked
+    expect(facingFlips).toBeLessThanOrEqual(4);
+    expect(v0.blockedTicks ?? 0).toBeLessThanOrEqual(19);
+    expect(v0.sidestepTicks ?? 0).toBeLessThanOrEqual(21);
+  });
+
+  it('populates distinct currentThoughtBubble vs currentBubble and scales duration by length', () => {
+    const shortDur = computeBubbleDurationMs('Hi!');
+    const longDur = computeBubbleDurationMs('A'.repeat(160));
+    expect(shortDur).toBeGreaterThanOrEqual(5500);
+    expect(longDur).toBeGreaterThan(shortDur);
+    expect(longDur).toBeLessThanOrEqual(16000);
+
+    const parsed = parseDialogueAndNarration(
+      '<thought>She clutches her herbal satchel nervously.</thought>Baba Rada: Only pure spring water will suffice.',
+      'Baba Rada',
+    );
+    expect(parsed.thoughts).toEqual(['She clutches her herbal satchel nervously.']);
+    expect(parsed.spoken).toBe('Only pure spring water will suffice.');
+  });
+
+  it('solves 4-Edge & 4-Corner Wang tiling seamlessly and wires rows 12..15 into Balkan Myth tileset + map', () => {
+    expect(resolveWangEdgeIndex(true, false, true, false)).toBe(5);
+    expect(resolveWangCornerIndex(false, true, true, false)).toBe(6);
+
+    // Paint 4-edge road strip & verify neighbor propagation
+    const roadGrid = Array.from({ length: 5 }, () => Array(5).fill(BALKAN_TILES.GRASS_MEADOW));
+    const mask = Array.from({ length: 5 }, () => Array(5).fill(false));
+    mask[1][2] = true;
+    mask[2][2] = true;
+    mask[3][2] = true;
+    applyWangEdgeMask(roadGrid, mask, BALKAN_TILES.WANG_ROAD_BASE, 5, 5);
+    expect(roadGrid[1][2]).toBe(BALKAN_TILES.WANG_ROAD_BASE + 2); // E only
+    expect(roadGrid[2][2]).toBe(BALKAN_TILES.WANG_ROAD_BASE + 10); // E + W
+    expect(roadGrid[3][2]).toBe(BALKAN_TILES.WANG_ROAD_BASE + 8); // W only
+
+    // Extend turn interactively upward from (2,2) -> (2,1)
+    paintWangEdgeCell(roadGrid, 2, 1, true, BALKAN_TILES.WANG_ROAD_BASE, BALKAN_TILES.GRASS_MEADOW);
+    expect(roadGrid[2][2]).toBe(BALKAN_TILES.WANG_ROAD_BASE + 11); // N + E + W tee!
+    expect(roadGrid[2][1]).toBe(BALKAN_TILES.WANG_ROAD_BASE + 4); // S only end cap
+
+    // Paint 4-corner terrain cell and verify surrounding shared vertices
+    const cornerGrid = Array.from({ length: 5 }, () => Array(5).fill(BALKAN_TILES.GRASS_MEADOW));
+    const tileMask = Array.from({ length: 5 }, () => Array(5).fill(false));
+    tileMask[2][2] = true;
+    applyWangCornerVertices(
+      cornerGrid,
+      createVertexMaskFromTileMask(tileMask, 5, 5),
+      BALKAN_TILES.WANG_DROUGHT_BASE,
+      5,
+      5,
+    );
+    expect(cornerGrid[2][2]).toBe(BALKAN_TILES.WANG_DROUGHT_BASE + 15);
+    expect(cornerGrid[1][2]).toBe(BALKAN_TILES.WANG_DROUGHT_BASE + 6); // NE + SE
+    paintWangCornerCell(
+      cornerGrid,
+      2,
+      2,
+      false,
+      BALKAN_TILES.WANG_DROUGHT_BASE,
+      BALKAN_TILES.GRASS_MEADOW,
+    );
+    expect(cornerGrid[2][2]).toBe(BALKAN_TILES.GRASS_MEADOW);
+
+    // Check regenerated Balkan Myth tileset rows 12..15 & Wang usage on Balkan map
+    const buf = renderBalkanTilesetPixels();
+    for (let row = 12; row <= 15; row++) {
+      for (let col = 0; col < 16; col++) {
+        let opaqueCount = 0;
+        for (let py = 0; py < 32; py++) {
+          for (let px = 0; px < 32; px++) {
+            if (buf.data[((row * 32 + py) * buf.width + (col * 32 + px)) * 4 + 3] > 0) {
+              opaqueCount++;
+            }
+          }
+        }
+        expect(opaqueCount).toBeGreaterThan(20);
+      }
+    }
+
+    const balkan = createBalkanMythWorld();
+    const flatBg = balkan.map.bgTiles[0].flat();
+    const flatObj = balkan.map.objectTiles[0].flat();
+    expect(flatBg.some((t) => t >= BALKAN_TILES.WANG_ROAD_BASE && t < BALKAN_TILES.WANG_ROAD_BASE + 16)).toBe(true);
+    expect(flatBg.some((t) => t >= BALKAN_TILES.WANG_DROUGHT_BASE && t < BALKAN_TILES.WANG_DROUGHT_BASE + 16)).toBe(true);
+    expect(flatBg.some((t) => t >= BALKAN_TILES.WANG_BROOK_BASE && t < BALKAN_TILES.WANG_BROOK_BASE + 16)).toBe(true);
+    expect(flatObj.some((t) => t >= BALKAN_TILES.WANG_WALL_BASE && t < BALKAN_TILES.WANG_WALL_BASE + 16)).toBe(true);
+  });
+
+  it('saves, lists, overwrites, and deletes worlds in browser memory store', async () => {
+    const map = createDefaultMap();
+    const saved = await saveWorldToMemory('Test Memory World', {
+      map,
+      villagers: structuredClone(DEFAULT_VILLAGERS),
+      modelSettings: { ...DEFAULT_MODEL_SETTINGS },
+      conversations: [],
+      savedAt: Date.now(),
+    });
+    const list = await listSavedWorlds();
+    expect(list.some((w) => w.id === saved.id && w.name === 'Test Memory World')).toBe(true);
+
+    const remaining = await deleteSavedWorld(saved.id);
+    expect(remaining.some((w) => w.id === saved.id)).toBe(false);
   });
 });
