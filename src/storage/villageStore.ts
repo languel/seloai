@@ -113,6 +113,8 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
           eavesdropThoughts: rawSettings.eavesdropThoughts ?? DEFAULT_MODEL_SETTINGS.eavesdropThoughts,
           showReasoning: rawSettings.showReasoning ?? DEFAULT_MODEL_SETTINGS.showReasoning,
           speakReasoning: rawSettings.speakReasoning ?? DEFAULT_MODEL_SETTINGS.speakReasoning,
+          autoLoadCachedModel:
+            rawSettings.autoLoadCachedModel ?? DEFAULT_MODEL_SETTINGS.autoLoadCachedModel,
           proximityRadiusTiles: Math.max(0, Math.min(EAVESDROP_WHOLE_MAP_RADIUS, radius)),
           narratorVoice: {
             ...DEFAULT_MODEL_SETTINGS.narratorVoice,

@@ -350,6 +350,8 @@ export interface ModelSettings {
   textDtype: TextDtype;
   omniModelId: string;
   omniMmproj: string;
+  /** Automatically check & load the last-used WebGPU model on startup if already downloaded locally */
+  autoLoadCachedModel?: boolean;
   inferenceMode: InferenceMode;
   localApiEnabled: boolean;
   localApiProvider: ApiBrainProvider;

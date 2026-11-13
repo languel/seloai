@@ -269,9 +269,20 @@ export function resolveOverlappingRects(
   return result;
 }
 
+export const SPEECH_BUBBLE_FONT_PX = 10.5;
+export const SPEECH_BUBBLE_LINE_H_PX = 13.5;
+
+export type OverlayLayerGroup = 'locations' | 'pills' | 'bubbles';
+
+export interface DeferredCanvasDraw {
+  y: number;
+  draw: () => void;
+}
+
 export interface QueuedOverlayItem {
   rect: OverlayRectInput;
   layerOrder: number; // 0 = poi/name pills, 1 = thoughts, 2 = speech
+  layerGroup?: OverlayLayerGroup;
   render: (rx: number, ry: number) => void;
 }
 
@@ -279,29 +290,74 @@ export interface CanvasOverlayCollector {
   items: QueuedOverlayItem[];
 }
 
+export interface ResolvedOverlayBatch {
+  sorted: QueuedOverlayItem[];
+  resolved: Map<string, OverlayRectInput> | null;
+}
+
 export function createOverlayCollector(): CanvasOverlayCollector {
   return { items: [] };
+}
+
+export function resolveOverlayBatch(
+  collector: CanvasOverlayCollector,
+  deoverlap = true,
+): ResolvedOverlayBatch {
+  const sorted = [...collector.items].sort((a, b) => a.layerOrder - b.layerOrder);
+  if (!deoverlap) {
+    return { sorted, resolved: null };
+  }
+  // Keep location labels stationary as characters walk or talk near them: resolve static
+  // landmarks only against other landmarks, and resolve dynamic pills/bubbles separately.
+  const locationRects: OverlayRectInput[] = [];
+  const dynamicRects: OverlayRectInput[] = [];
+  for (const item of sorted) {
+    const group: OverlayLayerGroup =
+      item.layerGroup ?? (item.layerOrder === 0 ? 'pills' : 'bubbles');
+    if (group === 'locations') {
+      locationRects.push(item.rect);
+    } else {
+      dynamicRects.push(item.rect);
+    }
+  }
+  const resolved = new Map<string, OverlayRectInput>();
+  if (locationRects.length > 0) {
+    for (const [k, v] of resolveOverlappingRects(locationRects, 4)) {
+      resolved.set(k, v);
+    }
+  }
+  if (dynamicRects.length > 0) {
+    for (const [k, v] of resolveOverlappingRects(dynamicRects, 4)) {
+      resolved.set(k, v);
+    }
+  }
+  return { sorted, resolved };
+}
+
+export function renderOverlayBatch(
+  ctx: CanvasRenderingContext2D,
+  batch: ResolvedOverlayBatch,
+  filter: OverlayLayerGroup | 'all' = 'all',
+) {
+  ctx.save();
+  for (const item of batch.sorted) {
+    const group: OverlayLayerGroup =
+      item.layerGroup ?? (item.layerOrder === 0 ? 'pills' : 'bubbles');
+    if (filter !== 'all' && group !== filter) continue;
+    const pos = batch.resolved?.get(item.rect.id);
+    item.render(pos?.x ?? item.rect.x, pos?.y ?? item.rect.y);
+  }
+  ctx.restore();
 }
 
 export function drawResolvedOverlays(
   ctx: CanvasRenderingContext2D,
   collector: CanvasOverlayCollector,
   deoverlap = true,
+  filter: OverlayLayerGroup | 'all' = 'all',
 ) {
-  const sorted = [...collector.items].sort((a, b) => a.layerOrder - b.layerOrder);
-  const resolved = deoverlap
-    ? resolveOverlappingRects(
-        sorted.map((it) => it.rect),
-        4,
-      )
-    : null;
-
-  ctx.save();
-  for (const item of sorted) {
-    const pos = resolved?.get(item.rect.id);
-    item.render(pos?.x ?? item.rect.x, pos?.y ?? item.rect.y);
-  }
-  ctx.restore();
+  const batch = resolveOverlayBatch(collector, deoverlap);
+  renderOverlayBatch(ctx, batch, filter);
 }
 
 function drawFootAnchoredSprite(
@@ -407,6 +463,7 @@ export function drawPoiMarkers(
           priority: 15,
         },
         layerOrder: 0,
+        layerGroup: 'locations',
         render: paintPill,
       });
     } else {
@@ -422,6 +479,7 @@ export interface VillagerRenderOptions {
   pois?: PointOfInterest[];
   theme?: CanvasThemeConfig;
   collector?: CanvasOverlayCollector;
+  deferredBodies?: DeferredCanvasDraw[];
 }
 
 export function drawVillager(
@@ -442,50 +500,73 @@ export function drawVillager(
 
   const px = rt.x * tileDim;
   const py = rt.y * tileDim;
-
-  ctx.save();
-  // Ground shadow scaled gently with character size
-  ctx.fillStyle = 'rgba(20, 18, 16, 0.28)';
-  ctx.beginPath();
-  ctx.ellipse(
-    px + tileDim / 2,
-    py + tileDim - 2,
-    tileDim * 0.32 * Math.min(1.2, Math.max(0.85, charScale)),
-    tileDim * 0.13 * Math.min(1.15, Math.max(0.85, charScale)),
-    0,
-    0,
-    Math.PI * 2,
-  );
-  ctx.fill();
-
-  // Embroidered diamond selection ring
-  if (selected) {
-    ctx.strokeStyle = cfg.accentColor || '#b42828';
-    ctx.lineWidth = 2;
-    const cx = px + tileDim / 2;
-    const cy = py + tileDim - 3;
-    const rScale = Math.max(0.9, Math.min(1.2, charScale));
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - 10 * rScale);
-    ctx.lineTo(cx + 16 * rScale, cy);
-    ctx.lineTo(cx, cy + 10 * rScale);
-    ctx.lineTo(cx - 16 * rScale, cy);
-    ctx.closePath();
-    ctx.stroke();
-  }
-
-  if (frame) {
-    const img = getCachedImage(frame.url);
-    if (img) {
-      drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
-    } else {
-      ctx.fillStyle = cfg.accentColor;
-      ctx.fillRect(px + 6, py + 4, tileDim - 12, tileDim - 8);
-    }
-  }
-
   const headTopY = py + tileDim - 4 - tileDim * charScale;
   const centerX = px + tileDim / 2;
+
+  const paintBody = () => {
+    ctx.save();
+    // Ground shadow scaled gently with character size
+    ctx.fillStyle = 'rgba(20, 18, 16, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(
+      px + tileDim / 2,
+      py + tileDim - 2,
+      tileDim * 0.32 * Math.min(1.2, Math.max(0.85, charScale)),
+      tileDim * 0.13 * Math.min(1.15, Math.max(0.85, charScale)),
+      0,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+
+    // Embroidered diamond selection ring
+    if (selected) {
+      ctx.strokeStyle = cfg.accentColor || '#b42828';
+      ctx.lineWidth = 2;
+      const cx = px + tileDim / 2;
+      const cy = py + tileDim - 3;
+      const rScale = Math.max(0.9, Math.min(1.2, charScale));
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 10 * rScale);
+      ctx.lineTo(cx + 16 * rScale, cy);
+      ctx.lineTo(cx, cy + 10 * rScale);
+      ctx.lineTo(cx - 16 * rScale, cy);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    if (frame) {
+      const img = getCachedImage(frame.url);
+      if (img) {
+        drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
+      } else {
+        ctx.fillStyle = cfg.accentColor;
+        ctx.fillRect(px + 6, py + 4, tileDim - 12, tileDim - 8);
+      }
+    }
+
+    // Activity status indicator dot
+    if (rt.state === 'thinking' || rt.state === 'speaking' || rt.state === 'listening') {
+      const badgeColor =
+        rt.state === 'speaking' ? '#e05a5a' : rt.state === 'listening' ? '#1fb5c9' : '#e6a945';
+      ctx.fillStyle = badgeColor;
+      ctx.beginPath();
+      ctx.arc(centerX + (tileDim * charScale) * 0.36, headTopY + 5, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#181614';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  if (options.deferredBodies) {
+    options.deferredBodies.push({ y: rt.y, draw: paintBody });
+  } else {
+    paintBody();
+  }
+
+  ctx.save();
 
   // Name pill
   if (showLabels) {
@@ -536,24 +617,12 @@ export function drawVillager(
           priority: selected ? 32 : 20,
         },
         layerOrder: 0,
+        layerGroup: 'pills',
         render: paintNamePill,
       });
     } else {
       paintNamePill(idealX, idealY);
     }
-  }
-
-  // Activity status indicator dot
-  if (rt.state === 'thinking' || rt.state === 'speaking' || rt.state === 'listening') {
-    const badgeColor =
-      rt.state === 'speaking' ? '#e05a5a' : rt.state === 'listening' ? '#1fb5c9' : '#e6a945';
-    ctx.fillStyle = badgeColor;
-    ctx.beginPath();
-    ctx.arc(centerX + (tileDim * charScale) * 0.36, headTopY + 5, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#181614';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
   }
 
   const showSpeech = options.showSpeechBubbles ?? true;
@@ -600,6 +669,7 @@ export function drawVillager(
           preferAbove: true,
         },
         layerOrder: 2,
+        layerGroup: 'bubbles',
         render: paintSpeech,
       });
     } else {
@@ -648,6 +718,7 @@ export function drawVillager(
           preferAbove: true,
         },
         layerOrder: 1,
+        layerGroup: 'bubbles',
         render: paintThought,
       });
     } else {
@@ -663,6 +734,7 @@ export interface PlayerRenderOptions {
   playerSprite?: CustomSpriteSheet | null;
   theme?: CanvasThemeConfig;
   collector?: CanvasOverlayCollector;
+  deferredBodies?: DeferredCanvasDraw[];
 }
 
 export function drawPlayer(
@@ -681,52 +753,63 @@ export function drawPlayer(
   const py = player.y * tileDim;
   const centerX = px + tileDim / 2;
 
-  ctx.save();
-  ctx.fillStyle = 'rgba(35, 67, 107, 0.34)';
-  ctx.beginPath();
-  ctx.ellipse(
-    centerX,
-    py + tileDim - 2,
-    tileDim * 0.32 * Math.min(1.2, Math.max(0.85, charScale)),
-    tileDim * 0.13 * Math.min(1.15, Math.max(0.85, charScale)),
-    0,
-    0,
-    Math.PI * 2,
-  );
-  ctx.fill();
+  const paintPlayerBody = () => {
+    ctx.save();
+    ctx.fillStyle = 'rgba(35, 67, 107, 0.34)';
+    ctx.beginPath();
+    ctx.ellipse(
+      centerX,
+      py + tileDim - 2,
+      tileDim * 0.32 * Math.min(1.2, Math.max(0.85, charScale)),
+      tileDim * 0.13 * Math.min(1.15, Math.max(0.85, charScale)),
+      0,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
 
-  const customSprite = opts.playerSprite;
-  if (customSprite) {
-    const frame = getCustomSpriteFrame(customSprite, player.facing, player.animFrame, isMoving);
-    const img = getCachedImage(frame.url);
-    if (img) {
-      drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
+    const customSprite = opts.playerSprite;
+    if (customSprite) {
+      const frame = getCustomSpriteFrame(customSprite, player.facing, player.animFrame, isMoving);
+      const img = getCachedImage(frame.url);
+      if (img) {
+        drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
+      }
+    } else {
+      const img = getCachedImage('/assets/player.png');
+      const flipHorizontal = player.facing === 'right';
+      const lookupDir: Direction = flipHorizontal ? 'left' : player.facing;
+      const rawSeq = playerSpritesheet.animations?.[lookupDir] ?? ['down', 'down2', 'down3'];
+      const walkCycle = rawSeq.length >= 3 ? [rawSeq[0], rawSeq[1], rawSeq[2], rawSeq[1]] : rawSeq;
+      const idleFrame = rawSeq[1] ?? rawSeq[0];
+      const frameName = isMoving ? walkCycle[Math.floor(player.animFrame) % walkCycle.length] : idleFrame;
+      const frame = playerSpritesheet.frames[frameName]?.frame;
+      if (img && frame) {
+        drawFootAnchoredSprite(
+          ctx,
+          img,
+          frame.x,
+          frame.y,
+          frame.w,
+          frame.h,
+          px,
+          py,
+          tileDim,
+          charScale,
+          flipHorizontal,
+        );
+      }
     }
+    ctx.restore();
+  };
+
+  if (opts.deferredBodies) {
+    opts.deferredBodies.push({ y: player.y, draw: paintPlayerBody });
   } else {
-    const img = getCachedImage('/assets/player.png');
-    const flipHorizontal = player.facing === 'right';
-    const lookupDir: Direction = flipHorizontal ? 'left' : player.facing;
-    const rawSeq = playerSpritesheet.animations?.[lookupDir] ?? ['down', 'down2', 'down3'];
-    const walkCycle = rawSeq.length >= 3 ? [rawSeq[0], rawSeq[1], rawSeq[2], rawSeq[1]] : rawSeq;
-    const idleFrame = rawSeq[1] ?? rawSeq[0];
-    const frameName = isMoving ? walkCycle[Math.floor(player.animFrame) % walkCycle.length] : idleFrame;
-    const frame = playerSpritesheet.frames[frameName]?.frame;
-    if (img && frame) {
-      drawFootAnchoredSprite(
-        ctx,
-        img,
-        frame.x,
-        frame.y,
-        frame.w,
-        frame.h,
-        px,
-        py,
-        tileDim,
-        charScale,
-        flipHorizontal,
-      );
-    }
+    paintPlayerBody();
   }
+
+  ctx.save();
 
   if (showLabels) {
     const labelSize = Math.round(10 * theme.fontScale);
@@ -776,6 +859,7 @@ export function drawPlayer(
           priority: 28,
         },
         layerOrder: 0,
+        layerGroup: 'pills',
         render: paintPlayerPill,
       });
     } else {
@@ -811,7 +895,7 @@ function setBubbleFont(
   bold: boolean,
   theme: CanvasThemeConfig,
 ) {
-  const basePx = (isThought ? 10 : 10.5) * theme.fontScale;
+  const basePx = (isThought ? 10 : SPEECH_BUBBLE_FONT_PX) * theme.fontScale;
   ctx.font = isThought
     ? `italic ${bold ? 700 : 500} ${basePx.toFixed(1)}px ${theme.fontFamily}`
     : `${bold ? 700 : 500} ${basePx.toFixed(1)}px ${theme.fontFamily}`;
@@ -900,7 +984,7 @@ function measureBubbleLayout(
   const maxLineWidth = (isThought ? (isMinimal ? 142 : 158) : isMinimal ? 150 : 168) * scaleFactor;
   const lines = wrapBubbleLines(ctx, truncatedRaw, maxLineWidth, isThought, pois, theme);
   const visibleRows = Math.min(3, lines.length);
-  const lineH = (isThought ? 12.5 : 13.5) * theme.fontScale;
+  const lineH = (isThought ? 12.5 : SPEECH_BUBBLE_LINE_H_PX) * theme.fontScale;
   const padX = isMinimal ? 10 : isThought ? 10 : 9;
   const padY = isMinimal ? 5 : 6;
   const hasOverflow = lines.length > 3;

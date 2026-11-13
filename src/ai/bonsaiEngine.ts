@@ -1,5 +1,6 @@
 import type { ModelProgress } from '../engine/types';
 import { resolveOriginUrl } from '../utils/assetUrl';
+import { saveLastLoadedModel } from './modelCache';
 
 interface BonsaiModule {
   DEFAULT_MODEL_ID: string;
@@ -137,6 +138,11 @@ class BonsaiEngine {
       });
 
       this.loadedModelId = modelId;
+      saveLastLoadedModel({
+        brainEngine: 'bonsai2-gguf',
+        modelId,
+        textDtype: 'q2',
+      });
       this.emit({
         status: 'ready',
         fraction: 1,

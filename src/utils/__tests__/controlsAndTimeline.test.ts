@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultMap, DEFAULT_MODEL_SETTINGS, DEFAULT_VILLAGERS } from '../../data/defaultData';
 import { generateProceduralPlayerCustomSprite, resolvePlayerAppearance } from '../../engine/playerSpriteGenerator';
-import { resolveOverlappingRects } from '../../engine/renderer';
+import {
+  createOverlayCollector,
+  renderOverlayBatch,
+  resolveOverlayBatch,
+  resolveOverlappingRects,
+} from '../../engine/renderer';
+import {
+  computeCoveredByteSpan,
+  getLastLoadedModel,
+  matchesTransformersCacheEntries,
+  saveLastLoadedModel,
+  clearLastLoadedModel,
+} from '../../ai/modelCache';
 import { VillageSimulation } from '../../engine/simulation';
 import {
   DEFAULT_AESTHETIC_SETTINGS,
@@ -28,7 +40,7 @@ describe('formatNames & rich label helpers', () => {
     expect(abbreviatePersonName('Lamia Zmeitsa', 11)).toBe('Lamia Z.');
     expect(abbreviatePersonName('Stoyan Yunak', 11)).toBe('Stoyan Y.');
     expect(abbreviatePersonName('Scribe', 11)).toBe('Scribe');
-  });
+    });
 
   it('replaces #Tag and #Tag (Label) with bold readable object labels and strips #/@ markers', () => {
     const pois = [
@@ -45,8 +57,8 @@ describe('formatNames & rich label helpers', () => {
     expect(segs.some((s) => s.kind === 'poi' && s.text === 'Well of the Lamia')).toBe(true);
     expect(segs.some((s) => s.kind === 'actor' && s.text === 'Stoyan Yunak')).toBe(true);
     expect(segs.every((s) => !s.text.includes('#'))).toBe(true);
+    });
   });
-});
 
 describe('signed logarithmic speed & rewind slider helpers', () => {
   it('maps center to 0× pause and preserves every signed log detent mark', () => {
@@ -61,8 +73,8 @@ describe('signed logarithmic speed & rewind slider helpers', () => {
       const pos = speedToSliderPos(mark.value);
       expect(sliderPosToSpeed(pos)).toBeCloseTo(mark.value, 5);
     }
+    });
   });
-});
 
 describe('VillageSimulation timeline rewind and slow/paused bubble scaling', () => {
   it('records movement & events and rewinds smoothly under negative speedMultiplier', () => {
@@ -116,7 +128,7 @@ describe('VillageSimulation timeline rewind and slow/paused bubble scaling', () 
           source: 'story-sim',
         },
       ],
-    });
+      });
     for (let i = 0; i < 20; i++) {
       sim.stepFrame(0.05);
     }
@@ -138,8 +150,8 @@ describe('VillageSimulation timeline rewind and slow/paused bubble scaling', () 
     expect(sim.getRewindInfo().behindPresentSec).toBeGreaterThan(1.0);
     expect(v0.x).toBeLessThan(midX);
     expect(sim.conversations.length).toBe(0);
+    });
   });
-});
 
 describe('aesthetic themes, overlay de-overlap & procedural world-matched player sprites', () => {
   it('detects world themes and computes legible smoked-glass vs parchment tokens', () => {
@@ -170,7 +182,7 @@ describe('aesthetic themes, overlay de-overlap & procedural world-matched player
     expect(parchment.isLightSurface).toBe(true);
     expect(parchment.canvasTheme.speechText).toBe('#1e1915');
     expect(parchment.canvasTheme.characterScale).toBe(1.35);
-  });
+    });
 
   it('procedurally adapts player spritesheet to active world theme and explicit customization', () => {
     const balkanAuto = resolvePlayerAppearance(DEFAULT_PLAYER_APPEARANCE, 'balkan-myth');
@@ -194,7 +206,7 @@ describe('aesthetic themes, overlay de-overlap & procedural world-matched player
     expect(sprite.frameHeight).toBe(32);
     expect(sprite.framesPerDirection).toBe(4);
     expect(sprite.textureUrl.startsWith('data:image/png;base64,')).toBe(true);
-  });
+    });
 
   it('separates overlapping labels and speech bubbles deterministically', () => {
     const resolved = resolveOverlappingRects(
@@ -222,5 +234,131 @@ describe('aesthetic themes, overlay de-overlap & procedural world-matched player
     // Highest priority bubble keeps its anchor position
     expect(resolved.get('speech:a')?.x).toBe(100);
     expect(resolved.get('speech:a')?.y).toBe(100);
+    });
+
+  it('splits overlay rendering into pills before characters and configurable bubbles layer', () => {
+    const collector = createOverlayCollector();
+    const calls: string[] = [];
+    collector.items.push(
+      {
+        rect: { id: 'speech:1', x: 10, y: 10, w: 60, h: 24, anchorX: 40, anchorY: 36, priority: 40 },
+        layerOrder: 2,
+        layerGroup: 'bubbles',
+        render: () => calls.push('speech'),
+      },
+      {
+        rect: { id: 'name:1', x: 10, y: 80, w: 50, h: 16, anchorX: 35, anchorY: 78, priority: 20 },
+        layerOrder: 0,
+        layerGroup: 'pills',
+        render: () => calls.push('name'),
+      },
+      {
+        rect: { id: 'poi:1', x: 120, y: 40, w: 70, h: 16, anchorX: 155, anchorY: 38, priority: 15 },
+        layerOrder: 0,
+        layerGroup: 'pills',
+        render: () => calls.push('poi'),
+      },
+      {
+        rect: { id: 'thought:1', x: 10, y: -18, w: 60, h: 20, anchorX: 40, anchorY: 6, priority: 34 },
+        layerOrder: 1,
+        layerGroup: 'bubbles',
+        render: () => calls.push('thought'),
+      },
+    );
+
+    const mockCtx = { save() {}, restore() {} } as unknown as CanvasRenderingContext2D;
+    const batch = resolveOverlayBatch(collector, true);
+
+    renderOverlayBatch(mockCtx, batch, 'pills');
+    calls.push('CHARACTER');
+    renderOverlayBatch(mockCtx, batch, 'bubbles');
+    expect(calls).toEqual(['name', 'poi', 'CHARACTER', 'thought', 'speech']);
+
+    calls.length = 0;
+    renderOverlayBatch(mockCtx, batch, 'pills');
+    renderOverlayBatch(mockCtx, batch, 'bubbles');
+    calls.push('CHARACTER');
+    expect(calls).toEqual(['name', 'poi', 'thought', 'speech', 'CHARACTER']);
+
+    expect(DEFAULT_AESTHETIC_SETTINGS.bubblesBehindCharacters).toBe(false);
+    expect(clampAestheticSettings({ bubblesBehindCharacters: true }).bubblesBehindCharacters).toBe(true);
+  });
+
+  it('keeps stationary location labels fixed when characters overlap them and renders behind characters', () => {
+    const collector = createOverlayCollector();
+    const calls: string[] = [];
+    collector.items.push(
+      {
+        rect: { id: 'poi:herb', x: 100, y: 100, w: 90, h: 16, anchorX: 145, anchorY: 120, priority: 15 },
+        layerOrder: 0,
+        layerGroup: 'locations',
+        render: () => calls.push('poi'),
+      },
+      {
+        rect: { id: 'name:1', x: 105, y: 102, w: 70, h: 16, anchorX: 140, anchorY: 96, priority: 28 },
+        layerOrder: 0,
+        layerGroup: 'pills',
+        render: () => calls.push('name'),
+      },
+      {
+        rect: { id: 'speech:1', x: 102, y: 98, w: 80, h: 24, anchorX: 142, anchorY: 122, priority: 45 },
+        layerOrder: 2,
+        layerGroup: 'bubbles',
+        render: () => calls.push('speech'),
+      },
+    );
+
+    const batch = resolveOverlayBatch(collector, true);
+    expect(batch.resolved?.get('poi:herb')?.x).toBe(100);
+    expect(batch.resolved?.get('poi:herb')?.y).toBe(100);
+
+    const mockCtx = { save() {}, restore() {} } as unknown as CanvasRenderingContext2D;
+    renderOverlayBatch(mockCtx, batch, 'locations');
+    renderOverlayBatch(mockCtx, batch, 'pills');
+    calls.push('CHARACTER');
+    renderOverlayBatch(mockCtx, batch, 'bubbles');
+    expect(calls).toEqual(['poi', 'name', 'CHARACTER', 'speech']);
   });
 });
+
+describe('cached model detection & last-used persistence', () => {
+  it('matches cached ONNX artifacts by modelId and dtype without false positives', () => {
+    const cachedUrls = [
+      'https://huggingface.co/onnx-community/Qwen3.5-0.8B-Text-ONNX/resolve/main/config.json',
+      'https://huggingface.co/onnx-community/Qwen3.5-0.8B-Text-ONNX/resolve/main/onnx/model_q4f16.onnx',
+      'https://huggingface.co/onnx-community/Qwen3.5-0.8B-Text-ONNX/resolve/main/onnx/model_q4f16.onnx_data',
+    ];
+    expect(matchesTransformersCacheEntries(cachedUrls, 'onnx-community/Qwen3.5-0.8B-Text-ONNX', 'q4f16')).toBe(true);
+    expect(matchesTransformersCacheEntries(cachedUrls, 'onnx-community/Qwen3.5-0.8B-Text-ONNX', 'q4')).toBe(false);
+    expect(matchesTransformersCacheEntries(cachedUrls, 'onnx-community/LFM3-1.7B-ONNX', 'q4f16')).toBe(false);
+    });
+
+  it('merges overlapping GGUF byte chunk spans accurately', () => {
+    const covered = computeCoveredByteSpan([
+      [0, 1000],
+      [500, 2000],
+      [3000, 4500],
+    ]);
+    expect(covered).toBe(3500);
+    });
+
+  it('persists and retrieves last successfully loaded model descriptor when storage exists', () => {
+    const store = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    };
+    clearLastLoadedModel();
+    expect(getLastLoadedModel()).toBeNull();
+    saveLastLoadedModel({
+      brainEngine: 'lfm3-omni',
+      modelId: 'LiquidAI/LFM3-Omni-2B-GGUF',
+      textDtype: 'q4f16',
+      });
+    const rec = getLastLoadedModel();
+    expect(rec?.brainEngine).toBe('lfm3-omni');
+    expect(rec?.modelId).toBe('LiquidAI/LFM3-Omni-2B-GGUF');
+    clearLastLoadedModel();
+    });
+  });

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   API_BRAIN_PRESETS,
   createDefaultMap,
@@ -2065,5 +2065,106 @@ describe('SeloAI core engine', () => {
 
     const remaining = await deleteSavedWorld(saved.id);
     expect(remaining.some((w) => w.id === saved.id)).toBe(false);
+  });
+
+  it('commits character speech into conversation log before audio playback starts (Scribe parity)', async () => {
+    const map = createDefaultMap();
+    const firstVillager = DEFAULT_VILLAGERS[0]!;
+    const secondVillager = DEFAULT_VILLAGERS[1]!;
+    const sim = new VillageSimulation(map, DEFAULT_VILLAGERS, [], {
+      ...DEFAULT_MODEL_SETTINGS,
+      inferenceMode: 'story-sim',
+      narratorEnabled: false,
+      eavesdropSpeech: true,
+      eavesdropThoughts: false,
+      enableWebSpeechFallback: false,
+      proximityRadiusTiles: 999,
+    });
+
+    const events: string[] = [];
+    let notifyCountBeforeAudio = 0;
+    const unsub = sim.subscribe(() => {
+      notifyCountBeforeAudio += 1;
+    });
+
+    let turnSeq = 0;
+    const replySpy = vi
+      .spyOn(brainRouter, 'generateVillagerReply')
+      .mockImplementation(async (params) => {
+        const line = `Turn ${++turnSeq} from ${params.villager.name}`;
+        if (params.onBeforeSpeak) {
+          await params.onBeforeSpeak({
+            text: line,
+            source: 'lfm3-omni',
+            durationMs: 12,
+          });
+          // Simulate integrated Omni voice starting ONLY after onBeforeSpeak ran
+          const convAfterCommit = sim.conversations.find((c) =>
+            c.participantIds.includes(params.villager.id),
+          );
+          const committedMsg = convAfterCommit?.messages.find(
+            (m) => m.senderId === params.villager.id && m.kind === 'speech' && m.text === line,
+          );
+          expect(committedMsg?.text).toBe(line);
+          expect(notifyCountBeforeAudio).toBeGreaterThan(0);
+          events.push(`omni-audio:${line}`);
+          return {
+            text: line,
+            source: 'lfm3-omni',
+            durationMs: 12,
+            audioHandled: true,
+          };
+        }
+        return {
+          text: line,
+          source: 'story-sim',
+          durationMs: 10,
+        };
+      });
+
+    const speakSpy = vi.spyOn(brainRouter, 'speakLine').mockImplementation(async (text, villager) => {
+      const conv = sim.conversations.find(
+        (c) =>
+          c.participantIds.includes(villager.id) &&
+          c.messages.some((m) => m.senderId === villager.id && m.kind === 'speech' && m.text === text),
+      );
+      expect(conv).toBeDefined();
+      events.push(`tts:${villager.id}:${text}`);
+    });
+    const speakThoughtSpy = vi.spyOn(brainRouter, 'speakThought').mockResolvedValue();
+
+    try {
+      // 1. Player-directed reply with integrated voice hook (onBeforeSpeak)
+      await sim.sendUserTextToVillager(firstVillager.id, 'Good morning!', true);
+      expect(events.some((e) => e.startsWith(`omni-audio:Turn 1 from ${firstVillager.name}`))).toBe(true);
+
+      // 2. Player-directed reply with external speakLine fallback (audioHandled: false)
+      replySpy.mockImplementationOnce(async (params) => ({
+        text: `Standard line for ${params.partnerName}`,
+        source: 'story-sim',
+        durationMs: 15,
+        audioHandled: false,
+      }));
+      await sim.sendUserTextToVillager(secondVillager.id, 'Any news?', true);
+      expect(
+        events.some((e) => e.startsWith(`tts:${secondVillager.id}:Standard line for `)),
+      ).toBe(true);
+
+      // 3. Autonomous villager conversation using standard TTS (audioHandled: false)
+      replySpy.mockImplementation(async (params) => ({
+        text: `Auto line ${++turnSeq} by ${params.villager.name}`,
+        source: 'story-sim',
+        durationMs: 14,
+        audioHandled: false,
+      }));
+      const autoConv = await sim.runConversationBetween(firstVillager.id, secondVillager.id);
+      expect(autoConv?.messages.filter((m) => m.kind === 'speech').length).toBe(3);
+      expect(events.filter((e) => e.includes('Auto line')).length).toBe(3);
+    } finally {
+      unsub();
+      replySpy.mockRestore();
+      speakSpy.mockRestore();
+      speakThoughtSpy.mockRestore();
+    }
   });
 });

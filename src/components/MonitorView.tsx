@@ -23,6 +23,13 @@ import {
 } from '../ai/localApiClient';
 import { minicpmEngine } from '../ai/minicpmEngine';
 import { omniEngine } from '../ai/omniEngine';
+import {
+  checkModelDownloaded,
+  getLastLoadedModel,
+  normalizeSpecFromSettings,
+  type DownloadedModelProbe,
+  type LastLoadedModelRecord,
+} from '../ai/modelCache';
 import { MicRecorder, StreamingPcmPlayer } from '../ai/audioPipeline';
 import {
   API_BRAIN_PRESETS,
@@ -122,71 +129,43 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
           ? bonsaiStatus
           : textStatus;
 
+  const [brainCacheProbe, setBrainCacheProbe] = useState<DownloadedModelProbe | null>(null);
+  const [lastLoadedModel, setLastLoadedModel] = useState<LastLoadedModelRecord | null>(() =>
+    getLastLoadedModel(),
+  );
+
+  useEffect(() => {
+    let active = true;
+    const spec = normalizeSpecFromSettings(settings);
+    checkModelDownloaded(spec).then((probe) => {
+      if (active) setBrainCacheProbe(probe);
+    });
+    setLastLoadedModel(getLastLoadedModel());
+    return () => {
+      active = false;
+    };
+  }, [
+    settings.brainEngine,
+    settings.textModelId,
+    settings.textDtype,
+    settings.omniModelId,
+    settings.omniMmproj,
+    activeBrainStatus.status,
+  ]);
+
   const handleLoadText = async () => {
-    if (settings.brainEngine === 'lfm3-omni') {
-      await handleLoadOmni();
-      return;
-    }
-    if (settings.brainEngine === 'minicpm5-gguf') {
-      try {
-        await minicpmEngine.load(settings.textModelId.trim() || 'openbmb/MiniCPM5-2B-GGUF');
-        brainRouter.log({
-          channel: 'lfm3-1.7b',
-          level: 'success',
-          title: 'MiniCPM5-2B Ready',
-          detail: `${settings.textModelId} loaded on WebGPU`,
-        });
-      } catch (err: any) {
-        brainRouter.log({
-          channel: 'lfm3-1.7b',
-          level: 'error',
-          title: 'MiniCPM5-2B Load Error',
-          detail: err?.message || String(err),
-        });
-      }
-      return;
-    }
-    if (settings.brainEngine === 'bonsai2-gguf') {
-      try {
-        await bonsaiEngine.load(settings.textModelId.trim() || 'prism-ml/Ternary-Bonsai-2-27B-gguf');
-        brainRouter.log({
-          channel: 'lfm3-1.7b',
-          level: 'success',
-          title: 'Ternary Bonsai-2 27B Ready',
-          detail: `${settings.textModelId} loaded on WebGPU`,
-        });
-      } catch (err: any) {
-        brainRouter.log({
-          channel: 'lfm3-1.7b',
-          level: 'error',
-          title: 'Bonsai-2 27B Load Error',
-          detail: err?.message || String(err),
-        });
-      }
-      return;
-    }
-    brainRouter.loadTextModel(settings.textModelId.trim(), settings.textDtype);
+    await brainRouter.loadConfiguredBrain(normalizeSpecFromSettings(settings)).catch(() => {});
   };
 
   const handleLoadOmni = async () => {
     setStudioError(null);
-    try {
-      await omniEngine.load(settings.omniModelId.trim(), settings.omniMmproj.trim() || undefined);
-      brainRouter.flushAudioQueue();
-      brainRouter.log({
-        channel: 'lfm3-omni',
-        level: 'success',
-        title: 'LFM3-Omni-2B Ready',
-        detail: `${settings.omniModelId} loaded on ${omniEngine.deviceLabel}`,
-      });
-    } catch (err: any) {
-      brainRouter.log({
-        channel: 'lfm3-omni',
-        level: 'error',
-        title: 'LFM3-Omni-2B Load Error',
-        detail: err?.message || String(err),
-      });
-    }
+    await brainRouter
+      .loadConfiguredBrain({
+        brainEngine: 'lfm3-omni',
+        modelId: settings.omniModelId.trim() || 'LiquidAI/LFM3-Omni-2B-GGUF',
+        omniMmproj: settings.omniMmproj.trim() || undefined,
+      })
+      .catch(() => {});
   };
 
   const handleRunTextTest = async (e: React.FormEvent) => {
@@ -491,6 +470,40 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
                 {activeBrainStatus.error}
               </div>
             )}
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {brainCacheProbe && (
+                  <span
+                    title={brainCacheProbe.detail}
+                    className={`rounded-sm border px-2 py-0.5 font-medium ${
+                      brainCacheProbe.downloaded
+                        ? 'border-sage/60 bg-sage/15 text-ink'
+                        : 'border-borderFolk bg-surface text-muted'
+                    }`}
+                  >
+                    {brainCacheProbe.downloaded
+                      ? brainCacheProbe.source === 'local-models'
+                        ? 'Downloaded (/models)'
+                        : 'Downloaded (Cache)'
+                      : 'Not Downloaded'}
+                  </span>
+                )}
+                {lastLoadedModel && (
+                  <span className="text-[10px] text-muted font-mono truncate max-w-[14rem]" title={`Last loaded: ${lastLoadedModel.modelId} (${lastLoadedModel.brainEngine})`}>
+                    Last: {lastLoadedModel.modelId.split('/').pop()}
+                  </span>
+                )}
+              </div>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer text-muted hover:text-ink">
+                <input
+                  type="checkbox"
+                  checked={settings.autoLoadCachedModel !== false}
+                  onChange={(e) => onUpdateSettings({ autoLoadCachedModel: e.target.checked })}
+                />
+                <span>Auto-load downloaded model on startup</span>
+              </label>
+            </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <button

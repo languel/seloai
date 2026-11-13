@@ -12,6 +12,7 @@ import { bonsaiEngine } from './bonsaiEngine';
 import { omniEngine } from './omniEngine';
 import { minicpmEngine } from './minicpmEngine';
 import { chatWithExternalApi, synthesizeSpeechViaApi } from './localApiClient';
+import { saveLastLoadedModel, type ModelCacheSpec } from './modelCache';
 import {
   StreamingPcmPlayer,
   cancelActiveWebSpeech,
@@ -205,6 +206,7 @@ class BrainRouter {
   private worker: Worker | null = null;
   private pending = new Map<string, PendingRequest>();
   private reqCounter = 0;
+  private pendingTextLoad: { modelId: string; dtype: TextDtype } | null = null;
   public textProgress: ModelProgress = {
     status: 'unloaded',
     fraction: 0,
@@ -282,6 +284,13 @@ class BrainRouter {
         };
         for (const fn of this.textListeners) fn(this.textProgress);
         if (msg.status === 'ready') {
+          if (this.pendingTextLoad) {
+            saveLastLoadedModel({
+              brainEngine: 'transformers-onnx',
+              modelId: this.pendingTextLoad.modelId,
+              textDtype: this.pendingTextLoad.dtype,
+            });
+          }
           this.log({
             channel: 'lfm3-1.7b',
             level: 'success',
@@ -320,6 +329,7 @@ class BrainRouter {
   }
 
   loadTextModel(modelId: string, dtype: TextDtype) {
+    this.pendingTextLoad = { modelId, dtype };
     this.log({
       channel: 'lfm3-1.7b',
       level: 'info',
@@ -328,6 +338,81 @@ class BrainRouter {
     });
     const w = this.ensureWorker();
     w.postMessage({ type: 'load', modelId, dtype });
+  }
+
+  /**
+   * Unified loader for any WebGPU brain preset (LFM3-Omni, MiniCPM5 GGUF, Bonsai-2 GGUF, or Transformers ONNX).
+   */
+  async loadConfiguredBrain(spec: ModelCacheSpec): Promise<void> {
+    if (spec.brainEngine === 'lfm3-omni') {
+      const modelId = spec.modelId.trim() || 'LiquidAI/LFM3-Omni-2B-GGUF';
+      const mmproj = spec.omniMmproj?.trim() || undefined;
+      try {
+        await omniEngine.load(modelId, mmproj);
+        this.flushAudioQueue();
+        this.log({
+          channel: 'lfm3-omni',
+          level: 'success',
+          title: 'LFM3-Omni-2B Ready',
+          detail: `${modelId} loaded on ${omniEngine.deviceLabel}`,
+        });
+      } catch (err: any) {
+        this.log({
+          channel: 'lfm3-omni',
+          level: 'error',
+          title: 'LFM3-Omni-2B Load Error',
+          detail: err?.message || String(err),
+        });
+        throw err;
+      }
+      return;
+    }
+
+    if (spec.brainEngine === 'minicpm5-gguf') {
+      const modelId = spec.modelId.trim() || 'openbmb/MiniCPM5-2B-GGUF';
+      try {
+        await minicpmEngine.load(modelId);
+        this.log({
+          channel: 'lfm3-1.7b',
+          level: 'success',
+          title: 'MiniCPM5-2B Ready',
+          detail: `${modelId} loaded on WebGPU`,
+        });
+      } catch (err: any) {
+        this.log({
+          channel: 'lfm3-1.7b',
+          level: 'error',
+          title: 'MiniCPM5-2B Load Error',
+          detail: err?.message || String(err),
+        });
+        throw err;
+      }
+      return;
+    }
+
+    if (spec.brainEngine === 'bonsai2-gguf') {
+      const modelId = spec.modelId.trim() || 'prism-ml/Ternary-Bonsai-2-27B-gguf';
+      try {
+        await bonsaiEngine.load(modelId);
+        this.log({
+          channel: 'lfm3-1.7b',
+          level: 'success',
+          title: 'Ternary Bonsai-2 27B Ready',
+          detail: `${modelId} loaded on WebGPU`,
+        });
+      } catch (err: any) {
+        this.log({
+          channel: 'lfm3-1.7b',
+          level: 'error',
+          title: 'Bonsai-2 27B Load Error',
+          detail: err?.message || String(err),
+        });
+        throw err;
+      }
+      return;
+    }
+
+    this.loadTextModel(spec.modelId.trim(), spec.textDtype ?? 'q4f16');
   }
 
   unloadTextModel() {
@@ -366,6 +451,11 @@ class BrainRouter {
     history: ChatMessage[];
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
+    onBeforeSpeak?: (info: {
+      text: string;
+      source: ChatMessage['source'];
+      durationMs: number;
+    }) => void | Promise<void>;
     speakSpatialResolver?: () => SpatialMix;
   }): Promise<{
     text: string;
@@ -467,22 +557,8 @@ class BrainRouter {
           : chatMessages;
 
         const runOmniBrainTurn = async () => {
-          let player: StreamingPcmPlayer | null = null;
-          if (wantVoice && mix) {
-            this.activeSpatialResolver = params.speakSpatialResolver ?? null;
-            player = new StreamingPcmPlayer(
-              omniEngine.audioSampleRate,
-              () => {
-                if (this.activePlayer === player) {
-                  this.activePlayer = null;
-                  this.activeSpatialResolver = null;
-                }
-              },
-              mix,
-              voice,
-            );
-            this.activePlayer = player;
-          }
+          const genEpoch = this.speechEpoch;
+          const bufferedPcm: Float32Array[] = [];
 
           try {
             const res = await omniEngine.generateChatReply({
@@ -490,13 +566,14 @@ class BrainRouter {
               voice: wantVoice,
               maxNewTokens: wantVoice ? 260 : 120,
               onTextChunk: params.onChunk,
-              onAudioChunk: (pcm) => player?.push(pcm),
+              onAudioChunk: wantVoice ? (pcm) => bufferedPcm.push(pcm) : undefined,
             });
-            player?.end();
-            if (player) {
-              await player.waitForEnd();
-            }
-            const cleanText = parseDialogueAndNarration(res.text, villager.name).display;
+            const rawCleanText = parseDialogueAndNarration(res.text, villager.name).display;
+            const repeated = isTextTooSimilar(rawCleanText, recentSelfLines, 0.58);
+            const cleanText = repeated
+              ? synthesizeStorySimReply(villager, partnerName, history, recentSelfLines)
+              : rawCleanText;
+
             this.lastMetrics.lastOmniLatencyMs = res.durationMs;
             this.lastMetrics.lastTextLatencyMs = res.durationMs;
             this.lastMetrics.avgTokensPerSec = res.tokensPerSec;
@@ -509,14 +586,75 @@ class BrainRouter {
               durationMs: res.durationMs,
               tokensPerSec: res.tokensPerSec,
             });
+
+            // Commit/render final text into the conversation log BEFORE starting voice playback.
+            await params.onBeforeSpeak?.({
+              text: cleanText,
+              source: 'lfm3-omni',
+              durationMs: res.durationMs,
+            });
+
+            const canPlayBuffered = Boolean(
+              wantVoice &&
+                !repeated &&
+                bufferedPcm.length > 0 &&
+                params.speakSpatialResolver &&
+                genEpoch === this.speechEpoch,
+            );
+            let playedBuffered = false;
+
+            if (canPlayBuffered) {
+              await this.enqueueSpeechTurn(async () => {
+                if (genEpoch !== this.speechEpoch) return;
+                const currentMix = params.speakSpatialResolver?.();
+                if (!currentMix?.inRange) return;
+                this.activeSpatialResolver = params.speakSpatialResolver ?? null;
+                this.setActiveSpeech({
+                  speakerId: villager.id,
+                  speakerName: villager.name,
+                  text: cleanText,
+                  engine: 'omni',
+                  startedAt: Date.now(),
+                });
+                const player = new StreamingPcmPlayer(
+                  omniEngine.audioSampleRate,
+                  () => {
+                    if (this.activePlayer === player) {
+                      this.activePlayer = null;
+                      this.activeSpatialResolver = null;
+                      this.setActiveSpeech(null);
+                    }
+                  },
+                  currentMix,
+                  voice,
+                );
+                this.activePlayer = player;
+                try {
+                  for (const pcm of bufferedPcm) {
+                    player.push(pcm);
+                  }
+                  player.end();
+                  playedBuffered = true;
+                  await player.waitForEnd();
+                } catch (playErr) {
+                  player.stop();
+                  if (this.activePlayer === player) {
+                    this.activePlayer = null;
+                    this.activeSpatialResolver = null;
+                  }
+                  this.setActiveSpeech(null);
+                  throw playErr;
+                }
+              });
+            }
+
             return {
               text: cleanText,
               source: 'lfm3-omni' as const,
               durationMs: res.durationMs,
-              audioHandled: wantVoice,
+              audioHandled: playedBuffered,
             };
           } catch (err: any) {
-            player?.stop();
             this.activeSpatialResolver = null;
             this.log({
               channel: 'lfm3-omni',
@@ -534,15 +672,8 @@ class BrainRouter {
           }
         };
 
-        const omniResult = wantVoice
-          ? await this.enqueueSpeechTurn(() => runOmniBrainTurn())
-          : await runOmniBrainTurn();
+        const omniResult = await runOmniBrainTurn();
         if (omniResult) {
-          if (isTextTooSimilar(omniResult.text, recentSelfLines, 0.58)) {
-            const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines);
-            runtime.recentUtterances = pushRing(runtime.recentUtterances, fresh);
-            return { ...omniResult, text: fresh };
-          }
           runtime.recentUtterances = pushRing(runtime.recentUtterances, omniResult.text);
           return omniResult;
         }

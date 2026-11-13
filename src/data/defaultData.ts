@@ -463,6 +463,7 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   textDtype: 'q4f16',
   omniModelId: 'LiquidAI/LFM3-Omni-2B-GGUF',
   omniMmproj: '',
+  autoLoadCachedModel: true,
   inferenceMode: 'auto',
   localApiEnabled: true,
   localApiProvider: 'ollama',

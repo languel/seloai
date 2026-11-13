@@ -1,5 +1,6 @@
 import type { ModelProgress } from '../engine/types';
 import { resolveOriginUrl } from '../utils/assetUrl';
+import { headBinaryAssetExists, saveLastLoadedModel } from './modelCache';
 
 interface OmniModule {
   Lfm3OmniForConditionalGeneration: {
@@ -58,10 +59,10 @@ async function resolveLocalOmniSource(modelId: string, mmproj?: string): Promise
       : `${localBase}/mmproj-${repoName}-Q8_0.gguf`;
     try {
       const [r1, r2] = await Promise.all([
-        fetch(ggufUrl, { method: 'HEAD' }),
-        fetch(mmprojUrl, { method: 'HEAD' }),
+        headBinaryAssetExists(ggufUrl),
+        headBinaryAssetExists(mmprojUrl),
       ]);
-      if (r1.ok && r2.ok) {
+      if (r1.exists && r2.exists) {
         return {
           resolvedModelId: localBase,
           resolvedMmproj: cleanMmproj,
@@ -194,6 +195,12 @@ class OmniEngine {
 
       this.loadedModelId = modelId;
       this.loadedMmproj = mmproj ?? '';
+      saveLastLoadedModel({
+        brainEngine: 'lfm3-omni',
+        modelId,
+        textDtype: 'q4f16',
+        omniMmproj: this.loadedMmproj || undefined,
+      });
       this.emit({
         status: 'ready',
         fraction: 1,

@@ -1450,92 +1450,19 @@ export class VillageSimulation {
           );
         };
 
-        const res = await brainRouter.generateVillagerReply({
-          villager: speakerCfg,
-          runtime: speakerRt,
+        await this.runVillagerSpeechTurn({
+          conv,
+          speakerCfg,
+          speakerRt,
           partnerName: partnerCfg.name,
-          history: conv.messages,
-          settings: this.modelSettings,
-          speakSpatialResolver: hearSpeech ? resolver : undefined,
+          hearSpeech,
+          hearThoughts,
+          speakReasoningAudio: eavesdropEnabled,
+          minBubbleMs: 5800,
+          maxBubbleMs: 16000,
+          restingState: 'conversing',
+          resolver,
         });
-
-        const parsed = parseDialogueAndNarration(res.text, speakerCfg.name);
-
-        if (parsed.thoughts.length > 0) {
-          const joinedThought = parsed.thoughts.join(' ');
-          const nowTh = Date.now();
-          speakerRt.currentThoughtBubble = {
-            text: joinedThought,
-            startedAt: nowTh,
-            expiresAt: nowTh + computeBubbleDurationMs(joinedThought, 5000, 14000),
-          };
-          if (this.modelSettings.eavesdropThoughts) {
-            for (const thought of parsed.thoughts) {
-              conv.messages.push({
-                id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                senderId: speakerCfg.id,
-                senderName: speakerCfg.name,
-                text: thought,
-                timestamp: Date.now(),
-                kind: 'thought',
-                source: res.source,
-              });
-              conv.updatedAt = Date.now();
-              this.notify(true);
-              if (hearThoughts) {
-                await brainRouter.speakThought(thought, speakerCfg, this.modelSettings, resolver);
-              }
-            }
-          }
-        }
-
-        if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
-          for (const beat of parsed.narration) {
-            const actionText = `${speakerCfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`;
-            await this.emitNarrationTurn(
-              conv,
-              actionText,
-              hearSpeech && !res.audioHandled,
-              resolver,
-            );
-          }
-        }
-
-        const spokenLine = parsed.spoken || parsed.display;
-        const nowSp = Date.now();
-        speakerRt.lastLatencyMs = res.durationMs;
-        speakerRt.state = 'speaking';
-        speakerRt.currentBubble = {
-          text: spokenLine,
-          startedAt: nowSp,
-          expiresAt: nowSp + computeBubbleDurationMs(spokenLine, 5800, 16000),
-        };
-        conv.messages.push({
-          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          senderId: speakerCfg.id,
-          senderName: speakerCfg.name,
-          text: spokenLine,
-          reasoning: parsed.reasoning.join('\n\n') || undefined,
-          timestamp: Date.now(),
-          kind: 'speech',
-          source: res.source,
-        });
-        conv.updatedAt = Date.now();
-        this.notify(true);
-
-        if (hearSpeech && !res.audioHandled && parsed.spoken) {
-          const mix = resolver();
-          if (mix.inRange) {
-            await brainRouter.speakLine(parsed.spoken, speakerCfg, this.modelSettings, resolver);
-          }
-        }
-        if (this.modelSettings.speakReasoning && parsed.reasoning.length > 0 && eavesdropEnabled) {
-          const mix = resolver();
-          if (mix.inRange) {
-            await brainRouter.speakLine(parsed.reasoning.join(' '), speakerCfg, this.modelSettings, resolver);
-          }
-        }
-        speakerRt.state = 'conversing';
 
         await new Promise((r) => setTimeout(r, 400));
       }
@@ -1818,6 +1745,226 @@ export class VillageSimulation {
     }
   }
 
+  /**
+   * Executes one villager dialogue turn with live token streaming and guarantees that
+   * thoughts, stage beats, and spoken text are committed to the conversation log and UI
+   * BEFORE voice playback begins (matching Scribe narration behavior).
+   */
+  private async runVillagerSpeechTurn(opts: {
+    conv: Conversation;
+    speakerCfg: VillagerConfig;
+    speakerRt: VillagerRuntime;
+    partnerName: string;
+    hearSpeech: boolean;
+    hearThoughts: boolean;
+    speakReasoningAudio: boolean;
+    minBubbleMs: number;
+    maxBubbleMs: number;
+    restingState: VillagerRuntime['state'];
+    resolver: () => SpatialMix;
+    speakDisplayFallback?: boolean;
+    onBeforeVoice?: (spokenLine: string) => void;
+  }): Promise<void> {
+    const {
+      conv,
+      speakerCfg,
+      speakerRt,
+      partnerName,
+      hearSpeech,
+      hearThoughts,
+      speakReasoningAudio,
+      minBubbleMs,
+      maxBubbleMs,
+      restingState,
+      resolver,
+      speakDisplayFallback = false,
+      onBeforeVoice,
+    } = opts;
+
+    const streamingMsg: ChatMessage = {
+      id: `msg-v-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      senderId: speakerCfg.id,
+      senderName: speakerCfg.name,
+      text: '',
+      timestamp: Date.now(),
+      kind: 'speech',
+      source: 'story-sim',
+    };
+    const historySnapshot = conv.messages.slice();
+    conv.messages.push(streamingMsg);
+    conv.updatedAt = Date.now();
+    this.notify(true);
+
+    let rawStream = '';
+    let notifiedFirstText = false;
+    let preAudioCommitted = false;
+
+    const commitSpeechIntoLog = (
+      spokenLine: string,
+      reasoning: string | undefined,
+      source: ChatMessage['source'],
+      durationMs: number,
+      willSpeakNow: boolean,
+    ) => {
+      const nowSp = Date.now();
+      speakerRt.lastLatencyMs = durationMs;
+      speakerRt.state = willSpeakNow ? 'speaking' : restingState;
+      speakerRt.currentBubble = {
+        text: spokenLine,
+        startedAt: nowSp,
+        expiresAt: nowSp + computeBubbleDurationMs(spokenLine, minBubbleMs, maxBubbleMs),
+      };
+      // Keep the speech message positioned after any pre-speech thought or narration beats.
+      const idx = conv.messages.indexOf(streamingMsg);
+      if (idx !== -1 && idx !== conv.messages.length - 1) {
+        conv.messages.splice(idx, 1);
+        conv.messages.push(streamingMsg);
+      }
+      streamingMsg.text = spokenLine;
+      streamingMsg.reasoning = reasoning;
+      streamingMsg.timestamp = nowSp;
+      streamingMsg.kind = 'speech';
+      streamingMsg.source = source;
+      conv.updatedAt = nowSp;
+      this.notify(true);
+    };
+
+    try {
+      const res = await brainRouter.generateVillagerReply({
+        villager: speakerCfg,
+        runtime: speakerRt,
+        partnerName,
+        history: historySnapshot,
+        settings: this.modelSettings,
+        speakSpatialResolver: hearSpeech ? resolver : undefined,
+        onChunk: (chunk) => {
+          rawStream += chunk;
+          const liveParsed = parseDialogueAndNarration(rawStream, speakerCfg.name);
+          const liveText = liveParsed.spoken || liveParsed.display;
+          streamingMsg.text = liveText;
+          streamingMsg.reasoning = liveParsed.reasoning.join('\n\n') || undefined;
+          if (liveText) {
+            const nowChunk = Date.now();
+            speakerRt.currentBubble = {
+              text: liveText,
+              startedAt: speakerRt.currentBubble?.startedAt ?? nowChunk,
+              expiresAt: nowChunk + 8000,
+            };
+          }
+          const isFirstText = !notifiedFirstText && Boolean(liveText);
+          if (isFirstText) notifiedFirstText = true;
+          this.notify(isFirstText);
+        },
+        onBeforeSpeak: (info) => {
+          preAudioCommitted = true;
+          const preParsed = parseDialogueAndNarration(info.text, speakerCfg.name);
+          const preSpoken = preParsed.spoken || preParsed.display;
+          const willSpeakNow = Boolean(hearSpeech && resolver().inRange && preSpoken);
+          onBeforeVoice?.(preSpoken);
+          commitSpeechIntoLog(
+            preSpoken,
+            preParsed.reasoning.join('\n\n') || undefined,
+            info.source,
+            info.durationMs,
+            willSpeakNow,
+          );
+        },
+      });
+
+      const parsed = parseDialogueAndNarration(res.text, speakerCfg.name);
+      const spokenLine = parsed.spoken || parsed.display;
+
+      if (parsed.thoughts.length > 0) {
+        const joinedThought = parsed.thoughts.join(' ');
+        const nowTh = Date.now();
+        speakerRt.currentThoughtBubble = {
+          text: joinedThought,
+          startedAt: nowTh,
+          expiresAt: nowTh + computeBubbleDurationMs(joinedThought, 5000, 14000),
+        };
+        if (this.modelSettings.eavesdropThoughts) {
+          for (const thought of parsed.thoughts) {
+            const thMsg: ChatMessage = {
+              id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              senderId: speakerCfg.id,
+              senderName: speakerCfg.name,
+              text: thought,
+              timestamp: Date.now(),
+              kind: 'thought',
+              source: res.source,
+            };
+            const stIdx = conv.messages.indexOf(streamingMsg);
+            conv.messages.splice(stIdx >= 0 ? stIdx : conv.messages.length, 0, thMsg);
+            conv.updatedAt = Date.now();
+            this.notify(true);
+            if (hearThoughts) {
+              await brainRouter.speakThought(thought, speakerCfg, this.modelSettings, resolver);
+            }
+          }
+        }
+      }
+
+      if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
+        for (const beat of parsed.narration) {
+          const actionText = `${speakerCfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`;
+          await this.emitNarrationTurn(
+            conv,
+            actionText,
+            hearSpeech && !res.audioHandled,
+            resolver,
+          );
+        }
+      }
+
+      const lineForTts = speakDisplayFallback ? spokenLine : parsed.spoken;
+      const willSpeakTts = Boolean(
+        hearSpeech && !res.audioHandled && lineForTts && resolver().inRange,
+      );
+
+      if (!preAudioCommitted) {
+        onBeforeVoice?.(spokenLine);
+        commitSpeechIntoLog(
+          spokenLine,
+          parsed.reasoning.join('\n\n') || undefined,
+          res.source,
+          res.durationMs,
+          willSpeakTts,
+        );
+      } else if (parsed.thoughts.length > 0 || parsed.narration.length > 0) {
+        commitSpeechIntoLog(
+          spokenLine,
+          parsed.reasoning.join('\n\n') || undefined,
+          res.source,
+          res.durationMs,
+          willSpeakTts,
+        );
+      }
+
+      if (hearSpeech && !res.audioHandled && lineForTts) {
+        const mix = resolver();
+        if (mix.inRange) {
+          await brainRouter.speakLine(lineForTts, speakerCfg, this.modelSettings, resolver);
+        }
+      }
+      if (this.modelSettings.speakReasoning && parsed.reasoning.length > 0 && speakReasoningAudio) {
+        const mix = resolver();
+        if (mix.inRange) {
+          await brainRouter.speakLine(parsed.reasoning.join(' '), speakerCfg, this.modelSettings, resolver);
+        }
+      }
+      speakerRt.state = restingState;
+    } catch (err) {
+      if (!streamingMsg.text.trim()) {
+        const idx = conv.messages.indexOf(streamingMsg);
+        if (idx !== -1) {
+          conv.messages.splice(idx, 1);
+          this.notify(true);
+        }
+      }
+      throw err;
+    }
+  }
+
   private async executeVillagerReplyTurn(
     conv: Conversation,
     cfg: VillagerConfig,
@@ -1832,17 +1979,6 @@ export class VillageSimulation {
     rt.state = 'thinking';
     rt.activityLabel = `Listening to ${this.player.name}`;
     this.notify(true);
-
-    const streamingMsg: ChatMessage = {
-      id: `msg-v-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      senderId: cfg.id,
-      senderName: cfg.name,
-      text: '',
-      timestamp: Date.now(),
-      kind: 'speech',
-      source: 'story-sim',
-    };
-    conv.messages.push(streamingMsg);
 
     try {
       const resolver = () => {
@@ -1863,96 +1999,33 @@ export class VillageSimulation {
 
       const hearSpeech = speakReply && this.modelSettings.eavesdropSpeech;
       const hearThoughts = speakReply && this.modelSettings.eavesdropThoughts;
-      let rawStream = '';
 
-      const res = await brainRouter.generateVillagerReply({
-        villager: cfg,
-        runtime: rt,
+      await this.runVillagerSpeechTurn({
+        conv,
+        speakerCfg: cfg,
+        speakerRt: rt,
         partnerName: this.player.name,
-        history: conv.messages.slice(0, -1),
-        settings: this.modelSettings,
-        speakSpatialResolver: hearSpeech ? resolver : undefined,
-        onChunk: (chunk) => {
-          rawStream += chunk;
-          const liveParsed = parseDialogueAndNarration(rawStream, cfg.name);
-          streamingMsg.text = liveParsed.spoken || liveParsed.display;
-          streamingMsg.reasoning = liveParsed.reasoning.join('\n\n') || undefined;
-          if (streamingMsg.text) {
-            rt.currentBubble = { text: streamingMsg.text, expiresAt: Date.now() + 8000 };
-          }
-          this.notify();
+        hearSpeech,
+        hearThoughts,
+        speakReasoningAudio: speakReply,
+        minBubbleMs: 6500,
+        maxBubbleMs: 17000,
+        restingState: 'idle',
+        resolver,
+        speakDisplayFallback: true,
+        onBeforeVoice: (finalSpoken) => {
+          const summary = `${this.player.name} said: "${userText.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`;
+          rt.memories.push({
+            id: `mem-u-${Date.now()}`,
+            timestamp: Date.now(),
+            importance: 7,
+            kind: 'conversation',
+            summary,
+          });
+          this.appendWorldEvent(rt, `Replied to ${this.player.name}: "${finalSpoken.slice(0, 64)}"`);
+          rt.activityLabel = rt.currentIntention || cfg.plan;
         },
       });
-
-      const parsed = parseDialogueAndNarration(res.text, cfg.name);
-      if (parsed.thoughts.length > 0) {
-        const joinedThought = parsed.thoughts.join(' ');
-        const nowTh = Date.now();
-        rt.currentThoughtBubble = {
-          text: joinedThought,
-          startedAt: nowTh,
-          expiresAt: nowTh + computeBubbleDurationMs(joinedThought, 5000, 14000),
-        };
-        if (this.modelSettings.eavesdropThoughts) {
-          for (const thought of parsed.thoughts) {
-            conv.messages.push({
-              id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              senderId: cfg.id,
-              senderName: cfg.name,
-              text: thought,
-              timestamp: Date.now(),
-              kind: 'thought',
-              source: res.source,
-            });
-            if (hearThoughts) {
-              await brainRouter.speakThought(thought, cfg, this.modelSettings, resolver);
-            }
-          }
-        }
-      }
-
-      if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
-        for (const beat of parsed.narration) {
-          await this.emitNarrationTurn(
-            conv,
-            `${cfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`,
-            hearSpeech && !res.audioHandled,
-            resolver,
-          );
-        }
-      }
-
-      const finalSpoken = parsed.spoken || parsed.display;
-      const nowSp = Date.now();
-      streamingMsg.text = finalSpoken;
-      streamingMsg.reasoning = parsed.reasoning.join('\n\n') || undefined;
-      streamingMsg.kind = 'speech';
-      streamingMsg.source = res.source;
-      rt.lastLatencyMs = res.durationMs;
-      rt.currentBubble = {
-        text: finalSpoken,
-        startedAt: nowSp,
-        expiresAt: nowSp + computeBubbleDurationMs(finalSpoken, 6500, 17000),
-      };
-      const summary = `${this.player.name} said: "${userText.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`;
-      rt.memories.push({
-        id: `mem-u-${Date.now()}`,
-        timestamp: Date.now(),
-        importance: 7,
-        kind: 'conversation',
-        summary,
-      });
-      this.appendWorldEvent(rt, `Replied to ${this.player.name}: "${finalSpoken.slice(0, 64)}"`);
-      rt.state = hearSpeech ? 'speaking' : 'idle';
-      rt.activityLabel = rt.currentIntention || cfg.plan;
-      this.notify(true);
-
-      if (hearSpeech && !res.audioHandled && finalSpoken) {
-        await brainRouter.speakLine(finalSpoken, cfg, this.modelSettings, resolver);
-      }
-      if (this.modelSettings.speakReasoning && parsed.reasoning.length > 0 && speakReply) {
-        await brainRouter.speakLine(parsed.reasoning.join(' '), cfg, this.modelSettings, resolver);
-      }
     } finally {
       rt.state = rt.path.length > 0 ? 'walking' : 'idle';
       rt.lastThinkAt = Date.now();

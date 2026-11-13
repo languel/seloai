@@ -60,6 +60,7 @@ export interface AestheticSettings {
   fontScale: number;
   bubbleStyle: BubbleStylePreset;
   bubbleOpacity: number;
+  bubblesBehindCharacters: boolean;
   hudGlassOpacity: number;
   showDecorations: boolean;
   characterScale: number;
@@ -85,6 +86,7 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   fontScale: 1,
   bubbleStyle: 'frosted-glass',
   bubbleOpacity: 0.86,
+  bubblesBehindCharacters: false,
   hudGlassOpacity: 0.86,
   showDecorations: true,
   characterScale: 1.15,
@@ -351,6 +353,10 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
     fontScale: clamp(raw?.fontScale, 0.85, 1.35, DEFAULT_AESTHETIC_SETTINGS.fontScale),
     bubbleStyle,
     bubbleOpacity: clamp(raw?.bubbleOpacity, 0.72, 0.98, DEFAULT_AESTHETIC_SETTINGS.bubbleOpacity),
+    bubblesBehindCharacters:
+      typeof raw?.bubblesBehindCharacters === 'boolean'
+        ? raw.bubblesBehindCharacters
+        : DEFAULT_AESTHETIC_SETTINGS.bubblesBehindCharacters,
     hudGlassOpacity: clamp(raw?.hudGlassOpacity, 0.72, 0.96, DEFAULT_AESTHETIC_SETTINGS.hudGlassOpacity),
     showDecorations:
       typeof raw?.showDecorations === 'boolean'

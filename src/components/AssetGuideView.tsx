@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
+import { BookOpen, Check, Copy, Download, HelpCircle, Sparkles } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 import { resolvePublicUrl } from '../utils/assetUrl';
@@ -198,11 +198,55 @@ export const AssetGuideView: React.FC = () => {
             </h1>
           </div>
           <p className="mt-1 text-xs text-muted">
-            Download pixel-aligned reference PNG grids and JSON schemas, copy ready-made prompts for
-            image models or LLMs, and upload your custom Eastern European embroidery art into the
-            Characters &amp; Level Editor tabs.
+            Quick village controls &amp; shortcuts, downloadable pixel-aligned reference PNG grids
+            and JSON schemas, and prompts for creating custom worlds and villagers.
           </p>
         </div>
+
+        {/* Village Controls & Quick Help (moved from Village canvas overlay) */}
+        <section
+          aria-label="Village Controls & Help"
+          className="rushnyk-card rounded-sm p-3.5 space-y-2.5"
+        >
+          <div className="flex items-center gap-2 border-b border-borderFolk pb-2">
+            <HelpCircle className="h-4 w-4 text-crimson" />
+            <h2 className="text-sm font-bold">Village Controls &amp; Quick Help</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+            <div className="rounded border border-borderFolk bg-linen/70 p-2.5 space-y-1">
+              <div className="font-semibold text-ink">Movement &amp; Exploration</div>
+              <p className="text-muted">
+                <strong>Click or tap ground</strong> to pathfind your avatar there, or use{' '}
+                <kbd className="rounded border border-borderFolk bg-surface px-1 font-mono text-[10px]">
+                  W A S D
+                </kbd>{' '}
+                /{' '}
+                <kbd className="rounded border border-borderFolk bg-surface px-1 font-mono text-[10px]">
+                  Arrow keys
+                </kbd>{' '}
+                to walk freely.
+              </p>
+            </div>
+            <div className="rounded border border-borderFolk bg-linen/70 p-2.5 space-y-1">
+              <div className="font-semibold text-ink">Camera &amp; Inspection</div>
+              <p className="text-muted">
+                <strong>Click any villager</strong> to inspect their memory &amp; thread.{' '}
+                <strong>Drag</strong> the canvas to pan, <strong>scroll / pinch</strong> to zoom, or
+                toggle <strong>Follow</strong> &amp; <strong>POV</strong> in the top HUD.
+              </p>
+            </div>
+            <div className="rounded border border-borderFolk bg-linen/70 p-2.5 space-y-1">
+              <div className="font-semibold text-ink">Conversation, Time &amp; Style</div>
+              <p className="text-muted">
+                Use the logarithmic speed slider (<strong>-10× rewind</strong> to{' '}
+                <strong>10×</strong>), adjust <strong>Eavesdrop</strong> hearing radius, type{' '}
+                <code className="font-mono">@Name</code> /{' '}
+                <code className="font-mono">#Landmark</code> in chat or hold the mic to speak, and
+                customize typography/bubbles via <strong>Style</strong> in the top bar.
+              </p>
+            </div>
+          </div>
+        </section>
 
         {/* Visual Reference Grid Previews & Downloads */}
         <section aria-label="Downloadable Reference Templates" className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">

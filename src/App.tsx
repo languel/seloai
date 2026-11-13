@@ -7,23 +7,35 @@ import {
   Download,
   FolderOpen,
   Map as MapIcon,
-  Moon,
   Network,
   Palette,
+  PanelRightClose,
+  PanelRightOpen,
   RotateCcw,
   Save,
+  SlidersHorizontal,
   Sparkles,
-  Sun,
   Trash2,
   Upload,
   Users,
   Trees,
 } from 'lucide-react';
+import { bonsaiEngine } from './ai/bonsaiEngine';
 import { brainRouter } from './ai/brainRouter';
+import { minicpmEngine } from './ai/minicpmEngine';
+import { resolveStartupAutoLoadCandidate } from './ai/modelCache';
 import { omniEngine } from './ai/omniEngine';
 import { seloToolHost, type WorkspaceTabId } from './api/seloToolRegistry';
 import { installSeloWebMcpAndApi } from './api/webMcpBridge';
 import { abbreviateWorldName } from './utils/formatNames';
+import {
+  detectWorldTheme,
+  loadAestheticSettings,
+  resolveAestheticTokens,
+  saveAestheticSettings,
+  type AestheticSettings,
+} from './utils/aestheticThemes';
+import { AestheticStudioPanel } from './components/AestheticStudioPanel';
 import { AssetGuideView } from './components/AssetGuideView';
 import { CharacterEditorView } from './components/CharacterEditorView';
 import { LevelEditorView } from './components/LevelEditorView';
@@ -31,6 +43,7 @@ import { MonitorView } from './components/MonitorView';
 import { ObservatoryView } from './components/ObservatoryView';
 import { TapestryStudioView } from './components/TapestryStudioView';
 import { VillageView } from './components/VillageView';
+import { generateProceduralPlayerCustomSprite } from './engine/playerSpriteGenerator';
 import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
 import {
@@ -82,6 +95,19 @@ export function App() {
   const [villagers, setVillagers] = useState<VillagerConfig[]>([]);
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [aestheticSettings, setAestheticSettings] = useState<AestheticSettings>(() =>
+    loadAestheticSettings(),
+  );
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('seloai:sidebar-open');
+      if (saved === 'false') return false;
+    } catch {
+      // ignore storage errors
+    }
+    return true;
+  });
   const [textStatus, setTextStatus] = useState<ModelProgress>(brainRouter.textProgress);
   const [omniStatus, setOmniStatus] = useState<ModelProgress>(omniEngine.progress);
   const [dataNotice, setDataNotice] = useState<string | null>(null);
@@ -93,6 +119,7 @@ export function App() {
   const simRef = useRef<VillageSimulation | null>(null);
   const resetDialogRef = useRef<HTMLDialogElement | null>(null);
   const dataDialogRef = useRef<HTMLDialogElement | null>(null);
+  const autoLoadAttemptedRef = useRef(false);
   const latestRef = useRef<{
     tab: WorkspaceTabId;
     map: VillageMap | null;
@@ -100,6 +127,23 @@ export function App() {
     settings: ModelSettings | null;
   }>({ tab, map, villagers, settings });
   latestRef.current = { tab, map, villagers, settings };
+
+  const handleUpdateAesthetic = (next: AestheticSettings) => {
+    setAestheticSettings(next);
+    saveAestheticSettings(next);
+  };
+
+  const toggleSidebarOpen = () => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('seloai:sidebar-open', String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
@@ -237,6 +281,55 @@ export function App() {
       },
     });
     return installSeloWebMcpAndApi();
+  }, [ready]);
+
+  // Automatically load the last-used WebGPU brain model if already downloaded in cache or /models/
+  useEffect(() => {
+    if (!ready || !settings || autoLoadAttemptedRef.current) return;
+    autoLoadAttemptedRef.current = true;
+    let cancelled = false;
+
+    resolveStartupAutoLoadCandidate(settings).then((candidate) => {
+      if (cancelled || !candidate) return;
+      if (
+        omniEngine.isReady() ||
+        brainRouter.isTextModelReady() ||
+        minicpmEngine.isReady() ||
+        bonsaiEngine.isReady()
+      ) {
+        return;
+      }
+
+      const { spec, probe } = candidate;
+      const curSettings = latestRef.current.settings;
+      if (curSettings) {
+        const patch: Partial<ModelSettings> = {};
+        if (curSettings.brainEngine !== spec.brainEngine) {
+          patch.brainEngine = spec.brainEngine;
+        }
+        if (spec.brainEngine === 'lfm3-omni') {
+          if (curSettings.omniModelId !== spec.modelId) patch.omniModelId = spec.modelId;
+        } else {
+          if (curSettings.textModelId !== spec.modelId) patch.textModelId = spec.modelId;
+          if (curSettings.textDtype !== spec.textDtype) patch.textDtype = spec.textDtype;
+        }
+        if (Object.keys(patch).length > 0) {
+          handleUpdateSettings(patch);
+        }
+      }
+
+      brainRouter.log({
+        channel: spec.brainEngine === 'lfm3-omni' ? 'lfm3-omni' : 'lfm3-1.7b',
+        level: 'info',
+        title: 'Auto-Loading Cached Model',
+        detail: `${spec.modelId} (${probe.detail})`,
+      });
+      brainRouter.loadConfiguredBrain(spec).catch(() => {});
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [ready]);
 
   const downloadJson = (filename: string, raw: string) => {
@@ -531,6 +624,13 @@ export function App() {
     );
   }
 
+  const worldTheme = detectWorldTheme(map);
+  const aestheticTokens = resolveAestheticTokens(aestheticSettings, worldTheme);
+  const playerCustomSprite = generateProceduralPlayerCustomSprite(
+    aestheticSettings.player,
+    worldTheme,
+  );
+
   return (
     <div className="flex h-full flex-col bg-linen text-ink overflow-hidden">
       <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
@@ -548,7 +648,7 @@ export function App() {
             ] as const
           ).map(([id, label, Icon]) => {
             const active = tab === id;
-            return (
+            const tabBtn = (
               <button
                 key={id}
                 type="button"
@@ -582,6 +682,33 @@ export function App() {
                 </span>
               </button>
             );
+
+            if (id === 'guides') {
+              return (
+                <React.Fragment key={id}>
+                  <button
+                    type="button"
+                    onClick={() => setStylePanelOpen((o) => !o)}
+                    aria-pressed={stylePanelOpen}
+                    title="Style, Theme & Player Appearance"
+                    aria-label="Style, Theme & Player Appearance"
+                    className={`group relative inline-flex h-7 items-center justify-center gap-1 rounded-sm px-2 text-xs transition ${
+                      stylePanelOpen
+                        ? 'border border-ink/40 bg-surface text-ink font-semibold'
+                        : 'border border-transparent text-muted hover:bg-surface hover:text-ink'
+                    }`}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
+                      Style &amp; Theme
+                    </span>
+                  </button>
+                  {tabBtn}
+                </React.Fragment>
+              );
+            }
+
+            return tabBtn;
           })}
         </nav>
 
@@ -693,22 +820,41 @@ export function App() {
 
           <button
             type="button"
-            onClick={() =>
-              setTheme((t) => (t === 'system' ? 'dark' : t === 'dark' ? 'light' : 'system'))
-            }
-            title={`Theme: ${theme}`}
-            aria-label={`Theme: ${theme}. Click to switch.`}
-            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink"
+            onClick={toggleSidebarOpen}
+            aria-pressed={!sidebarOpen}
+            title={sidebarOpen ? 'Hide Inspector Panel' : 'Show Inspector Panel'}
+            aria-label={sidebarOpen ? 'Hide Inspector Panel' : 'Show Inspector Panel'}
+            className={`group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border bg-surface transition hover:bg-card hover:text-ink ${
+              sidebarOpen
+                ? 'border-borderFolk text-muted'
+                : 'border-ink/40 text-ink font-semibold'
+            }`}
           >
-            {theme === 'dark' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink capitalize opacity-0 transition-opacity group-hover:opacity-100">
-              Theme: {theme}
+            {sidebarOpen ? (
+              <PanelRightClose className="h-3.5 w-3.5" />
+            ) : (
+              <PanelRightOpen className="h-3.5 w-3.5" />
+            )}
+            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
+              {sidebarOpen ? 'Hide Panel' : 'Show Panel'}
             </span>
           </button>
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-hidden">
+      <main className="relative flex-1 min-h-0 overflow-hidden">
+        {stylePanelOpen && (
+          <AestheticStudioPanel
+            settings={aestheticSettings}
+            tokens={aestheticTokens}
+            playerSprite={playerCustomSprite}
+            worldName={map.name}
+            appTheme={theme}
+            onChangeAppTheme={setTheme}
+            onChange={handleUpdateAesthetic}
+            onClose={() => setStylePanelOpen(false)}
+          />
+        )}
         {tab === 'village' && (
           <VillageView
             sim={simRef.current}
@@ -716,6 +862,8 @@ export function App() {
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             onOpenMonitor={() => setTab('monitor')}
+            aestheticSettings={aestheticSettings}
+            sidebarOpen={sidebarOpen}
           />
         )}
         {tab === 'observatory' && (

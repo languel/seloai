@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
   BookOpen,
   Compass,
   Database,
@@ -14,6 +15,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
+import { useAutoScrollToBottom } from '../hooks/useAutoScrollToBottom';
 import { buildNarratorConfig } from '../data/defaultData';
 import {
   buildPsychophysicalGraph,
@@ -153,6 +155,11 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
       .slice(0, 40)
       .reverse();
   }, [allRecords, loomWorldline, loomIncludeThoughts]);
+
+  const loomScrollTrigger = `${loomRecords.length}:${loomRecords[loomRecords.length - 1]?.id ?? ''}`;
+  const loomScroll = useAutoScrollToBottom(loomScrollTrigger, {
+    resetKey: `${subTab}:${loomWorldline}:${loomIncludeThoughts}`,
+  });
 
   const listener = sim.getListenerPosition();
 
@@ -798,7 +805,11 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 thin-scroll pr-1">
+            <div
+              ref={loomScroll.containerRef}
+              onScroll={loomScroll.handleScroll}
+              className="relative flex-1 overflow-y-auto space-y-2 thin-scroll pr-1"
+            >
               {loomRecords.map((r) => (
                 <div
                   key={r.id}
@@ -814,6 +825,18 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
                   <p className={r.kind === 'thought' ? 'italic text-muted' : 'text-ink'}>{r.text}</p>
                 </div>
               ))}
+              {!loomScroll.isFollowing && loomRecords.length > 0 && (
+                <div className="sticky bottom-2 flex justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={loomScroll.jumpToBottom}
+                    className="inline-flex items-center gap-1 rounded-full border border-borderFolk bg-card/95 px-2.5 py-1 text-[11px] font-medium text-ink shadow-md backdrop-blur hover:bg-surface"
+                  >
+                    <ArrowDown className="h-3 w-3 text-indigoFolk" />
+                    <span>Jump to Latest</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

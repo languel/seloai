@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowDown,
   Bug,
   Captions,
   ChevronDown,
@@ -11,9 +12,6 @@ import {
   MessageSquare,
   Mic,
   MicOff,
-  Palette,
-  PanelRightClose,
-  PanelRightOpen,
   Pause,
   Play,
   RotateCcw,
@@ -28,14 +26,13 @@ import {
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
+import { useAutoScrollToBottom } from '../hooks/useAutoScrollToBottom';
 import { resolvePublicUrl } from '../utils/assetUrl';
-import { AestheticStudioPanel } from './AestheticStudioPanel';
 import { generateProceduralPlayerCustomSprite } from '../engine/playerSpriteGenerator';
 import {
   detectWorldTheme,
   loadAestheticSettings,
   resolveAestheticTokens,
-  saveAestheticSettings,
   type AestheticSettings,
 } from '../utils/aestheticThemes';
 import {
@@ -50,12 +47,16 @@ import {
   drawAnimatedSprites,
   drawPlayer,
   drawPoiMarkers,
-  drawResolvedOverlays,
   drawTileGrid,
   drawVillager,
   getCachedImage,
   getCustomSpriteFrame,
   getPresetSpriteFrame,
+  renderOverlayBatch,
+  resolveOverlayBatch,
+  SPEECH_BUBBLE_FONT_PX,
+  SPEECH_BUBBLE_LINE_H_PX,
+  type DeferredCanvasDraw,
 } from '../engine/renderer';
 import type { VillageSimulation } from '../engine/simulation';
 import type {
@@ -80,6 +81,8 @@ interface VillageViewProps {
   settings: ModelSettings;
   onUpdateSettings: (patch: Partial<ModelSettings>) => void;
   onOpenMonitor: () => void;
+  aestheticSettings?: AestheticSettings;
+  sidebarOpen?: boolean;
 }
 
 interface MentionCandidate {
@@ -251,6 +254,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
   settings,
   onUpdateSettings,
   onOpenMonitor,
+  aestheticSettings: aestheticSettingsProp,
+  sidebarOpen: sidebarOpenProp,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -262,29 +267,17 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [showThoughtBubbles, setShowThoughtBubbles] = useState(true);
   const [showScribeSubtitles, setShowScribeSubtitles] = useState(true);
-  const [stylePanelOpen, setStylePanelOpen] = useState(false);
-  const [aestheticSettings, setAestheticSettings] = useState<AestheticSettings>(() =>
+  const [localAestheticSettings] = useState<AestheticSettings>(() =>
     loadAestheticSettings(),
   );
-  const handleUpdateAesthetic = (next: AestheticSettings) => {
-    setAestheticSettings(next);
-    saveAestheticSettings(next);
-  };
+  const aestheticSettings = aestheticSettingsProp ?? localAestheticSettings;
   const worldTheme = detectWorldTheme(sim.map);
   const aestheticTokens = resolveAestheticTokens(aestheticSettings, worldTheme);
   const playerCustomSprite = generateProceduralPlayerCustomSprite(
     aestheticSettings.player,
     worldTheme,
   );
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('seloai:sidebar-open');
-      if (saved === 'false') return false;
-    } catch {
-      // ignore storage errors
-    }
-    return true;
-  });
+  const sidebarOpen = sidebarOpenProp ?? true;
   const subtitleBoxRef = useRef<HTMLDivElement | null>(null);
   const [rosterView, setRosterView] = useState<'cards' | 'compact'>('cards');
   const [rosterCollapsed, setRosterCollapsed] = useState(false);
@@ -546,8 +539,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
       }
 
       const overlayCollector = createOverlayCollector();
+      const deferredBodies: DeferredCanvasDraw[] = [];
 
-      // Points of Interest (#Tag markers) when labels are enabled
+      // Floor POI diamond beacons & collect POI label pills
       if (showLabels && (map.pointsOfInterest ?? []).length > 0) {
         drawPoiMarkers(
           ctx,
@@ -558,38 +552,51 @@ export const VillageView: React.FC<VillageViewProps> = ({
         );
       }
 
-      // Y-sort entities (villagers + player)
-      const entities: Array<{ y: number; draw: () => void }> = [];
+      // Collect deferred Y-sorted character sprites + measure labels and bubbles
       for (const rt of sim.runtimes.values()) {
         const cfg = sim.configs.get(rt.id);
         if (!cfg) continue;
-        entities.push({
-          y: rt.y,
-          draw: () =>
-            drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId, showLabels, {
-              showSpeechBubbles,
-              showThoughtBubbles,
-              pois: map.pointsOfInterest,
-              theme: aestheticTokens.canvasTheme,
-              collector: overlayCollector,
-            }),
+        drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId, showLabels, {
+          showSpeechBubbles,
+          showThoughtBubbles,
+          pois: map.pointsOfInterest,
+          theme: aestheticTokens.canvasTheme,
+          collector: overlayCollector,
+          deferredBodies,
         });
       }
-      entities.push({
-        y: sim.player.y,
-        draw: () =>
-          drawPlayer(ctx, sim.player, map.tileDim, {
-            showLabels,
-            playerSprite: playerCustomSprite,
-            theme: aestheticTokens.canvasTheme,
-            collector: overlayCollector,
-          }),
+      drawPlayer(ctx, sim.player, map.tileDim, {
+        showLabels,
+        playerSprite: playerCustomSprite,
+        theme: aestheticTokens.canvasTheme,
+        collector: overlayCollector,
+        deferredBodies,
       });
-      entities.sort((a, b) => a.y - b.y);
-      for (const ent of entities) ent.draw();
 
-      // Pass 2: de-overlapped name pills, POI markers, thought & speech bubbles
-      drawResolvedOverlays(ctx, overlayCollector, aestheticSettings.deoverlapLabels);
+      const overlayBatch = resolveOverlayBatch(
+        overlayCollector,
+        aestheticSettings.deoverlapLabels,
+      );
+
+      // Pass 0: Stationary location labels stay fixed on the lowest layer behind characters
+      renderOverlayBatch(ctx, overlayBatch, 'locations');
+
+      // Pass 1: Character & player name pills draw behind character sprites
+      renderOverlayBatch(ctx, overlayBatch, 'pills');
+
+      // Optional pass: Bubbles draw behind character sprites when enabled
+      if (aestheticSettings.bubblesBehindCharacters) {
+        renderOverlayBatch(ctx, overlayBatch, 'bubbles');
+      }
+
+      // Pass 2: Y-sorted entities (villagers + player)
+      deferredBodies.sort((a, b) => a.y - b.y);
+      for (const body of deferredBodies) body.draw();
+
+      // Pass 3 (default): Bubbles draw in front of character sprites
+      if (!aestheticSettings.bubblesBehindCharacters) {
+        renderOverlayBatch(ctx, overlayBatch, 'bubbles');
+      }
 
       ctx.restore();
     };
@@ -755,6 +762,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
     return true;
   });
+
+  const feedLastId = displayedMessages[displayedMessages.length - 1]?.id ?? '';
+  const feedScroll = useAutoScrollToBottom(
+    `${displayedMessages.length}:${feedLastId}:${activeSpeech?.startedAt ?? ''}:${scriptCollapsed ? 1 : 0}`,
+    { resetKey: feedMode },
+  );
 
   const mentionCandidates: MentionCandidate[] = [
     {
@@ -1029,18 +1042,6 @@ export const VillageView: React.FC<VillageViewProps> = ({
     if (!selectedRt) return;
     cameraRef.current.x = (selectedRt.x + 0.5) * sim.map.tileDim;
     cameraRef.current.y = (selectedRt.y + 0.5) * sim.map.tileDim;
-  };
-
-  const toggleSidebarOpen = () => {
-    setSidebarOpen((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('seloai:sidebar-open', String(next));
-      } catch {
-        // ignore storage errors
-      }
-      return next;
-    });
   };
 
   let latestScribeSubtitle: {
@@ -1510,52 +1511,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               </button>
             </div>
           </div>
-
-          {/* Right HUD Actions (aligned cleanly inside flex row, never overlaps toolbar) */}
-          <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setStylePanelOpen((o) => !o)}
-              aria-pressed={stylePanelOpen}
-              title="Customize world theme, bubble glass, typography & procedural player sprite"
-              style={{
-                ...aestheticTokens.hudStyle,
-                borderColor: stylePanelOpen ? aestheticTokens.accentHex : aestheticTokens.hudBorderColor,
-              }}
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition hover:opacity-90"
-            >
-              <Palette className="h-3.5 w-3.5" style={{ color: aestheticTokens.poiHighlightHex }} aria-hidden="true" />
-              <span>Style</span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleSidebarOpen}
-              title={sidebarOpen ? 'Hide inspector sidebar' : 'Show inspector sidebar'}
-              aria-label={sidebarOpen ? 'Hide inspector sidebar' : 'Show inspector sidebar'}
-              style={aestheticTokens.hudStyle}
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition hover:opacity-90"
-            >
-              {sidebarOpen ? (
-                <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
-              ) : (
-                <PanelRightOpen className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-              <span>{sidebarOpen ? 'Hide Panel' : 'Show Panel'}</span>
-            </button>
-          </div>
         </div>
-
-        {/* Separate Live Appearance & Procedural Player Studio Drawer */}
-        {stylePanelOpen && (
-          <AestheticStudioPanel
-            settings={aestheticSettings}
-            tokens={aestheticTokens}
-            playerSprite={playerCustomSprite}
-            worldName={sim.map.name}
-            onChange={handleUpdateAesthetic}
-            onClose={() => setStylePanelOpen(false)}
-          />
-        )}
 
         {/* Bottom-Center Docked Scribe Subtitle Field */}
         {showScribeSubtitles && latestScribeSubtitle && (
@@ -1564,7 +1520,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             aria-live="polite"
             aria-label="Scribe subtitles"
             style={aestheticTokens.subtitleStyle}
-            className="absolute bottom-10 left-1/2 z-10 w-[min(92%,42rem)] -translate-x-1/2 overflow-hidden rounded-md px-3.5 py-2"
+            className="absolute bottom-3 left-1/2 z-10 w-[min(92%,42rem)] -translate-x-1/2 overflow-hidden rounded-md px-3.5 py-2"
           >
             {aestheticSettings.showDecorations && (
               <div
@@ -1595,10 +1551,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
             <div
               ref={subtitleBoxRef}
               style={{
-                fontSize: `${(12 * aestheticSettings.fontScale).toFixed(1)}px`,
+                fontSize: `${(SPEECH_BUBBLE_FONT_PX * aestheticSettings.fontScale).toFixed(1)}px`,
+                lineHeight: `${(SPEECH_BUBBLE_LINE_H_PX * aestheticSettings.fontScale).toFixed(1)}px`,
+                fontWeight: 500,
                 color: aestheticTokens.hudTextColor,
               }}
-              className="max-h-16 overflow-y-auto pr-1 leading-relaxed"
+              className="max-h-16 overflow-y-auto pr-1"
             >
               {renderRichLabels(
                 latestScribeSubtitle.text,
@@ -1610,17 +1568,6 @@ export const VillageView: React.FC<VillageViewProps> = ({
             </div>
           </div>
         )}
-
-        {/* Bottom-left quick controls hint */}
-        <div
-          style={{
-            ...aestheticTokens.hudStyle,
-            color: aestheticTokens.hudMutedColor,
-          }}
-          className="pointer-events-none absolute bottom-2 left-2 rounded-md px-2.5 py-1 text-[11px]"
-        >
-          Click villager to inspect · Click ground or <kbd className="font-mono">WASD</kbd> to walk · Drag to pan · Scroll to zoom
-        </div>
       </section>
 
       {sidebarOpen && (
@@ -2061,7 +2008,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
               </div>
 
               {!scriptCollapsed && (
-                <div className="flex-1 overflow-y-auto p-2 space-y-1.5 thin-scroll">
+                <div
+                  ref={feedScroll.containerRef}
+                  onScroll={feedScroll.handleScroll}
+                  className="relative flex-1 overflow-y-auto p-2 space-y-1.5 thin-scroll"
+                >
                   {activeSpeech && (
                     <div className="rounded-sm border border-sage/60 bg-card px-2 py-1 text-xs flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -2166,6 +2117,18 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         );
                       })}
                     </ul>
+                  )}
+                  {!feedScroll.isFollowing && displayedMessages.length > 0 && (
+                    <div className="sticky bottom-1 flex justify-center pt-1">
+                      <button
+                        type="button"
+                        onClick={feedScroll.jumpToBottom}
+                        className="inline-flex items-center gap-1 rounded-full border border-borderFolk bg-card/95 px-2.5 py-1 text-[10px] font-medium text-ink shadow-md backdrop-blur hover:bg-surface"
+                      >
+                        <ArrowDown className="h-3 w-3 text-indigoFolk" />
+                        <span>Jump to Latest</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

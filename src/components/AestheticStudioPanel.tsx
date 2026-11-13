@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Dices, RotateCcw, Sparkles, X } from 'lucide-react';
+import { Dices, Monitor, Moon, RotateCcw, Sparkles, Sun, X } from 'lucide-react';
 import type { CustomSpriteSheet, Direction } from '../engine/types';
 import {
   BUBBLE_STYLE_OPTIONS,
@@ -17,11 +17,15 @@ import {
   type ResolvedAestheticTokens,
 } from '../utils/aestheticThemes';
 
+export type AppThemeMode = 'system' | 'light' | 'dark';
+
 interface AestheticStudioPanelProps {
   settings: AestheticSettings;
   tokens: ResolvedAestheticTokens;
   playerSprite: CustomSpriteSheet;
   worldName: string;
+  appTheme?: AppThemeMode;
+  onChangeAppTheme?: (next: AppThemeMode) => void;
   onChange: (next: AestheticSettings) => void;
   onClose: () => void;
 }
@@ -78,6 +82,8 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
   tokens,
   playerSprite,
   worldName,
+  appTheme,
+  onChangeAppTheme,
   onChange,
   onClose,
 }) => {
@@ -186,7 +192,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
       role="dialog"
       aria-label="Appearance and Player Studio"
       style={tokens.panelStyle}
-      className="thin-scroll absolute right-2 top-14 z-30 flex max-h-[calc(100%-4.5rem)] w-[min(92vw,24rem)] flex-col overflow-hidden rounded-lg shadow-2xl"
+      className="thin-scroll absolute right-2 top-2 z-40 flex max-h-[calc(100%-1rem)] w-[min(92vw,24rem)] flex-col overflow-hidden rounded-lg shadow-2xl"
     >
       {settings.showDecorations && (
         <div
@@ -465,6 +471,34 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
               <span>Ornaments</span>
             </label>
           </div>
+          {appTheme && onChangeAppTheme && (
+            <div>
+              <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
+                App Theme
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    ['system', 'System', Monitor],
+                    ['light', 'Light', Sun],
+                    ['dark', 'Dark', Moon],
+                  ] as const
+                ).map(([id, label, Icon]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onChangeAppTheme(id)}
+                    aria-pressed={appTheme === id}
+                    className="inline-flex items-center justify-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition"
+                    style={pillBtnStyle(appTheme === id)}
+                  >
+                    <Icon className="h-3 w-3 shrink-0" />
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-1.5">
             {UI_DECORATION_OPTIONS.map((opt) => (
               <button
@@ -499,19 +533,33 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
 
         {/* Section 3: Bubbles */}
         <section className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: tokens.poiHighlightHex }}>
               Speech &amp; Thought Bubbles
             </span>
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-[10px]">
-              <input
-                type="checkbox"
-                checked={settings.deoverlapLabels}
-                onChange={(e) => onChange({ ...settings, deoverlapLabels: e.target.checked })}
-                className="accent-amber-400"
-              />
-              <span>De-overlap</span>
-            </label>
+            <div className="flex items-center gap-2.5">
+              <label
+                className="inline-flex cursor-pointer items-center gap-1 text-[10px]"
+                title="Draw speech and thought bubbles behind villager and traveler sprites (labels always stay behind characters)"
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.bubblesBehindCharacters}
+                  onChange={(e) => onChange({ ...settings, bubblesBehindCharacters: e.target.checked })}
+                  className="accent-amber-400"
+                />
+                <span>Behind Chars</span>
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-1 text-[10px]">
+                <input
+                  type="checkbox"
+                  checked={settings.deoverlapLabels}
+                  onChange={(e) => onChange({ ...settings, deoverlapLabels: e.target.checked })}
+                  className="accent-amber-400"
+                />
+                <span>De-overlap</span>
+              </label>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {BUBBLE_STYLE_OPTIONS.map((opt) => (

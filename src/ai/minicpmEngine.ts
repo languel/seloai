@@ -1,5 +1,6 @@
 import type { ModelProgress } from '../engine/types';
 import { resolveOriginUrl } from '../utils/assetUrl';
+import { saveLastLoadedModel } from './modelCache';
 
 interface MiniCpmModule {
   MiniCPM5ForCausalLM: {
@@ -103,6 +104,11 @@ class MiniCpmEngine {
       });
 
       this.loadedModelId = modelId;
+      saveLastLoadedModel({
+        brainEngine: 'minicpm5-gguf',
+        modelId,
+        textDtype: 'q4f16',
+      });
       this.emit({
         status: 'ready',
         fraction: 1,
