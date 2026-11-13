@@ -299,6 +299,26 @@ class SegmentationClient {
       message: 'Unloaded vision segmentation model',
     });
   }
+
+  terminateWorker(): void {
+    if (this.pending.size > 0) {
+      for (const req of this.pending.values()) {
+        req.reject(new Error('Segmentation worker terminated.'));
+      }
+      this.pending.clear();
+    }
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.emitStatus({
+      status: 'idle',
+      modelId: null,
+      device: null,
+      fraction: 0,
+      message: 'Vision segmentation worker terminated',
+    });
+  }
 }
 
 export const segmentationClient = new SegmentationClient();

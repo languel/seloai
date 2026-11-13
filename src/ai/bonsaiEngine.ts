@@ -27,6 +27,9 @@ interface BonsaiModelInstance {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
     opts?: { maxNewTokens?: number; signal?: AbortSignal },
   ): AsyncIterable<{ token: number | null; delta: string; text: string }>;
+  runtime?: {
+    memoryStats?(): { liveBytes: number; peakBytes: number } | null;
+  };
   resetCache?: () => void;
   dispose?: () => void;
 }
@@ -178,6 +181,18 @@ class BonsaiEngine {
     });
   }
 
+  getLoadedModelId(): string {
+    return this.loadedModelId;
+  }
+
+  getMemoryStats(): { liveBytes: number; peakBytes: number } | null {
+    try {
+      return this.model?.runtime?.memoryStats?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = this.queue.then(task, task);
     this.queue = run.then(
@@ -201,21 +216,25 @@ class BonsaiEngine {
       // Keep distinct villager prompts isolated cleanly
       this.model!.resetCache?.();
 
-      for await (const chunk of this.model!.generate(messages, {
-        maxNewTokens: opts?.maxNewTokens ?? 140,
-      })) {
-        if (chunk.token !== null) tokenCount += 1;
-        fullText = chunk.text;
-        const clean = stripThinkingTags(fullText);
-        if (clean.length > emittedLength) {
-          opts?.onChunk?.(clean.slice(emittedLength));
-          emittedLength = clean.length;
+      try {
+        for await (const chunk of this.model!.generate(messages, {
+          maxNewTokens: opts?.maxNewTokens ?? 140,
+        })) {
+          if (chunk.token !== null) tokenCount += 1;
+          fullText = chunk.text;
+          const clean = stripThinkingTags(fullText);
+          if (clean.length > emittedLength) {
+            opts?.onChunk?.(clean.slice(emittedLength));
+            emittedLength = clean.length;
+          }
         }
+        const cleaned = stripThinkingTags(fullText);
+        const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
+        const tokensPerSec = Number(((Math.max(1, tokenCount) / durationMs) * 1000).toFixed(1));
+        return { text: cleaned, durationMs, tokensPerSec };
+      } finally {
+        this.model?.resetCache?.();
       }
-      const cleaned = stripThinkingTags(fullText);
-      const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
-      const tokensPerSec = Number(((Math.max(1, tokenCount) / durationMs) * 1000).toFixed(1));
-      return { text: cleaned, durationMs, tokensPerSec };
     });
   }
 }

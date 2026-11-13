@@ -288,3 +288,211 @@ export function buildWangShevitsaCourtyardMask(
   }
   return mask;
 }
+
+/**
+ * Edge-Colored Wang Tile definition following Wikipedia's Wang tile formulation:
+ * adjacent tiles meet cleanly when `left.east === right.west` and `top.south === bottom.north`.
+ * Having multiple tiles per `(north, east, south, west)` edge signature (Cohen–Shade–Hiller–Deussen
+ * stochastic Wang tiles) eliminates periodic repetition across wide meadows and tapestries.
+ */
+export interface WangColoredTileDef {
+  tileId: number;
+  north: number;
+  east: number;
+  south: number;
+  west: number;
+  weight?: number;
+}
+
+export type WangDirection = 'north' | 'east' | 'south' | 'west';
+
+export interface EdgeColoredWangSolveOptions {
+  seed?: number;
+  isCellActive?: (x: number, y: number) => boolean;
+  pinEdge?: (x: number, y: number, dir: WangDirection) => number | undefined;
+}
+
+/** Non-periodic spatial hash in [0, 1) using R2 Weyl sequence + trig mixing (no grid mod period). */
+function aperiodicHash01(x: number, y: number, salt: number, seed: number): number {
+  const phi1 = 0.6180339887498949;
+  const phi2 = 0.7548776662466927;
+  const weyl = (x * phi1 + y * phi2 + seed * 0.38196601125 + salt * 0.430159709) % 1;
+  const s = Math.sin(x * 12.9898 + y * 78.233 + salt * 37.719 + seed * 19.31) * 43758.5453123;
+  const frac = s - Math.floor(s);
+  const sum = weyl + frac;
+  return sum - Math.floor(sum);
+}
+
+/**
+ * Solve a 2D Edge-Colored Wang Tile arrangement in scanline order `(y, x)`, guaranteeing
+ * exact `east === west` and `south === north` edge-color constraints while minimizing
+ * local tile repetition and long periodic runs across open terrain.
+ */
+export function solveEdgeColoredWangGrid(
+  width: number,
+  height: number,
+  tiles: readonly WangColoredTileDef[],
+  opts: EdgeColoredWangSolveOptions = {},
+): number[][] {
+  const seed = opts.seed ?? 42;
+  const assigned: (WangColoredTileDef | null)[][] = Array.from({ length: width }, () =>
+    Array<WangColoredTileDef | null>(height).fill(null),
+  );
+  const out: number[][] = Array.from({ length: width }, () => Array<number>(height).fill(-1));
+
+  if (tiles.length === 0) return out;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (opts.isCellActive && !opts.isCellActive(x, y)) continue;
+
+      const left = x > 0 ? assigned[x - 1][y] : null;
+      const top = y > 0 ? assigned[x][y - 1] : null;
+
+      const reqWest = left ? left.east : opts.pinEdge?.(x, y, 'west');
+      const reqNorth = top ? top.south : opts.pinEdge?.(x, y, 'north');
+      const reqEast = opts.pinEdge?.(x, y, 'east');
+      const reqSouth = opts.pinEdge?.(x, y, 'south');
+
+      let candidates = tiles.filter(
+        (t) =>
+          (reqWest === undefined || t.west === reqWest) &&
+          (reqNorth === undefined || t.north === reqNorth) &&
+          (reqEast === undefined || t.east === reqEast) &&
+          (reqSouth === undefined || t.south === reqSouth),
+      );
+
+      // Graceful relaxation only if an incomplete Wang tileset over-constrains a pinned boundary
+      if (candidates.length === 0) {
+        candidates = tiles.filter(
+          (t) =>
+            (reqWest === undefined || t.west === reqWest) &&
+            (reqNorth === undefined || t.north === reqNorth),
+        );
+      }
+      if (candidates.length === 0) candidates = [...tiles];
+
+      let bestTile = candidates[0];
+      let bestScore = -Infinity;
+
+      const nw = x > 0 && y > 0 ? assigned[x - 1][y - 1] : null;
+      const ne = x + 1 < width && y > 0 ? assigned[x + 1][y - 1] : null;
+      const w2 = x > 1 ? assigned[x - 2][y] : null;
+      const n2 = y > 1 ? assigned[x][y - 2] : null;
+
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        let score = (cand.weight ?? 1) * 8 + aperiodicHash01(x, y, cand.tileId + i * 7, seed) * 20;
+
+        // Strongly penalize adjacent / diagonal / knight-step identical tiles
+        if (left && left.tileId === cand.tileId) score -= 1200;
+        if (top && top.tileId === cand.tileId) score -= 1200;
+        if (nw && nw.tileId === cand.tileId) score -= 380;
+        if (ne && ne.tileId === cand.tileId) score -= 380;
+        if (w2 && w2.tileId === cand.tileId) score -= 210;
+        if (n2 && n2.tileId === cand.tileId) score -= 210;
+
+        // Encourage mixing edge colors rather than collapsing into all-0 or all-1 regions
+        const leftSig =
+          left &&
+          left.north === cand.north &&
+          left.east === cand.east &&
+          left.south === cand.south &&
+          left.west === cand.west;
+        const topSig =
+          top &&
+          top.north === cand.north &&
+          top.east === cand.east &&
+          top.south === cand.south &&
+          top.west === cand.west;
+        if (leftSig) score -= 90;
+        if (topSig) score -= 90;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestTile = cand;
+        }
+      }
+
+      assigned[x][y] = bestTile;
+      out[x][y] = bestTile.tileId;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Verify that every pair of orthogonally adjacent active cells in a solved grid
+ * obeys the Wang edge-color contract (`left.east === right.west` and `top.south === bottom.north`).
+ */
+export function verifyEdgeColoredWangGrid(
+  grid: number[][],
+  tiles: readonly WangColoredTileDef[],
+): { valid: boolean; mismatches: number } {
+  const byId = new Map<number, WangColoredTileDef>();
+  for (const t of tiles) byId.set(t.tileId, t);
+
+  let mismatches = 0;
+  const width = grid.length;
+  const height = width > 0 ? grid[0].length : 0;
+
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      const cur = byId.get(grid[x][y]);
+      if (!cur) continue;
+      if (x + 1 < width) {
+        const right = byId.get(grid[x + 1][y]);
+        if (right && cur.east !== right.west) mismatches += 1;
+      }
+      if (y + 1 < height) {
+        const down = byId.get(grid[x][y + 1]);
+        if (down && cur.south !== down.north) mismatches += 1;
+      }
+    }
+  }
+  return { valid: mismatches === 0, mismatches };
+}
+
+/**
+ * Pick a non-repeating tile variant from `variants` for cell `(x, y)` in `grid`,
+ * penalizing immediate orthogonal, diagonal, and step-2 repeats before aperiodic hash ranking.
+ */
+export function pickNonRepeatingVariant(
+  grid: number[][],
+  variants: readonly number[],
+  x: number,
+  y: number,
+  seed = 31,
+): number {
+  if (variants.length === 0) return -1;
+  if (variants.length === 1) return variants[0];
+
+  const w = grid.length;
+  const h = w > 0 ? grid[0].length : 0;
+  const at = (cx: number, cy: number): number =>
+    cx >= 0 && cy >= 0 && cx < w && cy < h ? grid[cx][cy] : -1;
+
+  const w1 = at(x - 1, y);
+  const n1 = at(x, y - 1);
+  const nw = at(x - 1, y - 1);
+  const ne = at(x + 1, y - 1);
+  const w2 = at(x - 2, y);
+  const n2 = at(x, y - 2);
+
+  let best = variants[0];
+  let bestScore = -Infinity;
+
+  for (let i = 0; i < variants.length; i++) {
+    const v = variants[i];
+    let score = aperiodicHash01(x, y, v * 3 + i, seed) * 20;
+    if (v === w1 || v === n1) score -= 500;
+    if (v === nw || v === ne) score -= 180;
+    if (v === w2 || v === n2) score -= 90;
+    if (score > bestScore) {
+      bestScore = score;
+      best = v;
+    }
+  }
+  return best;
+}

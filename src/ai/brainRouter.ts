@@ -1,5 +1,6 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
 import type {
+  BrainEngineKind,
   ChatMessage,
   ModelProgress,
   ModelSettings,
@@ -207,6 +208,7 @@ class BrainRouter {
   private pending = new Map<string, PendingRequest>();
   private reqCounter = 0;
   private pendingTextLoad: { modelId: string; dtype: TextDtype } | null = null;
+  private loadedTextModelId = '';
   public textProgress: ModelProgress = {
     status: 'unloaded',
     fraction: 0,
@@ -243,7 +245,26 @@ class BrainRouter {
     lastTextLatencyMs: 0,
     lastOmniLatencyMs: 0,
     totalCalls: 0,
+    failedCalls: 0,
   };
+
+  getLoadedTextModelId(): string {
+    return this.loadedTextModelId;
+  }
+
+  getDebugCounts(): {
+    telemetryEvents: number;
+    pendingWorkerRequests: number;
+  } {
+    return {
+      telemetryEvents: this.telemetryLog.length,
+      pendingWorkerRequests: this.pending.size,
+    };
+  }
+
+  clearTelemetryLog() {
+    this.telemetryLog = [];
+  }
 
   subscribeTextStatus(fn: (p: ModelProgress) => void): () => void {
     this.textListeners.add(fn);
@@ -285,6 +306,7 @@ class BrainRouter {
         for (const fn of this.textListeners) fn(this.textProgress);
         if (msg.status === 'ready') {
           if (this.pendingTextLoad) {
+            this.loadedTextModelId = this.pendingTextLoad.modelId;
             saveLastLoadedModel({
               brainEngine: 'transformers-onnx',
               modelId: this.pendingTextLoad.modelId,
@@ -297,7 +319,10 @@ class BrainRouter {
             title: 'LFM3-1.7B Ready',
             detail: msg.message,
           });
+        } else if (msg.status === 'unloaded') {
+          this.loadedTextModelId = '';
         } else if (msg.status === 'error') {
+          this.loadedTextModelId = '';
           this.log({
             channel: 'lfm3-1.7b',
             level: 'error',
@@ -325,7 +350,19 @@ class BrainRouter {
         }
       }
     };
+    this.worker.onerror = (ev) => {
+      const err = new Error(ev.message || 'Text worker encountered a fatal error');
+      this.rejectAllPending(err);
+    };
     return this.worker;
+  }
+
+  private rejectAllPending(err: Error) {
+    if (this.pending.size === 0) return;
+    for (const req of this.pending.values()) {
+      req.reject(err);
+    }
+    this.pending.clear();
   }
 
   loadTextModel(modelId: string, dtype: TextDtype) {
@@ -341,9 +378,54 @@ class BrainRouter {
   }
 
   /**
+   * Unload inactive heavyweight WebGPU / ONNX engines so multiple multi-GB models
+   * are never held resident in VRAM/RAM at the same time by accident.
+   */
+  async unloadInactiveEngines(
+    keepEngine: BrainEngineKind | 'none',
+    opts?: { preserveOmni?: boolean },
+  ): Promise<void> {
+    const tasks: Promise<void>[] = [];
+    if (keepEngine !== 'lfm3-omni' && !opts?.preserveOmni && omniEngine.isReady()) {
+      tasks.push(omniEngine.unload());
+    }
+    if (keepEngine !== 'minicpm5-gguf' && minicpmEngine.isReady()) {
+      tasks.push(minicpmEngine.unload());
+    }
+    if (keepEngine !== 'bonsai2-gguf' && bonsaiEngine.isReady()) {
+      tasks.push(bonsaiEngine.unload());
+    }
+    if (keepEngine !== 'transformers-onnx' && this.isTextModelReady()) {
+      this.unloadTextModel();
+    }
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks);
+      this.log({
+        channel: 'lfm3-1.7b',
+        level: 'info',
+        title: 'Reclaimed Inactive Model Memory',
+        detail: `Unloaded unused engine(s) before activating ${keepEngine}.`,
+      });
+    }
+  }
+
+  async unloadAllModels(): Promise<void> {
+    this.flushAudioQueue();
+    await this.unloadInactiveEngines('none', { preserveOmni: false });
+    this.terminateTextWorker();
+  }
+
+  /**
    * Unified loader for any WebGPU brain preset (LFM3-Omni, MiniCPM5 GGUF, Bonsai-2 GGUF, or Transformers ONNX).
    */
-  async loadConfiguredBrain(spec: ModelCacheSpec): Promise<void> {
+  async loadConfiguredBrain(
+    spec: ModelCacheSpec,
+    opts?: { preserveOmni?: boolean },
+  ): Promise<void> {
+    await this.unloadInactiveEngines(spec.brainEngine, {
+      preserveOmni: opts?.preserveOmni,
+    });
+
     if (spec.brainEngine === 'lfm3-omni') {
       const modelId = spec.modelId.trim() || 'LiquidAI/LFM3-Omni-2B-GGUF';
       const mmproj = spec.omniMmproj?.trim() || undefined;
@@ -416,7 +498,24 @@ class BrainRouter {
   }
 
   unloadTextModel() {
+    this.rejectAllPending(new Error('Text model unloaded.'));
+    this.loadedTextModelId = '';
     this.worker?.postMessage({ type: 'unload' });
+  }
+
+  terminateTextWorker() {
+    this.rejectAllPending(new Error('Text worker terminated.'));
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.loadedTextModelId = '';
+    this.textProgress = {
+      status: 'unloaded',
+      fraction: 0,
+      message: 'LFM3-1.7B not loaded',
+    };
+    for (const fn of this.textListeners) fn(this.textProgress);
   }
 
   isTextModelReady(): boolean {
@@ -633,10 +732,12 @@ class BrainRouter {
                   for (const pcm of bufferedPcm) {
                     player.push(pcm);
                   }
+                  bufferedPcm.length = 0;
                   player.end();
                   playedBuffered = true;
                   await player.waitForEnd();
                 } catch (playErr) {
+                  bufferedPcm.length = 0;
                   player.stop();
                   if (this.activePlayer === player) {
                     this.activePlayer = null;
@@ -647,6 +748,7 @@ class BrainRouter {
                 }
               });
             }
+            bufferedPcm.length = 0;
 
             return {
               text: cleanText,
@@ -655,6 +757,8 @@ class BrainRouter {
               audioHandled: playedBuffered,
             };
           } catch (err: any) {
+            bufferedPcm.length = 0;
+            this.lastMetrics.failedCalls += 1;
             this.activeSpatialResolver = null;
             this.log({
               channel: 'lfm3-omni',
@@ -1329,22 +1433,40 @@ class BrainRouter {
           });
           if (typeof AudioContext !== 'undefined') {
             const ctx = new AudioContext();
+            let src: AudioBufferSourceNode | null = null;
+            let gainNode: GainNode | null = null;
+            let panner: StereoPannerNode | null = null;
             try {
               const decoded = await ctx.decodeAudioData(synth.audioBuffer.slice(0));
-              const src = ctx.createBufferSource();
+              src = ctx.createBufferSource();
               src.buffer = decoded;
-              const gainNode = ctx.createGain();
+              gainNode = ctx.createGain();
               gainNode.gain.value = initialMix.gain;
-              const panner = ctx.createStereoPanner();
+              panner = ctx.createStereoPanner();
               panner.pan.value = initialMix.pan;
               src.connect(gainNode);
               gainNode.connect(panner);
               panner.connect(ctx.destination);
               await new Promise<void>((resolve) => {
-                src.onended = () => resolve();
-                src.start();
+                src!.onended = () => resolve();
+                src!.start();
               });
             } finally {
+              if (src) {
+                src.onended = null;
+                try {
+                  src.disconnect();
+                } catch {
+                  // ignore
+                }
+                src.buffer = null;
+              }
+              try {
+                gainNode?.disconnect();
+                panner?.disconnect();
+              } catch {
+                // ignore
+              }
               await ctx.close().catch(() => undefined);
             }
           }

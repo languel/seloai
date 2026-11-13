@@ -28,7 +28,12 @@ import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 import { useAutoScrollToBottom } from '../hooks/useAutoScrollToBottom';
 import { resolvePublicUrl } from '../utils/assetUrl';
-import { generateProceduralPlayerCustomSprite } from '../engine/playerSpriteGenerator';
+import { Gauge as PerfGaugeIcon } from 'lucide-react';
+import { perfMemoryTracker, type PerfMemorySnapshot } from '../engine/perfMemoryTracker';
+import {
+  generateProceduralPlayerCustomSprite,
+  getPlayerSpriteCacheCount,
+} from '../engine/playerSpriteGenerator';
 import {
   detectWorldTheme,
   loadAestheticSettings,
@@ -213,7 +218,10 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
   useEffect(() => {
     const canvas = thumbRef.current;
     if (!canvas || !frame) return;
+    let cancelled = false;
+    let preload: HTMLImageElement | null = null;
     const draw = () => {
+      if (cancelled) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.imageSmoothingEnabled = false;
@@ -229,12 +237,25 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
       } else {
         ctx.fillStyle = villager.accentColor;
         ctx.fillRect(4, 4, size - 8, size - 8);
-        const preload = new Image();
-        preload.onload = () => draw();
+        preload = new Image();
+        preload.onload = () => {
+          if (!cancelled) draw();
+        };
+        preload.onerror = () => {
+          preload = null;
+        };
         preload.src = resolvePublicUrl(frame.url);
       }
     };
     draw();
+    return () => {
+      cancelled = true;
+      if (preload) {
+        preload.onload = null;
+        preload.onerror = null;
+        preload = null;
+      }
+    };
   }, [frame?.url, frame?.sx, frame?.sy, frame?.sw, frame?.sh, villager.accentColor, size]);
 
   return (
@@ -245,6 +266,115 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
       className="pixel-canvas shrink-0"
       style={{ width: size, height: size }}
     />
+  );
+};
+
+const LivePerfHudOverlay: React.FC<{
+  panelStyle: React.CSSProperties;
+  textColor: string;
+  mutedColor: string;
+  hasBottomSubtitle?: boolean;
+  onOpenMonitor: () => void;
+  onClose: () => void;
+}> = ({ panelStyle, textColor, mutedColor, hasBottomSubtitle, onOpenMonitor, onClose }) => {
+  const [snap, setSnap] = useState<PerfMemorySnapshot>(() => perfMemoryTracker.getLatestSnapshot());
+  useEffect(() => perfMemoryTracker.subscribe(setSnap), []);
+
+  const fmtMb = (bytes: number | null) =>
+    bytes === null ? 'N/A' : `${(bytes / (1024 * 1024)).toFixed(bytes >= 1024 * 1024 * 1000 ? 0 : 1)} MB`;
+  const healthColor =
+    snap.health.status === 'leak-risk'
+      ? '#ef4444'
+      : snap.health.status === 'pressure'
+        ? '#f97316'
+        : snap.health.status === 'watch'
+          ? '#eab308'
+          : '#22c55e';
+
+  return (
+    <div
+      role="region"
+      aria-label="Live Performance and Memory HUD"
+      style={panelStyle}
+      className={`absolute right-3 z-20 w-64 rounded-md px-2.5 py-2 text-[11px] font-mono shadow-lg ${
+        hasBottomSubtitle ? 'bottom-24' : 'bottom-3'
+      }`}
+    >
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 font-semibold" style={{ color: textColor }}>
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: healthColor }} />
+          <span>Perf &amp; Memory ({snap.health.status})</span>
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          title="Close Performance HUD"
+          aria-label="Close Performance HUD"
+          className="rounded p-0.5 hover:bg-white/10"
+          style={{ color: mutedColor }}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+      <div className="space-y-1 text-[10px]" style={{ color: textColor }}>
+        <div className="flex justify-between">
+          <span style={{ color: mutedColor }}>FPS / Frame</span>
+          <span>
+            {snap.fps} fps · {snap.frameDtAvgMs.toFixed(1)}ms (p95 {snap.frameDtP95Ms.toFixed(0)}ms)
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span style={{ color: mutedColor }}>Step / Render</span>
+          <span>
+            {snap.simStepAvgMs.toFixed(2)}ms / {snap.renderAvgMs.toFixed(2)}ms
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span style={{ color: mutedColor }}>JS Heap</span>
+          <span>
+            {snap.jsHeapSupported
+              ? `${fmtMb(snap.jsHeapUsedBytes)} (${snap.jsHeapSlopeMbPerMin >= 0 ? '+' : ''}${snap.jsHeapSlopeMbPerMin.toFixed(1)} MB/m)`
+              : 'Unavailable (browser)'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span style={{ color: mutedColor }}>WebGPU VRAM</span>
+          <span>
+            {snap.gpuLiveBytes > 0 ? `${(snap.gpuLiveBytes / 1e6).toFixed(0)} MB` : '0 MB'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span style={{ color: mutedColor }}>Objects</span>
+          <span>
+            {snap.simStats.totalMessages}m · {snap.simStats.totalMemories}mem · {snap.simStats.timelineFrames}kf ·{' '}
+            {snap.caches.imageCacheCount}img
+          </span>
+        </div>
+        {snap.health.reasons[0] && (
+          <div className="truncate pt-0.5 text-[9.5px]" style={{ color: healthColor }}>
+            {snap.health.reasons[0]}
+          </div>
+        )}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-1.5 border-t border-white/15 pt-1.5 font-sans text-[10px]">
+        <button
+          type="button"
+          onClick={() => void perfMemoryTracker.runCleanup()}
+          className="rounded bg-white/15 px-2 py-0.5 font-medium hover:bg-white/25"
+          style={{ color: textColor }}
+        >
+          Trim Caches
+        </button>
+        <button
+          type="button"
+          onClick={onOpenMonitor}
+          className="rounded bg-white/15 px-2 py-0.5 font-medium hover:bg-white/25"
+          style={{ color: textColor }}
+        >
+          Full Profiler →
+        </button>
+      </div>
+    </div>
   );
 };
 
@@ -267,16 +397,21 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [showThoughtBubbles, setShowThoughtBubbles] = useState(true);
   const [showScribeSubtitles, setShowScribeSubtitles] = useState(true);
+  const [showPerfHud, setShowPerfHud] = useState(false);
   const [localAestheticSettings] = useState<AestheticSettings>(() =>
     loadAestheticSettings(),
   );
   const aestheticSettings = aestheticSettingsProp ?? localAestheticSettings;
   const worldTheme = detectWorldTheme(sim.map);
-  const aestheticTokens = resolveAestheticTokens(aestheticSettings, worldTheme);
-  const playerCustomSprite = generateProceduralPlayerCustomSprite(
-    aestheticSettings.player,
-    worldTheme,
+  const aestheticTokens = React.useMemo(
+    () => resolveAestheticTokens(aestheticSettings, worldTheme),
+    [aestheticSettings, worldTheme],
   );
+  const playerCustomSprite = React.useMemo(
+    () => generateProceduralPlayerCustomSprite(aestheticSettings.player, worldTheme),
+    [aestheticSettings.player, worldTheme],
+  );
+  void getPlayerSpriteCacheCount;
   const sidebarOpen = sidebarOpenProp ?? true;
   const subtitleBoxRef = useRef<HTMLDivElement | null>(null);
   const [rosterView, setRosterView] = useState<'cards' | 'compact'>('cards');
@@ -401,9 +536,23 @@ export const VillageView: React.FC<VillageViewProps> = ({
   useEffect(() => {
     let rafId = 0;
     let lastTime = performance.now();
+    let lastMicUiAt = 0;
+    let staticLayerCanvas: HTMLCanvasElement | null = null;
+    let staticCacheKey: {
+      mapRef: object;
+      bgRef: unknown;
+      objRef: unknown;
+      tileSetUrl: string;
+      tilesetImg: HTMLImageElement;
+      width: number;
+      height: number;
+      tileDim: number;
+      tileSetDimX: number;
+    } | null = null;
 
     const frame = (now: number) => {
-      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      const rawDtMs = Math.max(0.5, now - lastTime);
+      const dt = Math.min(0.05, rawDtMs / 1000);
       lastTime = now;
 
       // Keyboard player nudge
@@ -419,12 +568,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
         sim.nudgePlayer(dx / len, dy / len, dt);
       }
 
+      const simStart = performance.now();
       sim.stepFrame(dt);
+      const simStepMs = performance.now() - simStart;
 
-      if (recorderRef.current?.active) {
+      if (recorderRef.current?.active && now - lastMicUiAt >= 65) {
+        lastMicUiAt = now;
         setMicLevel(recorderRef.current.readLevel());
       }
 
+      let renderMs = 0;
       const canvas = canvasRef.current;
       if (canvas) {
         const rect = canvas.getBoundingClientRect();
@@ -466,10 +619,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
             }
           }
 
+          const renderStart = performance.now();
           renderWorld(ctx, rect.width, rect.height, now / 1000);
+          renderMs = performance.now() - renderStart;
         }
       }
 
+      perfMemoryTracker.recordFrameSample(rawDtMs, simStepMs, renderMs);
       rafId = requestAnimationFrame(frame);
     };
 
@@ -488,11 +644,62 @@ export const VillageView: React.FC<VillageViewProps> = ({
       const tilesetCols = Math.max(1, Math.floor(map.tileSetDimX / map.tileDim));
 
       if (tilesetImg) {
-        for (const layer of map.bgTiles) {
-          drawTileGrid(ctx, tilesetImg, layer, map.tileDim, tilesetCols);
+        const needsRebuild =
+          !staticLayerCanvas ||
+          !staticCacheKey ||
+          staticCacheKey.mapRef !== map ||
+          staticCacheKey.bgRef !== map.bgTiles ||
+          staticCacheKey.objRef !== map.objectTiles ||
+          staticCacheKey.tileSetUrl !== map.tileSetUrl ||
+          staticCacheKey.tilesetImg !== tilesetImg ||
+          staticCacheKey.width !== map.width ||
+          staticCacheKey.height !== map.height ||
+          staticCacheKey.tileDim !== map.tileDim ||
+          staticCacheKey.tileSetDimX !== map.tileSetDimX;
+
+        if (needsRebuild) {
+          const targetW = Math.max(1, map.width * map.tileDim);
+          const targetH = Math.max(1, map.height * map.tileDim);
+          if (!staticLayerCanvas) {
+            staticLayerCanvas = document.createElement('canvas');
+          }
+          if (staticLayerCanvas.width !== targetW || staticLayerCanvas.height !== targetH) {
+            staticLayerCanvas.width = targetW;
+            staticLayerCanvas.height = targetH;
+          }
+          const sctx = staticLayerCanvas.getContext('2d');
+          if (sctx) {
+            sctx.imageSmoothingEnabled = false;
+            sctx.clearRect(0, 0, targetW, targetH);
+            for (const layer of map.bgTiles) {
+              drawTileGrid(sctx, tilesetImg, layer, map.tileDim, tilesetCols);
+            }
+            for (const layer of map.objectTiles) {
+              drawTileGrid(sctx, tilesetImg, layer, map.tileDim, tilesetCols);
+            }
+            staticCacheKey = {
+              mapRef: map,
+              bgRef: map.bgTiles,
+              objRef: map.objectTiles,
+              tileSetUrl: map.tileSetUrl,
+              tilesetImg,
+              width: map.width,
+              height: map.height,
+              tileDim: map.tileDim,
+              tileSetDimX: map.tileSetDimX,
+            };
+          }
         }
-        for (const layer of map.objectTiles) {
-          drawTileGrid(ctx, tilesetImg, layer, map.tileDim, tilesetCols);
+
+        if (staticLayerCanvas) {
+          ctx.drawImage(staticLayerCanvas, 0, 0);
+        } else {
+          for (const layer of map.bgTiles) {
+            drawTileGrid(ctx, tilesetImg, layer, map.tileDim, tilesetCols);
+          }
+          for (const layer of map.objectTiles) {
+            drawTileGrid(ctx, tilesetImg, layer, map.tileDim, tilesetCols);
+          }
         }
       }
 
@@ -602,7 +809,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
     };
 
     rafId = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (staticLayerCanvas) {
+        staticLayerCanvas.width = 0;
+        staticLayerCanvas.height = 0;
+        staticLayerCanvas = null;
+      }
+      staticCacheKey = null;
+    };
   }, [
     sim,
     selectedId,
@@ -1371,6 +1586,21 @@ export const VillageView: React.FC<VillageViewProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setShowPerfHud((p) => !p)}
+              aria-pressed={showPerfHud}
+              title="Toggle live FPS, Heap & WebGPU memory HUD"
+              style={
+                showPerfHud
+                  ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText, fontWeight: 600 }
+                  : { color: aestheticTokens.hudMutedColor }
+              }
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
+            >
+              <PerfGaugeIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Perf</span>
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 if (!isScribeSelected && selectedCfg) {
                   sim.setFocalWorldline(
@@ -1567,6 +1797,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
               )}
             </div>
           </div>
+        )}
+        {showPerfHud && (
+          <LivePerfHudOverlay
+            panelStyle={aestheticTokens.subtitleStyle}
+            textColor={aestheticTokens.hudTextColor}
+            mutedColor={aestheticTokens.hudMutedColor}
+            hasBottomSubtitle={Boolean(showScribeSubtitles && latestScribeSubtitle)}
+            onOpenMonitor={onOpenMonitor}
+            onClose={() => setShowPerfHud(false)}
+          />
         )}
       </section>
 

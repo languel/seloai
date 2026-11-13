@@ -167,6 +167,11 @@ export interface SimulationSnapshot {
   player: PlayerAvatar;
 }
 
+const MAX_VILLAGER_MEMORIES = 64;
+const MAX_MESSAGES_PER_CONV = 160;
+const MAX_CONVERSATIONS = 40;
+const DEFAULT_MAX_TIMELINE_FRAMES = 450;
+
 export class VillageSimulation {
   public map: VillageMap;
   public configs: Map<string, VillagerConfig> = new Map();
@@ -189,7 +194,9 @@ export class VillageSimulation {
   private lastMoveSimMs = new Map<string, number>();
   private lastThinkSimMs = new Map<string, number>();
   private timeline: TimelineKeyframe[] = [];
-  private maxTimelineFrames = 750;
+  private maxTimelineFrames = DEFAULT_MAX_TIMELINE_FRAMES;
+  private lastDiscreteConvSig = '';
+  private lastConvItemCache = new Map<string, { sig: string; snap: Conversation }>();
   private lastConvSignature = '';
   private lastCachedConvSnapshot: Conversation[] = [];
   private lastMemCache = new Map<string, { sig: string; list: MemoryEntry[] }>();
@@ -260,11 +267,121 @@ export class VillageSimulation {
     this.notify(true);
   }
 
+  public getMemoryStats(): {
+    conversationCount: number;
+    activeConversationCount: number;
+    totalMessages: number;
+    villagerCount: number;
+    totalMemories: number;
+    totalWorldFeedItems: number;
+    timelineFrames: number;
+    cachedConvSnapshots: number;
+  } {
+    let totalMessages = 0;
+    let activeConversationCount = 0;
+    for (const c of this.conversations) {
+      totalMessages += c.messages.length;
+      if (c.active) activeConversationCount += 1;
+    }
+    let totalMemories = 0;
+    let totalWorldFeedItems = 0;
+    for (const rt of this.runtimes.values()) {
+      totalMemories += rt.memories.length;
+      totalWorldFeedItems += rt.worldFeed?.length ?? 0;
+    }
+    return {
+      conversationCount: this.conversations.length,
+      activeConversationCount,
+      totalMessages,
+      villagerCount: this.runtimes.size,
+      totalMemories,
+      totalWorldFeedItems,
+      timelineFrames: this.timeline.length,
+      cachedConvSnapshots: this.lastConvItemCache.size,
+    };
+  }
+
+  public trimMemoryUsage(opts?: {
+    maxTimelineFrames?: number;
+    maxMessagesPerConv?: number;
+    maxMemoriesPerVillager?: number;
+  }) {
+    const keepFrames = Math.max(30, opts?.maxTimelineFrames ?? 180);
+    const keepMsgs = Math.max(20, opts?.maxMessagesPerConv ?? MAX_MESSAGES_PER_CONV);
+    const keepMems = Math.max(12, opts?.maxMemoriesPerVillager ?? MAX_VILLAGER_MEMORIES);
+
+    if (this.timeline.length > keepFrames) {
+      this.timeline.splice(0, this.timeline.length - keepFrames);
+    }
+    if (this.conversations.length > MAX_CONVERSATIONS) {
+      this.conversations = this.conversations.slice(0, MAX_CONVERSATIONS);
+    }
+    for (const conv of this.conversations) {
+      this.trimConversationMessages(conv, keepMsgs);
+    }
+    for (const rt of this.runtimes.values()) {
+      this.trimVillagerMemories(rt, keepMems);
+      if (rt.worldFeed && rt.worldFeed.length > 12) {
+        rt.worldFeed = rt.worldFeed.slice(-12);
+      }
+      if (rt.recentUtterances && rt.recentUtterances.length > 6) {
+        rt.recentUtterances = rt.recentUtterances.slice(-6);
+      }
+    }
+    this.pruneConvItemCache();
+    this.notify(true);
+  }
+
+  private trimConversationMessages(conv: Conversation, maxMessages = MAX_MESSAGES_PER_CONV) {
+    if (conv.messages.length <= maxMessages) return;
+    // Keep opening 2 framing messages + newest tail so context stays coherent without unbounded growth
+    const head = conv.messages.slice(0, 2);
+    const tail = conv.messages.slice(-(maxMessages - 2));
+    conv.messages = [...head, ...tail];
+  }
+
+  private pushConversationMessage(conv: Conversation, ...msgs: ChatMessage[]) {
+    conv.messages.push(...msgs);
+    this.trimConversationMessages(conv, MAX_MESSAGES_PER_CONV);
+  }
+
+  private trimVillagerMemories(rt: VillagerRuntime, maxMemories = MAX_VILLAGER_MEMORIES) {
+    if (rt.memories.length <= maxMemories) return;
+    // Preserve high-importance anchor memories + most recent memories
+    const recentSlice = rt.memories.slice(-(maxMemories - 12));
+    const recentIds = new Set(recentSlice.map((m) => m.id));
+    const olderImportant = rt.memories
+      .slice(0, rt.memories.length - (maxMemories - 12))
+      .filter((m) => !recentIds.has(m.id))
+      .sort((a, b) => b.importance - a.importance || b.timestamp - a.timestamp)
+      .slice(0, 12);
+    rt.memories = [...olderImportant, ...recentSlice].sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  private pushVillagerMemory(rt: VillagerRuntime, entry: MemoryEntry) {
+    rt.memories.push(entry);
+    this.trimVillagerMemories(rt, MAX_VILLAGER_MEMORIES);
+  }
+
+  private pruneConvItemCache() {
+    if (this.lastConvItemCache.size <= MAX_CONVERSATIONS * 2) return;
+    const activeIds = new Set(this.conversations.map((c) => c.id));
+    for (const key of this.lastConvItemCache.keys()) {
+      if (!activeIds.has(key)) {
+        this.lastConvItemCache.delete(key);
+      }
+    }
+  }
+
   syncVillagers(villagers: VillagerConfig[]) {
     const nextIds = new Set(villagers.map((v) => v.id));
     for (const oldId of this.runtimes.keys()) {
       if (!nextIds.has(oldId)) {
         this.runtimes.delete(oldId);
+        this.lastMemCache.delete(oldId);
+        this.lastFeedCache.delete(oldId);
+        this.lastMoveSimMs.delete(oldId);
+        this.lastThinkSimMs.delete(oldId);
       }
     }
     this.configs.clear();
@@ -571,12 +688,13 @@ export class VillageSimulation {
     }
 
     const lastKf = this.timeline[this.timeline.length - 1];
-    const convSig = this.computeConversationSignature();
+    const discreteSig = this.computeDiscreteConversationSignature();
     if (
       !lastKf ||
-      convSig !== this.lastConvSignature ||
+      discreteSig !== this.lastDiscreteConvSig ||
       this.simTimeMs - lastKf.simTimeMs >= 200
     ) {
+      this.lastDiscreteConvSig = discreteSig;
       this.recordTimelineKeyframe();
     }
   }
@@ -596,12 +714,21 @@ export class VillageSimulation {
     this.timeline = [];
     this.simTimeMs = 0;
     this.lastConvSignature = '';
+    this.lastDiscreteConvSig = '';
     this.lastCachedConvSnapshot = [];
+    this.lastConvItemCache.clear();
     this.lastMemCache.clear();
     this.lastFeedCache.clear();
     this.lastAppliedConvRef = null;
     this.wasRewinding = false;
     this.recordTimelineKeyframe();
+  }
+
+  private computeDiscreteConversationSignature(): string {
+    if (this.conversations.length === 0) return '0';
+    return this.conversations
+      .map((c) => `${c.id}:${c.active ? 1 : 0}:${c.messages.length}`)
+      .join('|');
   }
 
   private computeConversationSignature(): string {
@@ -651,7 +778,21 @@ export class VillageSimulation {
     const convSig = this.computeConversationSignature();
     if (convSig !== this.lastConvSignature || this.timeline.length === 0) {
       this.lastConvSignature = convSig;
-      this.lastCachedConvSnapshot = structuredClone(this.conversations);
+      // Only structuredClone individual conversations that actually mutated since the last keyframe;
+      // unchanged older conversations share immutable references across keyframes.
+      const nextSnap: Conversation[] = [];
+      for (const c of this.conversations) {
+        const lastMsg = c.messages[c.messages.length - 1];
+        const cSig = `${c.active ? 1 : 0}:${c.messages.length}:${c.updatedAt}:${lastMsg?.text.length ?? 0}`;
+        let cached = this.lastConvItemCache.get(c.id);
+        if (!cached || cached.sig !== cSig) {
+          cached = { sig: cSig, snap: structuredClone(c) };
+          this.lastConvItemCache.set(c.id, cached);
+        }
+        nextSnap.push(cached.snap);
+      }
+      this.lastCachedConvSnapshot = nextSnap;
+      this.pruneConvItemCache();
     }
     const villagers: VillagerKeyframe[] = [];
     for (const rt of this.runtimes.values()) {
@@ -1335,7 +1476,7 @@ export class VillageSimulation {
   ): Promise<void> {
     const clean = text.trim();
     if (!clean) return;
-    conv.messages.push({
+    this.pushConversationMessage(conv, {
       id: `msg-nar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       senderId: 'narrator',
       senderName: this.modelSettings.narratorName.trim() || 'Scribe',
@@ -1477,7 +1618,7 @@ export class VillageSimulation {
         transcript,
         settings: this.modelSettings,
       });
-      rtA.memories.push({
+      this.pushVillagerMemory(rtA, {
         id: `mem-${Date.now()}-a`,
         timestamp: Date.now(),
         importance: 6,
@@ -1487,7 +1628,7 @@ export class VillageSimulation {
       this.appendWorldEvent(rtA, `Talked with ${cfgB.name}: ${memA}`);
       const firstSpoken = conv.messages.find((m) => m.kind !== 'narration');
       const bSummary = `Talked with ${cfgA.name}: ${firstSpoken?.text.slice(0, 64) ?? ''}`;
-      rtB.memories.push({
+      this.pushVillagerMemory(rtB, {
         id: `mem-${Date.now()}-b`,
         timestamp: Date.now(),
         importance: 6,
@@ -1555,7 +1696,7 @@ export class VillageSimulation {
       updatedAt: Date.now(),
       active: true,
     };
-    this.conversations = [conv, ...this.conversations].slice(0, 50);
+    this.conversations = [conv, ...this.conversations].slice(0, MAX_CONVERSATIONS);
     return conv;
   }
 
@@ -1629,7 +1770,7 @@ export class VillageSimulation {
     slotIndex = 0,
   ) {
     this.appendWorldEvent(rt, `${this.player.name} said: "${userText.slice(0, 90)}"`);
-    rt.memories.push({
+    this.pushVillagerMemory(rt, {
       id: `mem-dir-${Date.now()}-${slotIndex}`,
       timestamp: Date.now(),
       importance: 6,
@@ -1791,7 +1932,7 @@ export class VillageSimulation {
       source: 'story-sim',
     };
     const historySnapshot = conv.messages.slice();
-    conv.messages.push(streamingMsg);
+    this.pushConversationMessage(conv, streamingMsg);
     conv.updatedAt = Date.now();
     this.notify(true);
 
@@ -2015,7 +2156,7 @@ export class VillageSimulation {
         speakDisplayFallback: true,
         onBeforeVoice: (finalSpoken) => {
           const summary = `${this.player.name} said: "${userText.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`;
-          rt.memories.push({
+          this.pushVillagerMemory(rt, {
             id: `mem-u-${Date.now()}`,
             timestamp: Date.now(),
             importance: 7,
@@ -2048,7 +2189,7 @@ export class VillageSimulation {
       kind: 'narration',
       source: 'story-sim',
     };
-    conv.messages.push(streamingMsg);
+    this.pushConversationMessage(conv, streamingMsg);
     this.notify(true);
 
     let rawNarStream = '';
@@ -2084,7 +2225,7 @@ export class VillageSimulation {
     if (!cfg || !rt) return;
 
     const conv = this.getOrCreateHumanConversation(villagerId);
-    conv.messages.push({
+    this.pushConversationMessage(conv, {
       id: `msg-u-${Date.now()}`,
       senderId: this.player.id,
       senderName: this.player.name,
@@ -2115,7 +2256,7 @@ export class VillageSimulation {
     if (targets.length === 0) {
       if (activeTargetId === 'narrator') {
         const conv = this.getOrCreateHumanConversation('narrator');
-        conv.messages.push({
+        this.pushConversationMessage(conv, {
           id: `msg-u-${Date.now()}`,
           senderId: this.player.id,
           senderName: this.player.name,
@@ -2143,7 +2284,7 @@ export class VillageSimulation {
         ? activeTargetId
         : targets[0].id;
     const conv = this.getOrCreateHumanConversation(hostId);
-    conv.messages.push({
+    this.pushConversationMessage(conv, {
       id: `msg-u-${Date.now()}`,
       senderId: this.player.id,
       senderName: this.player.name,
@@ -2220,7 +2361,7 @@ export class VillageSimulation {
       source: 'lfm3-omni',
       hasAudio: true,
     };
-    conv.messages.push(userMsg, replyMsg);
+    this.pushConversationMessage(conv, userMsg, replyMsg);
     this.notify(true);
 
     try {
@@ -2240,7 +2381,7 @@ export class VillageSimulation {
       replyMsg.text = res.replyText;
       rt.lastLatencyMs = res.durationMs;
       rt.currentBubble = { text: res.replyText, expiresAt: Date.now() + 7500 };
-      rt.memories.push({
+      this.pushVillagerMemory(rt, {
         id: `mem-ov-${Date.now()}`,
         timestamp: Date.now(),
         importance: 8,

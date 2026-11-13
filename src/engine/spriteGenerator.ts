@@ -1146,7 +1146,16 @@ export function encodeRgbaUncompressedPng(width: number, height: number, rgba: U
   return `data:image/png;base64,${b64}`;
 }
 
+const MAX_SPRITE_SHEET_CACHE = 48;
 const spriteSheetCache = new Map<string, string>();
+
+export function getSpriteSheetCacheCount(): number {
+  return spriteSheetCache.size;
+}
+
+export function clearSpriteSheetCache(): void {
+  spriteSheetCache.clear();
+}
 
 export function appearanceCacheKey(appearance: CharacterAppearance): string {
   return [
@@ -1168,7 +1177,11 @@ export function appearanceCacheKey(appearance: CharacterAppearance): string {
 export function generateSpriteSheetDataUrl(appearance: CharacterAppearance): string {
   const key = appearanceCacheKey(appearance);
   const cached = spriteSheetCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    spriteSheetCache.delete(key);
+    spriteSheetCache.set(key, cached);
+    return cached;
+  }
 
   const rgba = renderAppearanceSpritePixels(appearance);
   let url = '';
@@ -1187,6 +1200,11 @@ export function generateSpriteSheetDataUrl(appearance: CharacterAppearance): str
     url = encodeRgbaUncompressedPng(SPRITE_SHEET_WIDTH, SPRITE_SHEET_HEIGHT, rgba);
   }
   spriteSheetCache.set(key, url);
+  while (spriteSheetCache.size > MAX_SPRITE_SHEET_CACHE) {
+    const oldestKey = spriteSheetCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    spriteSheetCache.delete(oldestKey);
+  }
   return url;
 }
 

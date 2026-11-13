@@ -15,6 +15,7 @@ interface OmniModule {
 interface OmniSession {
   prime(messages: any[], opts?: any): { result: Promise<any> };
   generate(messages: any[], opts?: any): AsyncIterable<any> & { result: Promise<any> };
+  dispose?(): Promise<void> | void;
 }
 
 interface OmniModelInstance {
@@ -22,6 +23,7 @@ interface OmniModelInstance {
   audio_sampling_rate: number;
   create_session(): OmniSession;
   deviceInfo(): { vendor?: string; architecture?: string; description?: string };
+  memoryStats?(): { liveBytes: number; peakBytes: number } | null;
   dispose?(): Promise<void>;
 }
 
@@ -232,6 +234,18 @@ class OmniEngine {
     });
   }
 
+  getLoadedModelId(): string {
+    return this.loadedModelId;
+  }
+
+  getMemoryStats(): { liveBytes: number; peakBytes: number } | null {
+    try {
+      return this.model?.memoryStats?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = this.queue.then(task, task);
     this.queue = run.then(
@@ -248,30 +262,34 @@ class OmniEngine {
     if (!this.model) throw new Error('LFM3-Omni-2B is not loaded.');
     return this.enqueue(async () => {
       const session = this.model!.create_session();
-      const startedAt = performance.now();
-      const messages = [
-        {
-          role: 'system',
-          content:
-            'Transcribe the user audio accurately into plain text. Return only the spoken words with punctuation and no commentary.',
-        },
-        {
-          role: 'user',
-          content: [{ type: 'audio', audio }],
-        },
-      ];
-      let text = '';
-      const gen = session.generate(messages, { generation_mode: 'text', max_new_tokens: 256 });
-      for await (const ev of gen) {
-        if (ev.type === 'text' && ev.text) {
-          text += ev.text;
+      try {
+        const startedAt = performance.now();
+        const messages = [
+          {
+            role: 'system',
+            content:
+              'Transcribe the user audio accurately into plain text. Return only the spoken words with punctuation and no commentary.',
+          },
+          {
+            role: 'user',
+            content: [{ type: 'audio', audio }],
+          },
+        ];
+        let text = '';
+        const gen = session.generate(messages, { generation_mode: 'text', max_new_tokens: 256 });
+        for await (const ev of gen) {
+          if (ev.type === 'text' && ev.text) {
+            text += ev.text;
+          }
         }
+        await gen.result;
+        return {
+          text: text.trim(),
+          durationMs: Math.round(performance.now() - startedAt),
+        };
+      } finally {
+        await Promise.resolve(session.dispose?.()).catch(() => {});
       }
-      await gen.result;
-      return {
-        text: text.trim(),
-        durationMs: Math.round(performance.now() - startedAt),
-      };
     });
   }
 
@@ -302,32 +320,36 @@ class OmniEngine {
 
     return this.enqueue(async () => {
       const session = this.model!.create_session();
-      const startedAt = performance.now();
-      const messages = [
-        {
-          role: 'system',
-          content: `Read the user text aloud verbatim in ${accentCue} using a ${gender} voice.${styleSuffix}`,
-        },
-        {
-          role: 'user',
-          content: line,
-        },
-      ];
-      const gen = session.generate(messages, {
-        generation_mode: 'audio',
-        max_new_tokens: 512,
-        signal,
-      });
-      for await (const ev of gen) {
-        if (ev.type === 'audio' && ev.audio?.length) {
-          onAudioChunk(ev.audio);
+      try {
+        const startedAt = performance.now();
+        const messages = [
+          {
+            role: 'system',
+            content: `Read the user text aloud verbatim in ${accentCue} using a ${gender} voice.${styleSuffix}`,
+          },
+          {
+            role: 'user',
+            content: line,
+          },
+        ];
+        const gen = session.generate(messages, {
+          generation_mode: 'audio',
+          max_new_tokens: 512,
+          signal,
+        });
+        for await (const ev of gen) {
+          if (ev.type === 'audio' && ev.audio?.length) {
+            onAudioChunk(ev.audio);
+          }
         }
+        await gen.result;
+        return {
+          durationMs: Math.round(performance.now() - startedAt),
+          sampleRate: this.audioSampleRate,
+        };
+      } finally {
+        await Promise.resolve(session.dispose?.()).catch(() => {});
       }
-      await gen.result;
-      return {
-        durationMs: Math.round(performance.now() - startedAt),
-        sampleRate: this.audioSampleRate,
-      };
     });
   }
 
@@ -346,47 +368,51 @@ class OmniEngine {
     if (!this.model) throw new Error('LFM3-Omni-2B is not loaded.');
     return this.enqueue(async () => {
       const session = this.model!.create_session();
-      const startedAt = performance.now();
-      const userContent: any = params.audio
-        ? [
-            { type: 'audio', audio: params.audio },
-            ...(params.text ? [{ type: 'text', text: params.text }] : []),
-          ]
-        : params.text || 'Hello!';
+      try {
+        const startedAt = performance.now();
+        const userContent: any = params.audio
+          ? [
+              { type: 'audio', audio: params.audio },
+              ...(params.text ? [{ type: 'text', text: params.text }] : []),
+            ]
+          : params.text || 'Hello!';
 
-      const messages = [
-        {
-          role: 'system',
-          content: params.voice
-            ? `Respond with interleaved text and audio. ${params.systemPrompt}`
-            : params.systemPrompt,
-        },
-        { role: 'user', content: userContent },
-      ];
+        const messages = [
+          {
+            role: 'system',
+            content: params.voice
+              ? `Respond with interleaved text and audio. ${params.systemPrompt}`
+              : params.systemPrompt,
+          },
+          { role: 'user', content: userContent },
+        ];
 
-      let fullText = '';
-      const audioChunks: Float32Array[] = [];
-      const gen = session.generate(messages, {
-        generation_mode: params.voice ? 'interleaved' : 'text',
-        max_new_tokens: 512,
-        signal: params.signal,
-      });
+        let fullText = '';
+        const audioChunks: Float32Array[] = [];
+        const gen = session.generate(messages, {
+          generation_mode: params.voice ? 'interleaved' : 'text',
+          max_new_tokens: 512,
+          signal: params.signal,
+        });
 
-      for await (const ev of gen) {
-        if (ev.type === 'text' && ev.text) {
-          fullText += ev.text;
-          params.onTextChunk?.(ev.text);
-        } else if (ev.type === 'audio' && ev.audio?.length) {
-          audioChunks.push(ev.audio);
-          params.onAudioChunk?.(ev.audio);
+        for await (const ev of gen) {
+          if (ev.type === 'text' && ev.text) {
+            fullText += ev.text;
+            params.onTextChunk?.(ev.text);
+          } else if (ev.type === 'audio' && ev.audio?.length) {
+            audioChunks.push(ev.audio);
+            params.onAudioChunk?.(ev.audio);
+          }
         }
+        await gen.result;
+        return {
+          text: fullText.trim(),
+          audioChunks,
+          durationMs: Math.round(performance.now() - startedAt),
+        };
+      } finally {
+        await Promise.resolve(session.dispose?.()).catch(() => {});
       }
-      await gen.result;
-      return {
-        text: fullText.trim(),
-        audioChunks,
-        durationMs: Math.round(performance.now() - startedAt),
-      };
     });
   }
 
@@ -404,33 +430,37 @@ class OmniEngine {
     if (!this.model) throw new Error('LFM3-Omni-2B is not loaded.');
     return this.enqueue(async () => {
       const session = this.model!.create_session();
-      const startedAt = performance.now();
-      let fullText = '';
-      let textChunks = 0;
+      try {
+        const startedAt = performance.now();
+        let fullText = '';
+        let textChunks = 0;
 
-      const gen = session.generate(params.messages, {
-        generation_mode: params.voice ? 'interleaved' : 'text',
-        max_new_tokens: params.maxNewTokens ?? 160,
-        signal: params.signal,
-      });
+        const gen = session.generate(params.messages, {
+          generation_mode: params.voice ? 'interleaved' : 'text',
+          max_new_tokens: params.maxNewTokens ?? 160,
+          signal: params.signal,
+        });
 
-      for await (const ev of gen) {
-        if (ev.type === 'text' && ev.text) {
-          textChunks += 1;
-          fullText += ev.text;
-          params.onTextChunk?.(ev.text);
-        } else if (ev.type === 'audio' && ev.audio?.length) {
-          params.onAudioChunk?.(ev.audio);
+        for await (const ev of gen) {
+          if (ev.type === 'text' && ev.text) {
+            textChunks += 1;
+            fullText += ev.text;
+            params.onTextChunk?.(ev.text);
+          } else if (ev.type === 'audio' && ev.audio?.length) {
+            params.onAudioChunk?.(ev.audio);
+          }
         }
+        await gen.result;
+        const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
+        const tokensPerSec = Number(((Math.max(1, textChunks) / durationMs) * 1000).toFixed(1));
+        return {
+          text: fullText.trim(),
+          durationMs,
+          tokensPerSec,
+        };
+      } finally {
+        await Promise.resolve(session.dispose?.()).catch(() => {});
       }
-      await gen.result;
-      const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
-      const tokensPerSec = Number(((Math.max(1, textChunks) / durationMs) * 1000).toFixed(1));
-      return {
-        text: fullText.trim(),
-        durationMs,
-        tokensPerSec,
-      };
     });
   }
 }

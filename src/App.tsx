@@ -43,7 +43,15 @@ import { MonitorView } from './components/MonitorView';
 import { ObservatoryView } from './components/ObservatoryView';
 import { TapestryStudioView } from './components/TapestryStudioView';
 import { VillageView } from './components/VillageView';
-import { generateProceduralPlayerCustomSprite } from './engine/playerSpriteGenerator';
+import {
+  generateProceduralPlayerCustomSprite,
+  getPlayerSpriteCacheCount,
+} from './engine/playerSpriteGenerator';
+import { getAudioDebugStats } from './ai/audioPipeline';
+import { segmentationClient } from './ai/segmentationClient';
+import { perfMemoryTracker } from './engine/perfMemoryTracker';
+import { getImageCacheStats, pruneImageCache } from './engine/renderer';
+import { getSpriteSheetCacheCount } from './engine/spriteGenerator';
 import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
 import {
@@ -332,6 +340,122 @@ export function App() {
     };
   }, [ready]);
 
+  useEffect(() => {
+    if (!ready) return;
+    perfMemoryTracker.registerProvider({
+      getEngines: () => {
+        const curSettings = latestRef.current.settings;
+        const omniStats = omniEngine.getMemoryStats();
+        const miniStats = minicpmEngine.getMemoryStats();
+        const bonsaiStats = bonsaiEngine.getMemoryStats();
+        const segStatus = segmentationClient.getStatus();
+        return [
+          {
+            id: 'lfm3-omni',
+            label: 'LFM3-Omni-2B',
+            backend: 'webgpu',
+            status: omniEngine.progress.status,
+            modelId: omniEngine.getLoadedModelId() || curSettings?.omniModelId || '',
+            liveBytes: omniStats?.liveBytes ?? null,
+            peakBytes: omniStats?.peakBytes ?? null,
+          },
+          {
+            id: 'minicpm5-gguf',
+            label: 'MiniCPM5-2B',
+            backend: 'webgpu',
+            status: minicpmEngine.progress.status,
+            modelId: minicpmEngine.getLoadedModelId() || '',
+            liveBytes: miniStats?.liveBytes ?? null,
+            peakBytes: miniStats?.peakBytes ?? null,
+          },
+          {
+            id: 'bonsai2-gguf',
+            label: 'Bonsai-2 27B',
+            backend: 'webgpu',
+            status: bonsaiEngine.progress.status,
+            modelId: bonsaiEngine.getLoadedModelId() || '',
+            liveBytes: bonsaiStats?.liveBytes ?? null,
+            peakBytes: bonsaiStats?.peakBytes ?? null,
+          },
+          {
+            id: 'transformers-onnx',
+            label: 'ONNX Text Worker',
+            backend: 'worker-onnx',
+            status: brainRouter.textProgress.status,
+            modelId: brainRouter.getLoadedTextModelId() || '',
+            liveBytes: null,
+            peakBytes: null,
+          },
+          {
+            id: 'vision-seg',
+            label: 'Vision Segmentation',
+            backend: 'worker-vision',
+            status: segStatus.status,
+            modelId: segStatus.modelId ?? '',
+            liveBytes: null,
+            peakBytes: null,
+          },
+        ];
+      },
+      getSimCounters: () =>
+        simRef.current?.getMemoryStats() ?? {
+          conversationCount: 0,
+          activeConversationCount: 0,
+          totalMessages: 0,
+          villagerCount: 0,
+          totalMemories: 0,
+          totalWorldFeedItems: 0,
+          timelineFrames: 0,
+          cachedConvSnapshots: 0,
+        },
+      getCacheCounters: () => {
+        const img = getImageCacheStats();
+        const audio = getAudioDebugStats();
+        const routerCounts = brainRouter.getDebugCounts();
+        return {
+          imageCacheCount: img.totalEntries,
+          imageCacheDataUrlCount: img.dataUrlEntries,
+          spriteSheetCacheCount: getSpriteSheetCacheCount(),
+          playerSpriteCacheCount: getPlayerSpriteCacheCount(),
+          telemetryEvents: routerCounts.telemetryEvents,
+          pendingWorkerRequests: routerCounts.pendingWorkerRequests,
+          audioActiveSources: audio.activeSourcesCount,
+          audioContextState: audio.contextState,
+        };
+      },
+      onCleanup: async (opts) => {
+        const sim = simRef.current;
+        if (sim) {
+          sim.trimMemoryUsage({
+            maxTimelineFrames: 120,
+            maxMessagesPerConv: 120,
+            maxMemoriesPerVillager: 48,
+          });
+        }
+        const activeUrls = new Set<string>();
+        const curMap = latestRef.current.map;
+        if (curMap?.tileSetUrl) activeUrls.add(curMap.tileSetUrl);
+        for (const v of latestRef.current.villagers) {
+          if (v.customSprite?.textureUrl) activeUrls.add(v.customSprite.textureUrl);
+        }
+        pruneImageCache(activeUrls);
+        brainRouter.clearTelemetryLog();
+        if (opts?.unloadModels) {
+          await brainRouter.unloadAllModels();
+          await segmentationClient.unload();
+          segmentationClient.terminateWorker();
+        }
+      },
+    });
+    perfMemoryTracker.captureSnapshot(true);
+    const intervalId = window.setInterval(() => {
+      perfMemoryTracker.captureSnapshot(true);
+    }, 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [ready]);
+
   const downloadJson = (filename: string, raw: string) => {
     const blob = new Blob([raw], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -616,20 +740,24 @@ export function App() {
     }
   };
 
-  if (!ready || !map || !settings || !simRef.current) {
+  const worldTheme = map ? detectWorldTheme(map) : 'classic';
+  const aestheticTokens = React.useMemo(
+    () => resolveAestheticTokens(aestheticSettings, worldTheme),
+    [aestheticSettings, worldTheme],
+  );
+  const playerCustomSprite = React.useMemo(
+    () =>
+      map ? generateProceduralPlayerCustomSprite(aestheticSettings.player, worldTheme) : undefined,
+    [map, aestheticSettings.player, worldTheme],
+  );
+
+  if (!ready || !map || !settings || !simRef.current || !playerCustomSprite) {
     return (
       <div className="flex h-full items-center justify-center bg-linen text-sm text-muted">
         Initializing SeloAI village…
       </div>
     );
   }
-
-  const worldTheme = detectWorldTheme(map);
-  const aestheticTokens = resolveAestheticTokens(aestheticSettings, worldTheme);
-  const playerCustomSprite = generateProceduralPlayerCustomSprite(
-    aestheticSettings.player,
-    worldTheme,
-  );
 
   return (
     <div className="flex h-full flex-col bg-linen text-ink overflow-hidden">

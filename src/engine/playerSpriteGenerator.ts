@@ -23,7 +23,16 @@ import type {
 } from '../utils/aestheticThemes';
 
 const DIRECTIONS: Direction[] = ['down', 'left', 'right', 'up'];
+const MAX_PLAYER_SPRITE_CACHE = 24;
 const PLAYER_SPRITE_CACHE = new Map<string, CustomSpriteSheet>();
+
+export function getPlayerSpriteCacheCount(): number {
+  return PLAYER_SPRITE_CACHE.size;
+}
+
+export function clearPlayerSpriteCache(): void {
+  PLAYER_SPRITE_CACHE.clear();
+}
 
 export interface ResolvedPlayerTraits {
   worldTheme: WorldThemeKind;
@@ -388,7 +397,11 @@ export function generateProceduralPlayerCustomSprite(
   const resolved = resolvePlayerAppearance(cfg, worldTheme);
   const key = traitsCacheKey(resolved);
   const cached = PLAYER_SPRITE_CACHE.get(key);
-  if (cached) return cached;
+  if (cached) {
+    PLAYER_SPRITE_CACHE.delete(key);
+    PLAYER_SPRITE_CACHE.set(key, cached);
+    return cached;
+  }
 
   const pixels = renderProceduralPlayerSheetPixels(resolved);
   let textureUrl = '';
@@ -421,5 +434,10 @@ export function generateProceduralPlayerCustomSprite(
     rowMap: { down: 0, left: 1, right: 2, up: 3 },
   };
   PLAYER_SPRITE_CACHE.set(key, sheet);
+  while (PLAYER_SPRITE_CACHE.size > MAX_PLAYER_SPRITE_CACHE) {
+    const oldestKey = PLAYER_SPRITE_CACHE.keys().next().value;
+    if (oldestKey === undefined) break;
+    PLAYER_SPRITE_CACHE.delete(oldestKey);
+  }
   return sheet;
 }

@@ -1,4 +1,18 @@
 let sharedAudioCtx: AudioContext | null = null;
+let activePcmPlayers = 0;
+let activePcmSources = 0;
+
+export function getAudioDebugStats(): {
+  activePlayers: number;
+  activeSourcesCount: number;
+  contextState: string;
+} {
+  return {
+    activePlayers: activePcmPlayers,
+    activeSourcesCount: activePcmSources,
+    contextState: sharedAudioCtx ? sharedAudioCtx.state : 'uninitialized',
+  };
+}
 
 export function getAudioContext(): AudioContext {
   if (!sharedAudioCtx) {
@@ -103,11 +117,18 @@ export class MicRecorder {
   }
 
   private release() {
+    this.active = false;
+    if (this.recorder) {
+      this.recorder.ondataavailable = null;
+      this.recorder = null;
+    }
     this.stream?.getTracks().forEach((t) => t.stop());
     this.source?.disconnect();
+    this.analyser?.disconnect();
     this.stream = null;
     this.source = null;
     this.analyser = null;
+    this.chunks = [];
   }
 }
 
@@ -209,6 +230,7 @@ export class StreamingPcmPlayer {
       tail.connect(ctx.destination);
     }
     this.playhead = ctx.currentTime + 0.08;
+    activePcmPlayers += 1;
   }
 
   setSpatial(gain: number, pan: number) {
@@ -236,13 +258,23 @@ export class StreamingPcmPlayer {
     }
     src.connect(this.output);
     src.start(this.playhead);
+    this.sources.add(src);
+    activePcmSources += 1;
     src.onended = () => {
-      this.sources.delete(src);
+      if (this.sources.delete(src)) {
+        activePcmSources = Math.max(0, activePcmSources - 1);
+      }
+      src.onended = null;
+      try {
+        src.disconnect();
+      } catch {
+        // already disconnected
+      }
+      src.buffer = null;
       if (this.completed && this.sources.size === 0) {
         this.finish();
       }
     };
-    this.sources.add(src);
     const effectiveRate =
       this.speakingRate * Math.pow(2, this.pitchSemitones / 12);
     this.playhead += buffer.duration / Math.max(0.5, effectiveRate);
@@ -258,6 +290,7 @@ export class StreamingPcmPlayer {
   private finish() {
     if (this.ended) return;
     this.ended = true;
+    activePcmPlayers = Math.max(0, activePcmPlayers - 1);
     this.disconnect();
     const waiters = this.endWaiters.splice(0);
     for (const w of waiters) w();
@@ -279,7 +312,14 @@ export class StreamingPcmPlayer {
       } catch {
         // ignore
       }
+      try {
+        s.disconnect();
+      } catch {
+        // ignore
+      }
+      s.buffer = null;
     }
+    activePcmSources = Math.max(0, activePcmSources - this.sources.size);
     this.sources.clear();
     this.finish();
   }

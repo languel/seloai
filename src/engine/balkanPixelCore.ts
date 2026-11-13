@@ -262,3 +262,213 @@ export function hash2d(x: number, y: number, seed = 17): number {
   n = Math.imul(n, 1274126177) >>> 0;
   return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
 }
+
+export type StitchMode =
+  | 'cross'
+  | 'cross-fine'
+  | 'tent'
+  | 'twill-h'
+  | 'twill-v'
+  | 'linen'
+  | 'satin';
+
+function clampByte(n: number): number {
+  return n < 0 ? 0 : n > 255 ? 255 : Math.round(n);
+}
+
+/** Shift RGB brightness of a palette color while preserving alpha. */
+export function shiftRgba(color: Rgba, delta: number): Rgba {
+  if (color[3] === 0) return color;
+  return [
+    clampByte(color[0] + delta),
+    clampByte(color[1] + delta),
+    clampByte(color[2] + delta),
+    color[3],
+  ];
+}
+
+/** Linearly blend two RGBA colors (`t` in [0, 1]). */
+export function mixRgba(a: Rgba, b: Rgba, t: number): Rgba {
+  const k = t < 0 ? 0 : t > 1 ? 1 : t;
+  return [
+    clampByte(a[0] + (b[0] - a[0]) * k),
+    clampByte(a[1] + (b[1] - a[1]) * k),
+    clampByte(a[2] + (b[2] - a[2]) * k),
+    clampByte(a[3] + (b[3] - a[3]) * k),
+  ];
+}
+
+/**
+ * Period-4 phase-locked needlework relief modulation.
+ * Every period (`2` or `4`) evenly divides 32px tile dimensions so yarn ribs
+ * and cross-stitch cells continue unbroken across every Wang tile seam.
+ */
+export function getStitchDelta(x: number, y: number, mode: StitchMode): number {
+  const ix = Math.round(x);
+  const iy = Math.round(y);
+  const sx = ix & 3;
+  const sy = iy & 3;
+
+  switch (mode) {
+    case 'cross': {
+      if (sx === sy) return sx === 1 || sx === 2 ? 17 : 12;
+      if (sx + sy === 3) return 4;
+      return -17;
+    }
+    case 'cross-fine': {
+      const fx = ix & 1;
+      const fy = iy & 1;
+      const cellWave = ((ix & 2) ^ (iy & 2)) === 0 ? 3 : -3;
+      return (fx === fy ? 10 : -11) + cellWave;
+    }
+    case 'tent': {
+      const d = (ix + iy) & 3;
+      if (d === 0) return 14;
+      if (d === 1) return 3;
+      if (d === 2) return -14;
+      return -4;
+    }
+    case 'twill-h': {
+      const ridge = (sx + ((iy & 1) << 1)) & 3;
+      const rowAlt = (iy & 1) === 0 ? 4 : -4;
+      const val = ridge === 0 ? 11 : ridge === 1 ? 3 : ridge === 2 ? -10 : -3;
+      return val + rowAlt;
+    }
+    case 'twill-v': {
+      const ridge = (sy + ((ix & 1) << 1)) & 3;
+      const colAlt = (ix & 1) === 0 ? 4 : -4;
+      const val = ridge === 0 ? 11 : ridge === 1 ? 3 : ridge === 2 ? -10 : -3;
+      return val + colAlt;
+    }
+    case 'linen': {
+      if (sx === 0 && sy === 0) return -15;
+      if (sx === 2 && sy === 2) return 9;
+      if (sx === 2 || sy === 2) return 4;
+      return ((sx ^ sy) & 1) === 0 ? 1 : -5;
+    }
+    case 'satin': {
+      const band = (ix + iy * 2) & 3;
+      if (band === 0) return 13;
+      if (band === 1) return 5;
+      if (band === 2) return -8;
+      return -2;
+    }
+  }
+}
+
+/** Paint a single pixel with phase-locked stitch sheen & recessed Aida grain. */
+export function setStitchPixel(
+  buf: PixelBuffer,
+  x: number,
+  y: number,
+  baseColor: Rgba,
+  mode: StitchMode = 'cross',
+  dyeShift = 0,
+): void {
+  if (baseColor[3] === 0) {
+    setPx(buf, x, y, baseColor);
+    return;
+  }
+  const delta = getStitchDelta(x, y, mode) + dyeShift;
+  setPx(buf, x, y, shiftRgba(baseColor, delta));
+}
+
+export function fillStitchedRect(
+  buf: PixelBuffer,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  baseColor: Rgba,
+  mode: StitchMode = 'cross',
+): void {
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      setStitchPixel(buf, x + dx, y + dy, baseColor, mode);
+    }
+  }
+}
+
+export function fillStitchedEllipse(
+  buf: PixelBuffer,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  baseColor: Rgba,
+  mode: StitchMode = 'cross',
+): void {
+  if (rx <= 0 || ry <= 0) return;
+  for (let dy = -Math.ceil(ry); dy <= Math.ceil(ry); dy++) {
+    for (let dx = -Math.ceil(rx); dx <= Math.ceil(rx); dx++) {
+      const nx = dx / rx;
+      const ny = dy / ry;
+      if (nx * nx + ny * ny <= 1.0) {
+        setStitchPixel(buf, cx + dx, cy + dy, baseColor, mode);
+      }
+    }
+  }
+}
+
+/**
+ * Draw an open 4x4 cross-stitch X at `(x, y)` leaving the 8 outer woven substrate
+ * pixels visible underneath — authentic counted cross-stitch over linen or meadow.
+ */
+export function drawCellCrossStitch(
+  buf: PixelBuffer,
+  x: number,
+  y: number,
+  topThread: Rgba,
+  underThread: Rgba = shiftRgba(topThread, -26),
+): void {
+  const hi = shiftRgba(topThread, 14);
+  // Top arm (\) over bottom arm (/)
+  setPx(buf, x + 3, y, underThread);
+  setPx(buf, x + 2, y + 1, underThread);
+  setPx(buf, x + 1, y + 2, underThread);
+  setPx(buf, x, y + 3, underThread);
+
+  setPx(buf, x, y, topThread);
+  setPx(buf, x + 1, y + 1, hi);
+  setPx(buf, x + 2, y + 2, hi);
+  setPx(buf, x + 3, y + 3, topThread);
+}
+
+/** Hand-sewn backstitch contour line with subtle needle-hole tuck along every Nth step. */
+export function drawBackstitchLine(
+  buf: PixelBuffer,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  color: Rgba,
+  stitchLen = 3,
+): void {
+  let ax = Math.round(x0);
+  let ay = Math.round(y0);
+  const bx = Math.round(x1);
+  const by = Math.round(y1);
+  const dx = Math.abs(bx - ax);
+  const sx = ax < bx ? 1 : -1;
+  const dy = -Math.abs(by - ay);
+  const sy = ay < by ? 1 : -1;
+  let err = dx + dy;
+  let step = 0;
+  const tuck = shiftRgba(color, -18);
+  const crown = shiftRgba(color, 10);
+  for (;;) {
+    const m = stitchLen > 1 ? step % stitchLen : 1;
+    setPx(buf, ax, ay, m === 0 ? tuck : m === 1 ? crown : color);
+    if (ax === bx && ay === by) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      ax += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      ay += sy;
+    }
+    step += 1;
+  }
+}

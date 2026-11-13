@@ -14,11 +14,13 @@ interface MiniCpmModule {
 
 interface MiniCpmSession {
   generate(messages: any[], opts?: any): AsyncIterable<any> & { result: Promise<any> };
+  dispose?(): Promise<void> | void;
 }
 
 interface MiniCpmModelInstance {
   create_session(): MiniCpmSession;
   deviceInfo?(): { vendor?: string; architecture?: string; description?: string };
+  memoryStats?(): { liveBytes: number; peakBytes: number } | null;
   dispose?(): Promise<void>;
 }
 
@@ -56,6 +58,18 @@ class MiniCpmEngine {
 
   isReady(): boolean {
     return this.model !== null && this.progress.status === 'ready';
+  }
+
+  getLoadedModelId(): string {
+    return this.loadedModelId;
+  }
+
+  getMemoryStats(): { liveBytes: number; peakBytes: number } | null {
+    try {
+      return this.model?.memoryStats?.() ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async load(modelId = 'openbmb/MiniCPM5-2B-GGUF'): Promise<void> {
@@ -156,24 +170,28 @@ class MiniCpmEngine {
     if (!this.model) throw new Error('MiniCPM5-2B is not loaded.');
     return this.enqueue(async () => {
       const session = this.model!.create_session();
-      const startedAt = performance.now();
-      let fullText = '';
-      let chunks = 0;
+      try {
+        const startedAt = performance.now();
+        let fullText = '';
+        let chunks = 0;
 
-      const gen = session.generate(messages, {
-        max_new_tokens: opts?.maxNewTokens ?? 140,
-      });
-      for await (const ev of gen) {
-        if (ev.type === 'text' && ev.text) {
-          chunks += 1;
-          fullText += ev.text;
-          opts?.onChunk?.(ev.text);
+        const gen = session.generate(messages, {
+          max_new_tokens: opts?.maxNewTokens ?? 140,
+        });
+        for await (const ev of gen) {
+          if (ev.type === 'text' && ev.text) {
+            chunks += 1;
+            fullText += ev.text;
+            opts?.onChunk?.(ev.text);
+          }
         }
+        await gen.result;
+        const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
+        const tokensPerSec = Number(((Math.max(1, chunks) / durationMs) * 1000).toFixed(1));
+        return { text: fullText.trim(), durationMs, tokensPerSec };
+      } finally {
+        await Promise.resolve(session.dispose?.()).catch(() => {});
       }
-      await gen.result;
-      const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
-      const tokensPerSec = Number(((Math.max(1, chunks) / durationMs) * 1000).toFixed(1));
-      return { text: fullText.trim(), durationMs, tokensPerSec };
     });
   }
 }

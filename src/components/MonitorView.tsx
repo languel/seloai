@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
+  CheckCircle2,
   Cpu,
   Download,
+  Gauge,
+  HardDrive,
   Image as ImageIcon,
   Mic,
   MicOff,
@@ -11,6 +15,7 @@ import {
   Server,
   Square,
   Terminal,
+  Trash2,
   Volume2,
 } from 'lucide-react';
 import { bonsaiEngine } from '../ai/bonsaiEngine';
@@ -23,6 +28,12 @@ import {
 } from '../ai/localApiClient';
 import { minicpmEngine } from '../ai/minicpmEngine';
 import { omniEngine } from '../ai/omniEngine';
+import { segmentationClient } from '../ai/segmentationClient';
+import {
+  perfMemoryTracker,
+  type MemoryHealthStatus,
+  type PerfMemorySnapshot,
+} from '../engine/perfMemoryTracker';
 import {
   checkModelDownloaded,
   getLastLoadedModel,
@@ -62,6 +73,14 @@ function formatBytes(bytes?: number): string {
   return `${Math.round(bytes / 1e6)} MB`;
 }
 
+function formatMemBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return '—';
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
 export const MonitorView: React.FC<MonitorViewProps> = ({
   sim,
   villagers,
@@ -75,6 +94,9 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   const [events, setEvents] = useState<TelemetryEvent[]>(brainRouter.telemetryLog);
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [simTick, setSimTick] = useState(0);
+  const [perfSnap, setPerfSnap] = useState<PerfMemorySnapshot>(() =>
+    perfMemoryTracker.getLatestSnapshot(),
+  );
 
   // Quick LFM3-1.7B prompt sandbox
   const [testPrompt, setTestPrompt] = useState('Describe the morning bustle of Selo village in 2 sentences.');
@@ -98,6 +120,10 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   const [imageTestPrompt, setImageTestPrompt] = useState('A glowing stone lantern beside a village mill at dusk, pixel art');
   const [imageTestStatus, setImageTestStatus] = useState<string>('');
   const [imageTestPreview, setImageTestPreview] = useState<string>('');
+
+  useEffect(() => {
+    return perfMemoryTracker.subscribe(setPerfSnap);
+  }, []);
 
   useEffect(() => {
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
@@ -154,7 +180,11 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
   ]);
 
   const handleLoadText = async () => {
-    await brainRouter.loadConfiguredBrain(normalizeSpecFromSettings(settings)).catch(() => {});
+    await brainRouter
+      .loadConfiguredBrain(normalizeSpecFromSettings(settings), {
+        preserveOmni: settings.enableOmniTts && settings.brainEngine !== 'lfm3-omni',
+      })
+      .catch(() => {});
   };
 
   const handleLoadOmni = async () => {
@@ -309,30 +339,31 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
         {/* Top Metrics Bar */}
         <section aria-label="Live Telemetry Summary" className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           <div className="rushnyk-card rounded-sm p-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted">Sim FPS / Ticks</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted">FPS / Sim Ticks</div>
             <div className="mt-1 font-mono text-lg font-bold">
-              {sim.fps} <span className="text-xs font-normal text-muted">/ {sim.tickCount}</span>
+              {perfSnap.fps || sim.fps}{' '}
+              <span className="text-xs font-normal text-muted">/ {sim.tickCount}</span>
             </div>
           </div>
           <div className="rushnyk-card rounded-sm p-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted">Active Brain Speed</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted">JS Heap Used</div>
             <div className="mt-1 font-mono text-lg font-bold text-indigoFolk">
-              {brainRouter.lastMetrics.avgTokensPerSec || '—'}{' '}
-              <span className="text-xs font-normal text-muted">tok/s</span>
+              {perfSnap.jsHeapSupported ? formatMemBytes(perfSnap.jsHeapUsedBytes) : 'N/A'}
             </div>
           </div>
           <div className="rushnyk-card rounded-sm p-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted">Omni Latency</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted">WebGPU Live VRAM</div>
             <div className="mt-1 font-mono text-lg font-bold text-crimson">
-              {brainRouter.lastMetrics.lastOmniLatencyMs
-                ? `${brainRouter.lastMetrics.lastOmniLatencyMs} ms`
-                : '—'}
+              {perfSnap.gpuLiveBytes > 0 ? formatMemBytes(perfSnap.gpuLiveBytes) : '0 MB'}
             </div>
           </div>
           <div className="rushnyk-card rounded-sm p-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted">Active Chats</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted">Brain Speed / Chats</div>
             <div className="mt-1 font-mono text-lg font-bold">
-              {sim.conversations.filter((c) => c.active).length}
+              {brainRouter.lastMetrics.avgTokensPerSec || '—'}{' '}
+              <span className="text-xs font-normal text-muted">
+                t/s · {perfSnap.simStats.activeConversationCount} act
+              </span>
             </div>
           </div>
           <div className="rushnyk-card rounded-sm p-3">
@@ -1547,8 +1578,357 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
             </ul>
           </div>
         </section>
+
+        {/* Performance, Memory & Leak Tracker */}
+        <PerformanceMemoryPanel
+          snapshot={perfSnap}
+          aiTotalCalls={brainRouter.lastMetrics.totalCalls}
+          aiFailedCalls={brainRouter.lastMetrics.failedCalls}
+        />
       </div>
     </div>
+  );
+};
+
+const PerformanceMemoryPanel: React.FC<{
+  snapshot: PerfMemorySnapshot;
+  aiTotalCalls: number;
+  aiFailedCalls: number;
+}> = ({ snapshot, aiTotalCalls, aiFailedCalls }) => {
+  const [busyAction, setBusyAction] = useState(false);
+
+  const healthMeta: Record<
+    MemoryHealthStatus,
+    { label: string; badgeClass: string; Icon: React.ComponentType<{ className?: string }> }
+  > = {
+    healthy: {
+      label: 'Healthy',
+      badgeClass: 'border-sage bg-sage/15 text-sage',
+      Icon: CheckCircle2,
+    },
+    watch: {
+      label: 'Watch',
+      badgeClass: 'border-ochre bg-ochre/15 text-ochre',
+      Icon: AlertTriangle,
+    },
+    pressure: {
+      label: 'Memory Pressure',
+      badgeClass: 'border-crimson/70 bg-crimson/15 text-crimson',
+      Icon: AlertTriangle,
+    },
+    'leak-risk': {
+      label: 'Potential Leak',
+      badgeClass: 'border-crimson bg-crimson/20 text-crimson',
+      Icon: AlertTriangle,
+    },
+  };
+
+  const hm = healthMeta[snapshot.health.status];
+  const HealthIcon = hm.Icon;
+
+  const handleTrimCaches = async () => {
+    setBusyAction(true);
+    try {
+      await perfMemoryTracker.runCleanup({ unloadModels: false });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleUnloadAll = async () => {
+    setBusyAction(true);
+    try {
+      await perfMemoryTracker.runCleanup({ unloadModels: true });
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleUnloadEngine = async (id: string) => {
+    if (id === 'lfm3-omni') await omniEngine.unload();
+    else if (id === 'minicpm5-gguf') await minicpmEngine.unload();
+    else if (id === 'bonsai2-gguf') await bonsaiEngine.unload();
+    else if (id === 'transformers-onnx') brainRouter.terminateTextWorker();
+    else if (id === 'vision-seg') segmentationClient.terminateWorker();
+    perfMemoryTracker.captureSnapshot(true);
+  };
+
+  const handleExportReport = () => {
+    const json = perfMemoryTracker.exportDiagnosticsJson();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `seloai-perf-memory-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Build SVG sparkline points over recent samples
+  const heapSeries = snapshot.history.filter((h) => typeof h.jsHeapUsedBytes === 'number');
+  const buildPolyline = (values: number[], width: number, height: number): string => {
+    if (values.length < 2) return '';
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = Math.max(1e-6, max - min);
+    return values
+      .map((v, i) => {
+        const x = (i / Math.max(1, values.length - 1)) * width;
+        const y = height - ((v - min) / span) * (height - 4) - 2;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+  };
+  const heapPolyline = buildPolyline(
+    heapSeries.map((h) => (h.jsHeapUsedBytes ?? 0) / (1024 * 1024)),
+    220,
+    42,
+  );
+  const framePolyline = buildPolyline(
+    snapshot.history.map((h) => h.frameDtAvgMs),
+    220,
+    42,
+  );
+
+  const heapLimitPct =
+    snapshot.jsHeapUsedBytes && snapshot.jsHeapLimitBytes
+      ? Math.round((snapshot.jsHeapUsedBytes / snapshot.jsHeapLimitBytes) * 100)
+      : null;
+
+  return (
+    <section
+      aria-label="Performance and Memory Tracker"
+      className="rushnyk-card rounded-sm p-3 space-y-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Gauge className="h-4 w-4 text-indigoFolk" />
+          <h2 className="text-sm font-bold">Performance &amp; Memory Tracker</h2>
+          <span
+            className={`inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[10px] font-semibold uppercase ${hm.badgeClass}`}
+          >
+            <HealthIcon className="h-3 w-3" />
+            <span>{hm.label}</span>
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <button
+            type="button"
+            disabled={busyAction}
+            onClick={() => void handleTrimCaches()}
+            className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2 py-1 font-medium hover:bg-card disabled:opacity-50"
+          >
+            <Trash2 className="h-3 w-3" />
+            <span>Trim Caches &amp; History</span>
+          </button>
+          <button
+            type="button"
+            disabled={busyAction}
+            onClick={() => void handleUnloadAll()}
+            className="inline-flex items-center gap-1 rounded border border-crimson/50 bg-crimson/10 px-2 py-1 font-medium text-crimson hover:bg-crimson/15 disabled:opacity-50"
+          >
+            <Square className="h-3 w-3" />
+            <span>Unload All Models</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => perfMemoryTracker.resetPeaks()}
+            className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2 py-1 font-medium hover:bg-card"
+          >
+            <RefreshCw className="h-3 w-3" />
+            <span>Reset Baseline</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleExportReport}
+            className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2 py-1 font-medium hover:bg-card"
+          >
+            <Download className="h-3 w-3" />
+            <span>Export JSON</span>
+          </button>
+        </div>
+      </div>
+
+      {snapshot.health.reasons.length > 0 && (
+        <div
+          role="status"
+          className="rounded border border-ochre/60 bg-ochre/10 px-2.5 py-1.5 text-[11px] space-y-0.5"
+        >
+          {snapshot.health.reasons.map((r, idx) => (
+            <div key={idx} className="flex items-center gap-1.5">
+              <AlertTriangle className="h-3 w-3 shrink-0 text-ochre" />
+              <span>{r}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+        {/* Card 1: Frame & Sim Latency */}
+        <div className="rounded border border-borderFolk bg-surface/60 p-2.5 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-muted uppercase tracking-wider">
+            <span>Frame &amp; Loop Timing</span>
+            <span className="font-mono text-ink">{snapshot.uptimeSec}s uptime</span>
+          </div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px]">
+            <span className="text-muted">Frame avg / p95</span>
+            <span className="text-right">
+              {snapshot.frameDtAvgMs.toFixed(1)} / {snapshot.frameDtP95Ms.toFixed(1)} ms
+            </span>
+            <span className="text-muted">Frame max</span>
+            <span className="text-right">{snapshot.frameDtMaxMs.toFixed(1)} ms</span>
+            <span className="text-muted">Sim step avg / max</span>
+            <span className="text-right">
+              {snapshot.simStepAvgMs.toFixed(2)} / {snapshot.simStepMaxMs.toFixed(2)} ms
+            </span>
+            <span className="text-muted">Canvas render avg/max</span>
+            <span className="text-right">
+              {snapshot.renderAvgMs.toFixed(2)} / {snapshot.renderMaxMs.toFixed(2)} ms
+            </span>
+            <span className="text-muted">Long frames (&gt;50ms)</span>
+            <span className="text-right">
+              {snapshot.longFramesWindow} win / {snapshot.totalLongFrames} total
+            </span>
+          </div>
+          {framePolyline && (
+            <div className="pt-1">
+              <div className="text-[10px] text-muted mb-0.5">Frame Time History (ms)</div>
+              <svg viewBox="0 0 220 42" className="h-8 w-full rounded bg-card/70 border border-borderFolk/50">
+                <polyline fill="none" stroke="currentColor" strokeWidth="1.5" points={framePolyline} className="text-indigoFolk" />
+              </svg>
+            </div>
+          )}
+        </div>
+
+        {/* Card 2: Heap & GPU VRAM */}
+        <div className="rounded border border-borderFolk bg-surface/60 p-2.5 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-muted uppercase tracking-wider">
+            <span>Heap, VRAM &amp; Storage</span>
+            <HardDrive className="h-3.5 w-3.5" />
+          </div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px]">
+            <span className="text-muted">JS Heap / Total</span>
+            <span className="text-right">
+              {snapshot.jsHeapSupported
+                ? `${formatMemBytes(snapshot.jsHeapUsedBytes)} / ${formatMemBytes(snapshot.jsHeapTotalBytes)}`
+                : 'N/A (non-Chromium)'}
+            </span>
+            <span className="text-muted">Heap Limit / Peak</span>
+            <span className="text-right">
+              {snapshot.jsHeapSupported
+                ? `${formatMemBytes(snapshot.jsHeapLimitBytes)}${heapLimitPct !== null ? ` (${heapLimitPct}%)` : ''} · pk ${formatMemBytes(snapshot.jsHeapPeakBytes)}`
+                : '—'}
+            </span>
+            <span className="text-muted">Heap Drift Slope</span>
+            <span
+              className={`text-right ${
+                snapshot.jsHeapSlopeMbPerMin >= 8 ? 'text-crimson font-semibold' : ''
+              }`}
+            >
+              {snapshot.jsHeapSupported
+                ? `${snapshot.jsHeapSlopeMbPerMin >= 0 ? '+' : ''}${snapshot.jsHeapSlopeMbPerMin.toFixed(2)} MB/min`
+                : '—'}
+            </span>
+            <span className="text-muted">GPU Live / Peak</span>
+            <span className="text-right">
+              {formatMemBytes(snapshot.gpuLiveBytes)} / {formatMemBytes(snapshot.gpuPeakBytes)}
+            </span>
+            <span className="text-muted">Browser Storage</span>
+            <span className="text-right">
+              {formatMemBytes(snapshot.storageUsageBytes)} / {formatMemBytes(snapshot.storageQuotaBytes)}
+            </span>
+          </div>
+          {heapPolyline && (
+            <div className="pt-1">
+              <div className="text-[10px] text-muted mb-0.5">JS Heap Trajectory (MB)</div>
+              <svg viewBox="0 0 220 42" className="h-8 w-full rounded bg-card/70 border border-borderFolk/50">
+                <polyline fill="none" stroke="currentColor" strokeWidth="1.5" points={heapPolyline} className="text-crimson" />
+              </svg>
+            </div>
+          )}
+        </div>
+
+        {/* Card 3: Simulation & Cache Counters */}
+        <div className="rounded border border-borderFolk bg-surface/60 p-2.5 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-muted uppercase tracking-wider">
+            <span>State &amp; Cache Footprint</span>
+            <span className="font-mono text-ink">
+              {aiTotalCalls} calls ({aiFailedCalls} err)
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px]">
+            <span className="text-muted">Chats (act / tot)</span>
+            <span className="text-right">
+              {snapshot.simStats.activeConversationCount} / {snapshot.simStats.conversationCount}
+            </span>
+            <span className="text-muted">Messages / Memories</span>
+            <span className="text-right">
+              {snapshot.simStats.totalMessages} msg / {snapshot.simStats.totalMemories} mem
+            </span>
+            <span className="text-muted">Timeline Keyframes</span>
+            <span className="text-right">
+              {snapshot.simStats.timelineFrames} ({snapshot.simStats.cachedConvSnapshots} conv cache)
+            </span>
+            <span className="text-muted">Image Cache (data:)</span>
+            <span className="text-right">
+              {snapshot.caches.imageCacheCount} ({snapshot.caches.imageCacheDataUrlCount} data)
+            </span>
+            <span className="text-muted">Sprite Caches (NPC/You)</span>
+            <span className="text-right">
+              {snapshot.caches.spriteSheetCacheCount} / {snapshot.caches.playerSpriteCacheCount}
+            </span>
+            <span className="text-muted">Audio / Trace / Pending</span>
+            <span className="text-right">
+              {snapshot.caches.audioActiveSources} src ({snapshot.caches.audioContextState}) ·{' '}
+              {snapshot.caches.telemetryEvents} log · {snapshot.caches.pendingWorkerRequests} req
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Per-Engine Residency & WebGPU Memory Breakdown */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[11px]">
+          <thead className="border-b border-borderFolk text-[10px] uppercase text-muted">
+            <tr>
+              <th className="py-1 pr-2">Engine</th>
+              <th className="py-1 pr-2">Status</th>
+              <th className="py-1 pr-2">Loaded Model</th>
+              <th className="py-1 pr-2">Live VRAM</th>
+              <th className="py-1 pr-2">Peak VRAM</th>
+              <th className="py-1 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-borderFolk/50 font-mono">
+            {snapshot.engines.map((eng) => (
+              <tr key={eng.id}>
+                <td className="py-1 pr-2 font-sans font-semibold">{eng.label}</td>
+                <td className="py-1 pr-2">{eng.status}</td>
+                <td className="py-1 pr-2 max-w-[14rem] truncate" title={eng.modelId || '—'}>
+                  {eng.modelId ? eng.modelId.split('/').pop() : '—'}
+                </td>
+                <td className="py-1 pr-2">{formatMemBytes(eng.liveBytes)}</td>
+                <td className="py-1 pr-2">{formatMemBytes(eng.peakBytes)}</td>
+                <td className="py-1 text-right font-sans">
+                  {eng.status === 'ready' || eng.status === 'loading' ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleUnloadEngine(eng.id)}
+                      className="rounded border border-borderFolk bg-surface px-1.5 py-0.5 text-[10px] hover:bg-card hover:text-crimson"
+                    >
+                      Unload
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-muted">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 };
 

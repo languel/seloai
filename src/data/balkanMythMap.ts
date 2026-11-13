@@ -1,15 +1,23 @@
 import { BALKAN_CHARACTER_SPRITE_IDS, getBalkanCustomSpriteSpec } from '../engine/balkanSprites.ts';
 import {
+  BALKAN_BROOK_VARIANTS,
+  BALKAN_DROUGHT_VARIANTS,
+  BALKAN_PLAZA_VARIANTS,
+  BALKAN_ROAD_H_VARIANTS,
+  BALKAN_ROAD_V_VARIANTS,
   BALKAN_TILES,
   BALKAN_TILE_DIM,
   BALKAN_TILESET_HEIGHT,
   BALKAN_TILESET_WIDTH,
+  BALKAN_WANG_MEADOW_TILES,
   tileIdx,
 } from '../engine/balkanTileset.ts';
 import {
   applyWangCornerVertices,
   applyWangEdgeMask,
   createVertexMaskFromTileMask,
+  pickNonRepeatingVariant,
+  solveEdgeColoredWangGrid,
 } from '../engine/wangTiling.ts';
 import type {
   PointOfInterest,
@@ -125,21 +133,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
   const obj1 = createEmptyGrid(safeW, safeH, -1);
   const collisionGrid = createCollisionGrid(safeW, safeH, false);
 
-  // 1. Woven Balkan meadow floor (wildflowers in west, clover near spring, scorched clay in center)
-  for (let x = 0; x < safeW; x++) {
-    for (let y = 0; y < safeH; y++) {
-      const n = (x * 13 + y * 29 + x * y) % 19;
-      if (x < 12 && y < 14) {
-        bg0[x][y] = n < 6 ? BALKAN_TILES.GRASS_WILDFLOWER : BALKAN_TILES.GRASS_CLOVER;
-      } else if (n === 0 || n === 5) {
-        bg0[x][y] = BALKAN_TILES.GRASS_WILDFLOWER;
-      } else if (n === 2 || n === 11) {
-        bg0[x][y] = BALKAN_TILES.GRASS_CLOVER;
-      }
-    }
-  }
-
-  // 2. Central Drought Hollow around #LamiaWell painted via 4-Corner Wang autotiling
+  // 1. Pre-compute region masks so Edge-Colored Wang Meadow pinning meets roads, brook, drought & plaza cleanly
   const droughtMask = Array.from({ length: safeW }, () => Array(safeH).fill(false));
   for (let x = 17; x <= 30; x++) {
     for (let y = 9; y <= 20; y++) {
@@ -151,18 +145,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
     }
   }
   const droughtVertices = createVertexMaskFromTileMask(droughtMask, safeW, safeH);
-  applyWangCornerVertices(bg0, droughtVertices, BALKAN_TILES.WANG_DROUGHT_BASE, safeW, safeH);
-  for (let x = 20; x <= 27; x++) {
-    for (let y = 12; y <= 17; y++) {
-      const dx = (x - 23.5) / 3.3;
-      const dy = (y - 14.5) / 2.4;
-      if (dx * dx + dy * dy <= 0.78) {
-        setGridCell(bg0, x, y, BALKAN_TILES.SCORCHED_COBBLE);
-      }
-    }
-  }
 
-  // 3. Winding Samodiva Brook painted via 4-Corner 3/4 Oblique Wang autotiling
   const brookMask = Array.from({ length: safeW }, () => Array(safeH).fill(false));
   for (let y = 0; y < safeH; y++) {
     // Anchor gently at bridge latitudes (y = 10 & y = 23) so oak bridges span x = 13..14 squarely
@@ -177,26 +160,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
     }
   }
   const brookVertices = createVertexMaskFromTileMask(brookMask, safeW, safeH);
-  applyWangCornerVertices(bg0, brookVertices, BALKAN_TILES.WANG_BROOK_BASE, safeW, safeH);
-  for (let x = 11; x <= 17; x++) {
-    for (let y = 0; y < safeH; y++) {
-      if (
-        bg0[x]?.[y] >= BALKAN_TILES.WANG_BROOK_BASE &&
-        bg0[x]?.[y] < BALKAN_TILES.WANG_BROOK_BASE + 16
-      ) {
-        setBlockedCell(collisionGrid, x, y, true);
-      }
-    }
-  }
 
-  // Stone plaza apron under central Khoro square (cleanly framing 4x4 Elbetitsa)
-  for (let x = 20; x <= 25; x++) {
-    for (let y = 20; y <= 25; y++) {
-      setGridCell(bg0, x, y, BALKAN_TILES.PLAZA_LINEN_STONE);
-    }
-  }
-
-  // 4. Connected Embroidered Khoro Roads via 4-Edge Wang autotiling + Oak Plank Bridges
   const roadMask = Array.from({ length: safeW }, () => Array(safeH).fill(false));
   const layH = (y: number, xStart: number, xEnd: number) => {
     for (let x = Math.min(xStart, xEnd); x <= Math.max(xStart, xEnd); x++) {
@@ -226,8 +190,82 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
   layH(10, 10, 35);
   // East Connector North-South Lane (x = 34) connecting Weaver Cardak (y = 10) down to Kukeri Hearth (y = 23)
   layV(34, 10, 23);
-  // Apply 4-edge Wang auto-tiling for seamless turns, tees, dead ends & crossings
+
+  const hasVertexCorner = (verts: boolean[][], x: number, y: number): boolean =>
+    Boolean(verts[x]?.[y] || verts[x + 1]?.[y] || verts[x + 1]?.[y + 1] || verts[x]?.[y + 1]);
+
+  const isNonMeadowCell = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= safeW || y >= safeH) return true;
+    if (roadMask[x][y]) return true;
+    if (x >= 20 && x <= 25 && y >= 20 && y <= 25) return true;
+    if (hasVertexCorner(droughtVertices, x, y) || hasVertexCorner(brookVertices, x, y)) return true;
+    return false;
+  };
+
+  // 2. Non-repeating Edge-Colored Wang Meadow (Set A + Set B, exact N/E/S/W seam matching)
+  const wangMeadowGrid = solveEdgeColoredWangGrid(safeW, safeH, BALKAN_WANG_MEADOW_TILES, {
+    seed: 2026,
+    isCellActive: (x, y) => !isNonMeadowCell(x, y),
+    pinEdge: (x, y, dir) => {
+      const nx = dir === 'east' ? x + 1 : dir === 'west' ? x - 1 : x;
+      const ny = dir === 'south' ? y + 1 : dir === 'north' ? y - 1 : y;
+      return isNonMeadowCell(nx, ny) ? 0 : undefined;
+    },
+  });
+  for (let x = 0; x < safeW; x++) {
+    for (let y = 0; y < safeH; y++) {
+      if (wangMeadowGrid[x][y] >= 0) {
+        bg0[x][y] = wangMeadowGrid[x][y];
+      }
+    }
+  }
+
+  // 3. Central Drought Hollow around #LamiaWell via 4-Corner Wang + non-repeating scorched center variants
+  applyWangCornerVertices(bg0, droughtVertices, BALKAN_TILES.WANG_DROUGHT_BASE, safeW, safeH);
+  for (let x = 17; x <= 30; x++) {
+    for (let y = 9; y <= 20; y++) {
+      if (bg0[x]?.[y] === BALKAN_TILES.WANG_DROUGHT_BASE + 15) {
+        setGridCell(bg0, x, y, pickNonRepeatingVariant(bg0, BALKAN_DROUGHT_VARIANTS, x, y, 71));
+      }
+    }
+  }
+
+  // 4. Winding Samodiva Brook via 4-Corner Wang + non-repeating Bargello water variants
+  applyWangCornerVertices(bg0, brookVertices, BALKAN_TILES.WANG_BROOK_BASE, safeW, safeH);
+  for (let x = 11; x <= 17; x++) {
+    for (let y = 0; y < safeH; y++) {
+      const cell = bg0[x]?.[y];
+      if (cell >= BALKAN_TILES.WANG_BROOK_BASE && cell < BALKAN_TILES.WANG_BROOK_BASE + 16) {
+        setBlockedCell(collisionGrid, x, y, true);
+        if (cell === BALKAN_TILES.WANG_BROOK_BASE + 15) {
+          setGridCell(bg0, x, y, pickNonRepeatingVariant(bg0, BALKAN_BROOK_VARIANTS, x, y, 89));
+        }
+      }
+    }
+  }
+
+  // 5. Quilted Plaza apron under central Khoro square (framing 4x4 Elbetitsa without repeating corners)
+  for (let x = 20; x <= 25; x++) {
+    for (let y = 20; y <= 25; y++) {
+      setGridCell(bg0, x, y, pickNonRepeatingVariant(bg0, BALKAN_PLAZA_VARIANTS, x, y, 103));
+    }
+  }
+
+  // 6. Connected Embroidered Khoro Kilim Roads via 4-Edge Wang + non-repeating H/V runner segments + Bridges
   applyWangEdgeMask(bg0, roadMask, BALKAN_TILES.WANG_ROAD_BASE, safeW, safeH);
+  for (let x = 0; x < safeW; x++) {
+    for (let y = 0; y < safeH; y++) {
+      if (roadMask[x][y]) {
+        setBlockedCell(collisionGrid, x, y, false);
+      }
+      const cell = bg0[x]?.[y];
+      if (cell === BALKAN_TILES.WANG_ROAD_BASE + 10) {
+        setGridCell(bg0, x, y, pickNonRepeatingVariant(bg0, BALKAN_ROAD_H_VARIANTS, x, y, 131));
+      } else if (cell === BALKAN_TILES.WANG_ROAD_BASE + 5) {
+        setGridCell(bg0, x, y, pickNonRepeatingVariant(bg0, BALKAN_ROAD_V_VARIANTS, x, y, 137));
+      }
+    }
+  }
 
   // Two horizontal Oak Plank Bridges over Samodiva Brook (y = 23 & y = 10) kept cleanly above Wang stream tiles
   for (const bridgeY of [10, 23]) {

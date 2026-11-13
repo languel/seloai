@@ -23,12 +23,78 @@ const DEFAULT_CANVAS_THEME: CanvasThemeConfig = resolveAestheticTokens(
   'classic',
 ).canvasTheme;
 
+const MAX_IMAGE_CACHE_SIZE = 72;
 const imageCache = new Map<string, HTMLImageElement>();
+
+function evictOldestDynamicImageIfFull() {
+  if (imageCache.size <= MAX_IMAGE_CACHE_SIZE) return;
+  // Prefer evicting generated `data:` URLs first before static `/assets/...` sprite sheets
+  let candidateKey: string | null = null;
+  for (const key of imageCache.keys()) {
+    if (key.startsWith('data:')) {
+      candidateKey = key;
+      break;
+    }
+  }
+  if (!candidateKey) {
+    candidateKey = imageCache.keys().next().value ?? null;
+  }
+  if (!candidateKey) return;
+  const old = imageCache.get(candidateKey);
+  imageCache.delete(candidateKey);
+  if (old) {
+    old.onload = null;
+    old.onerror = null;
+    if (candidateKey.startsWith('data:')) {
+      old.src = '';
+    }
+  }
+}
+
+export function getImageCacheStats(): {
+  totalEntries: number;
+  dataUrlEntries: number;
+  loadedEntries: number;
+} {
+  let dataUrlEntries = 0;
+  let loadedEntries = 0;
+  for (const [key, img] of imageCache.entries()) {
+    if (key.startsWith('data:')) dataUrlEntries += 1;
+    if (img.complete && img.naturalWidth > 0) loadedEntries += 1;
+  }
+  return {
+    totalEntries: imageCache.size,
+    dataUrlEntries,
+    loadedEntries,
+  };
+}
+
+export function pruneImageCache(keepUrls?: Set<string>): number {
+  let removed = 0;
+  for (const [key, img] of [...imageCache.entries()]) {
+    if (keepUrls?.has(key)) continue;
+    // Keep lightweight built-in asset sheets unless cache exceeds cap; always prune stale data URLs
+    if (!key.startsWith('data:') && imageCache.size - removed <= 32) continue;
+    imageCache.delete(key);
+    img.onload = null;
+    img.onerror = null;
+    if (key.startsWith('data:')) {
+      img.src = '';
+    }
+    removed += 1;
+  }
+  return removed;
+}
 
 export function getCachedImage(url: string): HTMLImageElement | null {
   if (!url) return null;
   const existing = imageCache.get(url);
-  if (existing) return existing.complete && existing.naturalWidth > 0 ? imgOrNull(existing) : null;
+  if (existing) {
+    // Refresh LRU position
+    imageCache.delete(url);
+    imageCache.set(url, existing);
+    return existing.complete && existing.naturalWidth > 0 ? imgOrNull(existing) : null;
+  }
 
   const img = new Image();
   const resolvedUrl = resolvePublicUrl(url);
@@ -37,6 +103,7 @@ export function getCachedImage(url: string): HTMLImageElement | null {
   }
   img.src = resolvedUrl;
   imageCache.set(url, img);
+  evictOldestDynamicImageIfFull();
   return imgOrNull(img);
 }
 
