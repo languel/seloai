@@ -1,6 +1,8 @@
+import { createSeededRng, hashString } from '../core/rng';
 import { findNearestWalkableTile } from './pathfinding';
 import {
   buildCustomSpriteFromAppearance,
+  ensureVillagerAppearanceSprite,
   CLOTHING_PALETTES,
   EYE_COLORS,
   FOOTWEAR_PALETTES,
@@ -176,17 +178,9 @@ export const DEFAULT_APPEARANCE: CharacterAppearance = {
   accessory: 'flower-crown',
 };
 
-export type AppearanceLocks = Partial<Record<keyof CharacterAppearance, boolean>>;
+export { createSeededRng };
 
-export function createSeededRng(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = Math.imul(state ^ (state >>> 15), 1 | state);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export type AppearanceLocks = Partial<Record<keyof CharacterAppearance, boolean>>;
 
 function pickRandom<T extends string>(list: readonly TraitOption<T>[], rng: () => number): T {
   return list[Math.floor(rng() * list.length)].id;
@@ -278,124 +272,19 @@ export function describeAppearance(a: CharacterAppearance): string {
   return parts.join(', ');
 }
 
-const PRESET_APPEARANCE_SEEDS: Record<string, CharacterAppearance> = {
-  f1: {
-    gender: 'female',
-    skinTone: 'warm-peach',
-    eyeColor: 'blue',
-    hairStyle: 'braids',
-    hairColor: 'chestnut',
-    facialHair: 'none',
-    clothingStyle: 'rushnyk-tunic',
-    clothingColor: 'cobalt',
-    trimColor: 'crimson',
-    bottomStyle: 'skirt',
-    footwearColor: 'dark-leather',
-    accessory: 'flower-crown',
-  },
-  f2: {
-    gender: 'male',
-    skinTone: 'chestnut',
-    eyeColor: 'brown',
-    hairStyle: 'short-crop',
-    hairColor: 'raven',
-    facialHair: 'stubble',
-    clothingStyle: 'scholar-robe',
-    clothingColor: 'teal',
-    trimColor: 'gold',
-    bottomStyle: 'trousers',
-    footwearColor: 'dark-leather',
-    accessory: 'glasses',
-  },
-  f3: {
-    gender: 'female',
-    skinTone: 'ivory',
-    eyeColor: 'green',
-    hairStyle: 'long-wavy',
-    hairColor: 'espresso',
-    facialHair: 'none',
-    clothingStyle: 'herbalist-dress',
-    clothingColor: 'forest',
-    trimColor: 'ivory',
-    bottomStyle: 'skirt',
-    footwearColor: 'russet-brown',
-    accessory: 'none',
-  },
-  f4: {
-    gender: 'male',
-    skinTone: 'tan',
-    eyeColor: 'hazel',
-    hairStyle: 'spiky',
-    hairColor: 'golden-blonde',
-    facialHair: 'full-beard',
-    clothingStyle: 'blacksmith-apron',
-    clothingColor: 'charcoal',
-    trimColor: 'copper',
-    bottomStyle: 'trousers',
-    footwearColor: 'dark-leather',
-    accessory: 'none',
-  },
-  f5: {
-    gender: 'female',
-    skinTone: 'warm-peach',
-    eyeColor: 'blue',
-    hairStyle: 'parted-bob',
-    hairColor: 'copper-rose',
-    facialHair: 'none',
-    clothingStyle: 'overalls',
-    clothingColor: 'cobalt',
-    trimColor: 'crimson',
-    bottomStyle: 'trousers',
-    footwearColor: 'russet-brown',
-    accessory: 'bandana',
-  },
-  f6: {
-    gender: 'female',
-    skinTone: 'olive',
-    eyeColor: 'amber',
-    hairStyle: 'ponytail',
-    hairColor: 'auburn',
-    facialHair: 'none',
-    clothingStyle: 'traveler-cloak',
-    clothingColor: 'plum',
-    trimColor: 'gold',
-    bottomStyle: 'breeches',
-    footwearColor: 'russet-brown',
-    accessory: 'feather-cap',
-  },
-  f7: {
-    gender: 'male',
-    skinTone: 'ivory',
-    eyeColor: 'charcoal',
-    hairStyle: 'scholar-crown',
-    hairColor: 'platinum-silver',
-    facialHair: 'full-beard',
-    clothingStyle: 'noble-coat',
-    clothingColor: 'ochre',
-    trimColor: 'crimson',
-    bottomStyle: 'trousers',
-    footwearColor: 'dark-leather',
-    accessory: 'glasses',
-  },
-  f8: {
-    gender: 'neutral',
-    skinTone: 'amber',
-    eyeColor: 'brown',
-    hairStyle: 'curly-afro',
-    hairColor: 'espresso',
-    facialHair: 'none',
-    clothingStyle: 'forester-vest',
-    clothingColor: 'rust',
-    trimColor: 'emerald',
-    bottomStyle: 'breeches',
-    footwearColor: 'straw-tan',
-    accessory: 'straw-hat',
-  },
-};
+/** Stable procedural look derived from an id, for characters that arrive without one. */
+export function appearanceFromId(id: string): CharacterAppearance {
+  return randomizeAppearance({ rng: createSeededRng(hashString(id)) });
+}
 
-export function inferAppearanceFromPreset(spritesheetId: string): CharacterAppearance {
-  const seed = PRESET_APPEARANCE_SEEDS[spritesheetId] ?? DEFAULT_APPEARANCE;
-  return { ...seed };
+/** Guarantees a villager has a drawable sprite, generating a procedural one when missing. */
+export function ensureVillagerSprite(villager: VillagerConfig): VillagerConfig {
+  if (villager.customSprite || villager.appearance) return ensureVillagerAppearanceSprite(villager);
+  return ensureVillagerAppearanceSprite({
+    ...villager,
+    spritesheetId: 'modular',
+    appearance: appearanceFromId(villager.id),
+  });
 }
 
 const FEMININE_NAMES = [

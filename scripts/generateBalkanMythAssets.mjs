@@ -109,12 +109,9 @@ for (const id of BALKAN_CHARACTER_SPRITE_IDS) {
   console.log(`Generated character spritesheet: ${outPath} (${sheet.width}x${sheet.height})`);
 }
 
-// 3. Render composed inspection preview to scratch dir (if desired / writable)
-const scratchDir = path.resolve(
-  process.env.HOME || '/tmp',
-  '.gemini/antigravity/brain/cd17c46e-9728-4dc7-b28b-772328a40261/scratch',
-);
-try {
+// 3. Optionally render a composed inspection preview: set SELOAI_PREVIEW_DIR to enable.
+const scratchDir = process.env.SELOAI_PREVIEW_DIR ? path.resolve(process.env.SELOAI_PREVIEW_DIR) : '';
+if (scratchDir) try {
   fs.mkdirSync(scratchDir, { recursive: true });
   const world = createBalkanMythWorld();
   const mapW = world.map.width * BALKAN_TILE_DIM;

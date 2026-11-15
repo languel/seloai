@@ -1,3 +1,5 @@
+import { DEFAULT_WORLD_PACK_ID, findWorldPack, inferWorldContext } from '../world/packs';
+import type { WorldContext } from '../world/worldContext';
 import {
   createBalkanMythMap,
   createBalkanMythVillagers,
@@ -8,7 +10,7 @@ import {
   DEFAULT_VILLAGERS,
 } from '../data/defaultData';
 import { EAVESDROP_WHOLE_MAP_RADIUS } from '../ai/audioPipeline';
-import { ensureVillagerAppearanceSprite } from '../engine/spriteGenerator';
+import { ensureVillagerSprite } from '../engine/characterGenerator';
 import type {
   Conversation,
   MemoryEntry,
@@ -33,6 +35,8 @@ export interface PersistedVillageState {
   conversations: Conversation[];
   characterHistories?: CharacterHistoriesMap;
   focalWorldlineId?: string;
+  /** Setting-specific knowledge from the world pack this world came from. */
+  world?: WorldContext;
   savedAt: number;
 }
 
@@ -45,6 +49,22 @@ export interface SavedWorldSlot {
   conversationCount: number;
   savedAt: number;
   state: PersistedVillageState;
+}
+
+/** Third-party tilesets that no longer ship; worlds built on them cannot be drawn. */
+const REMOVED_TILESET_URLS = ['/assets/gentle-obj.png', '/assets/rpg-tileset.png', '/assets/magecity.png'];
+
+function buildDefaultState(): PersistedVillageState {
+  const pack = findWorldPack(DEFAULT_WORLD_PACK_ID)!.build();
+  return {
+    map: pack.map,
+    villagers: pack.cast ?? structuredClone(DEFAULT_VILLAGERS),
+    modelSettings: { ...DEFAULT_MODEL_SETTINGS },
+    conversations: [],
+    world: pack.context,
+    focalWorldlineId: pack.story.focalCharacterId,
+    savedAt: Date.now(),
+  };
 }
 
 const SAVED_WORLDS_KEY = 'saved_worlds_v1';
@@ -93,7 +113,13 @@ async function idbSet<T>(key: string, value: T): Promise<void> {
 export async function loadPersistedState(): Promise<PersistedVillageState> {
   try {
     const stored = await idbGet<Partial<PersistedVillageState>>('village_v1');
-    if (stored && stored.map && Array.isArray(stored.villagers) && stored.villagers.length > 0) {
+    if (
+      stored &&
+      stored.map &&
+      !REMOVED_TILESET_URLS.some((url) => stored.map!.tileSetUrl?.endsWith(url)) &&
+      Array.isArray(stored.villagers) &&
+      stored.villagers.length > 0
+    ) {
       const rawSettings = (stored.modelSettings ?? {}) as Partial<ModelSettings> & {
         proximityAudioEnabled?: boolean;
       };
@@ -105,7 +131,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
           : DEFAULT_MODEL_SETTINGS.proximityRadiusTiles;
       return {
         map: stored.map,
-        villagers: stored.villagers.map(ensureVillagerAppearanceSprite),
+        villagers: stored.villagers.map(ensureVillagerSprite),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
           ...rawSettings,
@@ -127,6 +153,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
             ? stored.characterHistories
             : undefined,
         focalWorldlineId: typeof stored.focalWorldlineId === 'string' ? stored.focalWorldlineId : undefined,
+        world: isWorldContext(stored.world) ? stored.world : inferWorldContext(stored.map),
         savedAt: stored.savedAt ?? Date.now(),
       };
     }
@@ -134,13 +161,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
     // Fall back to defaults
   }
 
-  return {
-    map: createDefaultMap(),
-    villagers: structuredClone(DEFAULT_VILLAGERS),
-    modelSettings: { ...DEFAULT_MODEL_SETTINGS },
-    conversations: [],
-    savedAt: Date.now(),
-  };
+  return buildDefaultState();
 }
 
 export async function savePersistedState(state: PersistedVillageState): Promise<void> {
@@ -152,13 +173,7 @@ export async function savePersistedState(state: PersistedVillageState): Promise<
 }
 
 export async function resetPersistedState(): Promise<PersistedVillageState> {
-  const fresh: PersistedVillageState = {
-    map: createDefaultMap(),
-    villagers: structuredClone(DEFAULT_VILLAGERS),
-    modelSettings: { ...DEFAULT_MODEL_SETTINGS },
-    conversations: [],
-    savedAt: Date.now(),
-  };
+  const fresh = buildDefaultState();
   await savePersistedState(fresh);
   return fresh;
 }
@@ -269,6 +284,15 @@ export function createBlankWorldMap(name = 'New World', width = 36, height = 28)
   };
 }
 
+const SECRET_SETTING_KEYS = ['localApiKey', 'voiceApiKey', 'imageGenApiKey'] as const;
+
+/** Removes API keys so they never travel in an export or arrive via an import. */
+export function stripSecretSettings<T extends Partial<ModelSettings>>(settings: T): T {
+  const copy = { ...settings };
+  for (const key of SECRET_SETTING_KEYS) delete copy[key];
+  return copy;
+}
+
 export function exportProjectJson(state: PersistedVillageState): string {
   return JSON.stringify(
     {
@@ -276,18 +300,15 @@ export function exportProjectJson(state: PersistedVillageState): string {
       exportedAt: new Date().toISOString(),
       map: state.map,
       villagers: state.villagers,
-      modelSettings: state.modelSettings,
+      modelSettings: stripSecretSettings(state.modelSettings),
       conversations: state.conversations,
       characterHistories: state.characterHistories ?? {},
       focalWorldlineId: state.focalWorldlineId ?? 'scribe',
+      world: state.world,
     },
     null,
     2,
   );
-}
-
-export function exportVillageJson(state: PersistedVillageState): string {
-  return exportProjectJson(state);
 }
 
 export function exportLevelJson(map: VillageMap): string {
@@ -356,6 +377,19 @@ export interface ParsedImportBundle {
   conversations?: Conversation[];
   characterHistories?: CharacterHistoriesMap;
   focalWorldlineId?: string;
+  world?: WorldContext;
+}
+
+function isWorldContext(value: unknown): value is WorldContext {
+  const w = value as Partial<WorldContext> | null;
+  return Boolean(
+    w &&
+      typeof w === 'object' &&
+      typeof w.settingKind === 'string' &&
+      typeof w.playerName === 'string' &&
+      w.storyLines &&
+      Array.isArray(w.storyLines.openingBeats),
+  );
 }
 
 export function parseImportedVillageJson(raw: string): ParsedImportBundle {
@@ -369,7 +403,7 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
     if (data.length === 0) throw new Error('Imported villager array is empty.');
     return {
       format: 'seloai-characters-v1',
-      villagers: (data as VillagerConfig[]).map(ensureVillagerAppearanceSprite),
+      villagers: (data as VillagerConfig[]).map(ensureVillagerSprite),
     };
   }
 
@@ -389,10 +423,10 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
     result.map = data.map as VillageMap;
   }
   if (Array.isArray(data.villagers) && data.villagers.length > 0) {
-    result.villagers = (data.villagers as VillagerConfig[]).map(ensureVillagerAppearanceSprite);
+    result.villagers = (data.villagers as VillagerConfig[]).map(ensureVillagerSprite);
   }
   if (data.modelSettings && typeof data.modelSettings === 'object') {
-    result.modelSettings = data.modelSettings as Partial<ModelSettings>;
+    result.modelSettings = stripSecretSettings(data.modelSettings as Partial<ModelSettings>);
   }
   if (Array.isArray(data.conversations)) {
     result.conversations = data.conversations as Conversation[];
@@ -402,6 +436,9 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
   }
   if (typeof data.focalWorldlineId === 'string') {
     result.focalWorldlineId = data.focalWorldlineId;
+  }
+  if (isWorldContext(data.world)) {
+    result.world = data.world;
   }
 
   if (

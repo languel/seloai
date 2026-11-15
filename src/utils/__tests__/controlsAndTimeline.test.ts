@@ -1,3 +1,4 @@
+import { createBrowserSimulation } from '../../app/browserSimulation';
 import { describe, expect, it } from 'vitest';
 import { createDefaultMap, DEFAULT_MODEL_SETTINGS, DEFAULT_VILLAGERS } from '../../data/defaultData';
 import { generateProceduralPlayerCustomSprite, resolvePlayerAppearance } from '../../engine/playerSpriteGenerator';
@@ -14,7 +15,6 @@ import {
   saveLastLoadedModel,
   clearLastLoadedModel,
 } from '../../ai/modelCache';
-import { VillageSimulation } from '../../engine/simulation';
 import {
   DEFAULT_AESTHETIC_SETTINGS,
   DEFAULT_PLAYER_APPEARANCE,
@@ -82,7 +82,7 @@ describe('VillageSimulation timeline rewind and slow/paused bubble scaling', () 
     map.collisionGrid = Array.from({ length: map.width }, () => Array(map.height).fill(false));
     map.objectTiles = [];
     const soleVillager = { ...structuredClone(DEFAULT_VILLAGERS[0]), homeTile: { x: 4, y: 4 } };
-    const sim = new VillageSimulation(
+    const sim = createBrowserSimulation(
       map,
       [soleVillager],
       [],
@@ -162,7 +162,7 @@ describe('aesthetic themes, overlay de-overlap & procedural world-matched player
       detectWorldTheme({ tileSetUrl: '/assets/shevitsa-tileset.png', name: 'Шевици Square' }),
     ).toBe('shevitsa');
     expect(
-      detectWorldTheme({ tileSetUrl: '/assets/gentle-obj.png', name: 'Oakville' }),
+      detectWorldTheme({ tileSetUrl: '/assets/custom-tileset.png', name: 'Oakville' }),
     ).toBe('classic');
 
     const balkanTokens = resolveAestheticTokens(DEFAULT_AESTHETIC_SETTINGS, 'balkan-myth');

@@ -19,24 +19,6 @@ export const WANG_CORNER_NE = 2;
 export const WANG_CORNER_SE = 4;
 export const WANG_CORNER_SW = 8;
 
-export interface WangCornerSet {
-  id: string;
-  label: string;
-  baseTileId: number;
-  /** Optional tile ID written when bitmask === 0 (e.g. grass or transparent -1) */
-  emptyTileId?: number;
-  /** Whether fully-filled tiles (bitmask === 15 or >0) block movement */
-  blocksMovement?: boolean;
-}
-
-export interface WangEdgeSet {
-  id: string;
-  label: string;
-  baseTileId: number;
-  emptyTileId?: number;
-  blocksMovement?: boolean;
-}
-
 export function resolveWangEdgeIndex(n: boolean, e: boolean, s: boolean, w: boolean): number {
   return (n ? WANG_EDGE_N : 0) | (e ? WANG_EDGE_E : 0) | (s ? WANG_EDGE_S : 0) | (w ? WANG_EDGE_W : 0);
 }
@@ -267,26 +249,6 @@ export function paintWangCornerCell(
     }
   }
   return changes;
-}
-
-/**
- * Deterministic Wang knotwork / courtyard garden mask generator for procedural woven lanes or walls.
- */
-export function buildWangShevitsaCourtyardMask(
-  width: number,
-  height: number,
-  seed = 19,
-): boolean[][] {
-  const mask: boolean[][] = Array.from({ length: width }, () => Array(height).fill(false));
-  for (let x = 0; x < width; x++) {
-    for (let y = 0; y < height; y++) {
-      const rx = (x + seed) % 6;
-      const ry = (y + seed * 3) % 6;
-      if ((rx === 0 || rx === 5) && (ry === 0 || ry === 5)) continue;
-      if (rx === 0 || ry === 0) mask[x][y] = true;
-    }
-  }
-  return mask;
 }
 
 /**

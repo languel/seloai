@@ -313,7 +313,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
         name: 'Mara',
         role: 'Weaver',
         accentColor: '#a82424',
-        spritesheetId: 'f1',
+        spritesheetId: 'custom',
         identity: '',
         plan: '',
         voiceStyle: 'Warm, melodic, clear.',

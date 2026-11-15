@@ -114,25 +114,6 @@ body,
   font-family: Inter, system-ui, -apple-system, sans-serif;
 }
 
-.font-pixel {
-  font-family: 'VCR OSD Mono', ui-monospace, monospace;
-}
-
-/* Woven geometric accent ribbon */
-.rushnyk-ribbon {
-  height: 6px;
-  background-image: repeating-linear-gradient(
-      90deg,
-      var(--accent-crimson) 0 6px,
-      transparent 6px 8px,
-      var(--accent-indigo) 8px 14px,
-      transparent 14px 16px,
-      var(--accent-ochre) 16px 20px,
-      transparent 20px 24px
-    );
-  opacity: 0.9;
-}
-
 .rushnyk-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-folk);

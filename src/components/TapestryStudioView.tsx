@@ -3406,7 +3406,9 @@ export const TapestryStudioView: React.FC<TapestryStudioViewProps> = ({
     }
 
     const finalWork = expandTilesetRowsIfNeeded(rows);
-    setPatternLibrary((prev) => [...newLibraryEntries.slice().reverse(), ...prev]);
+    const nextLibrary = [...newLibraryEntries.slice().reverse(), ...patternLibrary];
+    setPatternLibrary(nextLibrary);
+    savePatternLibrary(nextLibrary);
     setOutputLayers(runningLayers);
     setSelectedOutputLayerId(newLayers[newLayers.length - 1].id);
     setTilesetTool('position');

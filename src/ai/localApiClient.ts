@@ -139,10 +139,6 @@ export async function probeApiModels(
   return { ok: false, models: [], error: `Unable to list models from ${clean}` };
 }
 
-export async function probeLocalApiModels(baseUrl: string): Promise<LocalApiProbeResult> {
-  return probeApiModels(baseUrl, 'ollama');
-}
-
 /**
  * Pure request builder exposed for deterministic unit testing and inspection
  * across OpenAI/ChatGPT, GitHub Models, OpenRouter, Ollama, LM Studio, Claude, and Gemini.
@@ -322,17 +318,6 @@ export async function chatWithExternalApi(params: {
     text: clean,
     durationMs: Math.round(performance.now() - startedAt),
   };
-}
-
-export async function chatWithLocalApi(params: {
-  baseUrl: string;
-  model: string;
-  messages: ChatTurnMessage[];
-  maxTokens?: number;
-  temperature?: number;
-  onChunk?: (chunk: string) => void;
-}): Promise<{ text: string; durationMs: number }> {
-  return chatWithExternalApi({ ...params, provider: 'custom' });
 }
 
 export async function synthesizeSpeechViaApi(params: {

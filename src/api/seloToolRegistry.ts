@@ -11,7 +11,7 @@ import {
 import { buildPsychophysicalGraph, buildWorldDatabase, queryWorldDatabase } from '../engine/observatory';
 import { findNearestWalkableTile, findPath } from '../engine/pathfinding';
 import type { VillageSimulation } from '../engine/simulation';
-import { ensureVillagerAppearanceSprite } from '../engine/spriteGenerator';
+import { ensureVillagerSprite } from '../engine/characterGenerator';
 import {
   applyMacroStampToMap,
   createMacroStampFromIndices,
@@ -31,6 +31,10 @@ import type {
   VillagerConfig,
 } from '../engine/types';
 import { resolvePublicUrl } from '../utils/assetUrl';
+import type { WorldCommand } from '../world/commands';
+import { worldContextForPack } from '../world/packs';
+import type { WorldStore } from '../world/worldStore';
+import { MAX_SPEED } from '../utils/speedSlider';
 import {
   createBalkanMythWorld,
   createBlankWorldMap,
@@ -56,6 +60,8 @@ export interface SeloHostHooks {
   applyVillagers: (nextVillagers: VillagerConfig[]) => void;
   updateSettings: (patch: Partial<ModelSettings>) => void;
   persistAll?: () => void;
+  /** The world store, when the host routes edits through commands (enables undo). */
+  getStore?: () => WorldStore;
 }
 
 export interface SeloToolDefinition {
@@ -94,6 +100,12 @@ export class SeloToolHost {
 
   listTools(): SeloToolDefinition[] {
     return SELO_TOOL_DEFINITIONS;
+  }
+
+  private requireStore(): WorldStore {
+    const store = this.hooks.getStore?.();
+    if (!store) throw new Error('World commands are not available in this host.');
+    return store;
   }
 
   async callTool(name: string, args: Record<string, any> = {}): Promise<any> {
@@ -156,8 +168,8 @@ export class SeloToolHost {
 
       case 'control_simulation': {
         if (typeof args.paused === 'boolean') sim.paused = args.paused;
-        if (typeof args.speedMultiplier === 'number' && [1, 2, 4].includes(args.speedMultiplier)) {
-          sim.speedMultiplier = args.speedMultiplier;
+        if (typeof args.speedMultiplier === 'number' && Number.isFinite(args.speedMultiplier)) {
+          sim.speedMultiplier = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, args.speedMultiplier));
         }
         if (args.scatter) sim.scatterVillagers();
         if (args.tab && this.hooks.setTab) this.hooks.setTab(args.tab);
@@ -174,6 +186,7 @@ export class SeloToolHost {
           paused: sim.paused,
           speedMultiplier: sim.speedMultiplier,
           conversationId: conversation?.id,
+          tab: this.hooks.getTab?.(),
         };
       }
 
@@ -239,9 +252,25 @@ export class SeloToolHost {
         if (args.clearDatabase) {
           sim.clearDatabase();
         }
-        this.hooks.applyMap(nextMap);
-        if (balkanBundle && args.includeCast !== false) {
-          this.hooks.applyVillagers(balkanBundle.villagers);
+        const nextContext = worldContextForPack(
+          isBalkanMyth ? 'balkan-myth' : isShevitsa ? 'shevitsa' : 'blank',
+        );
+        const store = this.hooks.getStore?.();
+        if (store) {
+          const commands: WorldCommand[] = [
+            { type: 'context.update', patch: nextContext },
+            { type: 'map.replace', map: nextMap },
+          ];
+          if (balkanBundle && args.includeCast !== false) {
+            commands.push({ type: 'cast.replace', cast: balkanBundle.villagers });
+          }
+          store.dispatchAll(commands, `Create world "${nextMap.name}"`);
+        } else {
+          sim.setWorld(nextContext);
+          this.hooks.applyMap(nextMap);
+          if (balkanBundle && args.includeCast !== false) {
+            this.hooks.applyVillagers(balkanBundle.villagers);
+          }
         }
         return {
           ok: true,
@@ -395,11 +424,11 @@ export class SeloToolHost {
               ...(baseAuto.appearance ?? {}),
               ...(args.appearance ?? {}),
             };
-        const cfg: VillagerConfig = ensureVillagerAppearanceSprite({
+        const cfg: VillagerConfig = ensureVillagerSprite({
           id,
           name: nameStr,
           role: String(args.role || baseAuto.role),
-          spritesheetId: args.customSpriteDataUrl ? 'custom' : 'f1',
+          spritesheetId: args.customSpriteDataUrl ? 'custom' : 'modular',
           appearance,
           customSprite: args.customSpriteDataUrl
             ? {
@@ -831,6 +860,7 @@ export class SeloToolHost {
             conversations: sim.conversations,
             characterHistories: histories,
             focalWorldlineId: sim.focalWorldlineId,
+            world: sim.world,
             savedAt: Date.now(),
           });
         }
@@ -839,14 +869,51 @@ export class SeloToolHost {
 
       case 'import_bundle': {
         const parsed = parseImportedVillageJson(String(args.json || ''));
-        if (parsed.map) this.hooks.applyMap(parsed.map);
-        if (parsed.villagers) this.hooks.applyVillagers(parsed.villagers);
+        const importStore = this.hooks.getStore?.();
+        if (importStore) {
+          const commands: WorldCommand[] = [];
+          if (parsed.world) commands.push({ type: 'context.update', patch: parsed.world });
+          if (parsed.map) commands.push({ type: 'map.replace', map: parsed.map });
+          if (parsed.villagers) commands.push({ type: 'cast.replace', cast: parsed.villagers });
+          if (commands.length > 0) importStore.dispatchAll(commands, 'Import bundle');
+        } else {
+          if (parsed.world) sim.setWorld(parsed.world);
+          if (parsed.map) this.hooks.applyMap(parsed.map);
+          if (parsed.villagers) this.hooks.applyVillagers(parsed.villagers);
+        }
         if (parsed.modelSettings) this.hooks.updateSettings(parsed.modelSettings);
         if (parsed.conversations) sim.replaceConversations(parsed.conversations);
         if (parsed.characterHistories) sim.applyCharacterHistories(parsed.characterHistories);
         if (parsed.focalWorldlineId) sim.setFocalWorldline(parsed.focalWorldlineId);
         this.hooks.persistAll?.();
         return { ok: true, format: parsed.format };
+      }
+
+      case 'apply_world_commands': {
+        const store = this.requireStore();
+        if (!Array.isArray(args.commands) || args.commands.length === 0) {
+          throw new Error('commands must be a non-empty list.');
+        }
+        const doc = store.dispatchAll(args.commands as WorldCommand[], String(args.label || 'Agent edit'));
+        return {
+          ok: true,
+          applied: args.commands.length,
+          map: { name: doc.map.name, width: doc.map.width, height: doc.map.height },
+          castSize: doc.cast.length,
+          canUndo: store.canUndo,
+        };
+      }
+
+      case 'undo_world_edit': {
+        const store = this.requireStore();
+        const undone = store.undo();
+        return { ok: undone !== null, undone, canUndo: store.canUndo, canRedo: store.canRedo };
+      }
+
+      case 'redo_world_edit': {
+        const store = this.requireStore();
+        const redone = store.redo();
+        return { ok: redone !== null, redone, canUndo: store.canUndo, canRedo: store.canRedo };
       }
 
       case 'clear_database': {

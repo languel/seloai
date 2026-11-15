@@ -242,7 +242,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
       ? `Who has ${villagers[0].name} talked to in the past day and what do they think about the lantern?`
       : 'Who has talked in the past day?',
     villagers[1] ? `What is ${villagers[1].name} thinking near #Plaza?` : 'Thoughts near #Plaza',
-    'Show all conversations about windmill or #Windmill',
+    'Show all conversations about the well or #LamiaWell',
   ];
 
   return (

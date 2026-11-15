@@ -1,8 +1,6 @@
-import type { SpritesheetData } from '../data/spritesheets/types';
-
 export type Direction = 'down' | 'left' | 'right' | 'up';
 
-/** Tile matrix indexed as [x][y], matching ai-town map convention. -1 means empty. */
+/** Tile matrix indexed as [x][y] (column-major). -1 means empty. */
 export type TileGrid = number[][];
 
 export interface AnimatedSpritePlacement {
@@ -60,13 +58,6 @@ export interface VillageMap {
   spawnPoints: SpawnPoint[];
   pointsOfInterest?: PointOfInterest[];
   stamps?: TileMacroStamp[];
-}
-
-export interface SpritesheetPreset {
-  id: string;
-  label: string;
-  textureUrl: string;
-  data: SpritesheetData;
 }
 
 export interface CustomSpriteSheet {

@@ -1,5 +1,4 @@
-import { ANIMATION_CATALOG, SPRITESHEET_PRESETS } from '../data/defaultData';
-import { data as playerSpritesheet } from '../data/spritesheets/player';
+import { ANIMATION_CATALOG } from '../data/defaultData';
 import {
   DEFAULT_AESTHETIC_SETTINGS,
   resolveAestheticTokens,
@@ -167,27 +166,6 @@ export function drawAnimatedSprites(
       placement.h,
     );
   }
-}
-
-export function getPresetSpriteFrame(
-  spritesheetId: string,
-  facing: Direction,
-  animFrame: number,
-  isMoving: boolean,
-): { url: string; sx: number; sy: number; sw: number; sh: number } | null {
-  const preset = SPRITESHEET_PRESETS.find((p) => p.id === spritesheetId) ?? SPRITESHEET_PRESETS[0];
-  if (!preset) return null;
-  const seq = preset.data.animations?.[facing] ?? [facing];
-  const frameName = isMoving ? seq[Math.floor(animFrame) % seq.length] : seq[0];
-  const frame = preset.data.frames[frameName]?.frame;
-  if (!frame) return null;
-  return {
-    url: preset.textureUrl,
-    sx: frame.x,
-    sy: frame.y,
-    sw: frame.w,
-    sh: frame.h,
-  };
 }
 
 export function getCustomSpriteFrame(
@@ -563,7 +541,7 @@ export function drawVillager(
   const isMoving = rt.state === 'walking' || rt.path.length > 0;
   const frame = cfg.customSprite
     ? getCustomSpriteFrame(cfg.customSprite, rt.facing, rt.animFrame, isMoving)
-    : getPresetSpriteFrame(cfg.spritesheetId, rt.facing, rt.animFrame, isMoving);
+    : null;
 
   const px = rt.x * tileDim;
   const py = rt.y * tileDim;
@@ -841,30 +819,6 @@ export function drawPlayer(
       const img = getCachedImage(frame.url);
       if (img) {
         drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
-      }
-    } else {
-      const img = getCachedImage('/assets/player.png');
-      const flipHorizontal = player.facing === 'right';
-      const lookupDir: Direction = flipHorizontal ? 'left' : player.facing;
-      const rawSeq = playerSpritesheet.animations?.[lookupDir] ?? ['down', 'down2', 'down3'];
-      const walkCycle = rawSeq.length >= 3 ? [rawSeq[0], rawSeq[1], rawSeq[2], rawSeq[1]] : rawSeq;
-      const idleFrame = rawSeq[1] ?? rawSeq[0];
-      const frameName = isMoving ? walkCycle[Math.floor(player.animFrame) % walkCycle.length] : idleFrame;
-      const frame = playerSpritesheet.frames[frameName]?.frame;
-      if (img && frame) {
-        drawFootAnchoredSprite(
-          ctx,
-          img,
-          frame.x,
-          frame.y,
-          frame.w,
-          frame.h,
-          px,
-          py,
-          tileDim,
-          charScale,
-          flipHorizontal,
-        );
       }
     }
     ctx.restore();

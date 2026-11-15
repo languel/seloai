@@ -508,7 +508,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       name: 'Lamia Zmeitsa',
       role: 'Serpent Keeper of the Well',
       accentColor: '#2e8b57',
-      spritesheetId: 'folk-1',
+      spritesheetId: 'custom',
       customSprite: spriteMap.lamia,
       identity:
         'Ancient serpentine Lamia coiled around #LamiaWell in Zmeyovo. You locked the limestone springs until the village brings rightful sacrifice—golden wheat, raw honey, silver obols, or an oath kept true. Speak with icy pride and ancient hunger.',
@@ -529,7 +529,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       name: 'Baba Rada',
       role: 'Znaharka Herb-Keeper',
       accentColor: '#b81f28',
-      spritesheetId: 'folk-2',
+      spritesheetId: 'custom',
       customSprite: spriteMap['baba-rada'],
       identity:
         'Elder Balkan herbalist and omen-reader from #BabaHerbhouse wrapped in crimson Rhodope aprons. You know the Lamia accepts braided martenitsa wool, honeyed kolivo wheat, and unbroken promises—never reckless bloodshed.',
@@ -550,7 +550,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       name: 'Kuker Marin',
       role: 'Masked Bell Guardian',
       accentColor: '#d99226',
-      spritesheetId: 'folk-3',
+      spritesheetId: 'custom',
       customSprite: spriteMap['kuker-marin'],
       identity:
         'Master Kuker mummer in horned wooden mask, goatskin coat, and heavy bronze chanove waist-bells. You swear loud bronze chimes scatter curses, though secretly you worry the Lamia may demand something closer to the heart than iron noise.',
@@ -571,7 +571,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       name: 'Stoyan Yunak',
       role: 'Blacksmith & Village Hero',
       accentColor: '#243e6d',
-      spritesheetId: 'folk-4',
+      spritesheetId: 'custom',
       customSprite: spriteMap.stoyan,
       identity:
         'Broad-shouldered blacksmith in a black kalpak and scarlet waist-sash. Empty pitchers line #KhoroStar and your quench-trough is bone dry; you itch to haul water by force yet heed Baba Rada’s warning about the Lamia’s storm-breath.',
@@ -592,7 +592,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       name: 'Samodiva Raina',
       role: 'Vila of the Hidden Spring',
       accentColor: '#6b8fd6',
-      spritesheetId: 'folk-5',
+      spritesheetId: 'custom',
       customSprite: spriteMap['samodiva-raina'],
       identity:
         'Forest Samodiva crowned with wild poppies and bluebells at #SamodivaSpring. Only your birch-shaded basin remains sweet; you trade clear spring water solely to mortals who leave song or scarlet thread and never spill steel inside the glade.',
@@ -613,7 +613,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       name: 'Tsveta Vezachka',
       role: 'Shevitsa Loom Weaver',
       accentColor: '#a23c6c',
-      spritesheetId: 'folk-1',
+      spritesheetId: 'custom',
       customSprite: spriteMap.tsveta,
       identity:
         'Master weaver at #WeaverCardak with double silver pafti clasps, stitching Zmeyovo’s ancient covenant into an eight-pointed Elbetitsa banner. You believe repeating the lost spring-rite pattern at #LamiaWell can turn the serpent’s hunger into rain.',

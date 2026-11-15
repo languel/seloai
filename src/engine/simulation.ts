@@ -1,7 +1,10 @@
-import { computeSpatialMix, type SpatialMix } from '../ai/audioPipeline';
-import { brainRouter, isTextTooSimilar, parseDialogueAndNarration } from '../ai/brainRouter';
+import type { Rng } from '../core/rng';
+import { isTextTooSimilar, parseDialogueAndNarration } from './dialogueText';
+import type { SimMind, SimPorts } from './ports';
+import { computeSpatialMix, type SpatialMix } from './spatialMix';
+import { GENERIC_WORLD_CONTEXT, placeName, type WorldContext } from '../world/worldContext';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
-import { ensureVillagerAppearanceSprite } from './spriteGenerator';
+import { ensureVillagerSprite } from './characterGenerator';
 import type {
   BubbleEntry,
   ChatMessage,
@@ -50,6 +53,12 @@ export interface MentionTarget {
 }
 
 export const CHAR_COLLISION_RADIUS = 0.78;
+
+/** How much world time one line of speech or narration occupies, at a natural speaking pace. */
+export function estimateLineDurationMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1400, Math.min(9000, 600 + words * 350));
+}
 
 export function computeBubbleDurationMs(
   text: string,
@@ -178,17 +187,19 @@ export class VillageSimulation {
   public runtimes: Map<string, VillagerRuntime> = new Map();
   public conversations: Conversation[] = [];
   public player: PlayerAvatar;
-  public paused = false;
+  private pausedFlag = false;
+  private resumeWaiters: Array<() => void> = [];
   public speedMultiplier = 1;
   public tickCount = 0;
   public simTimeMs = 0;
   public fps = 60;
   public modelSettings: ModelSettings;
   public focalWorldlineId: string | 'traveler' = 'traveler';
+  /** Setting-specific knowledge supplied by the active world pack. */
+  public world: WorldContext;
 
   private listeners = new Set<() => void>();
   private aiAccumulator = 0;
-  private busyConversations = new Set<string>();
   private planningVillagers = new Set<string>();
   private lastNotifyAt = 0;
   private lastMoveSimMs = new Map<string, number>();
@@ -204,12 +215,24 @@ export class VillageSimulation {
   private lastAppliedConvRef: Conversation[] | null = null;
   private wasRewinding = false;
 
+  private readonly mind: SimMind;
+  private readonly rng: Rng;
+  private readonly timestamp: (simTimeMs: number) => number;
+  private readonly timerMode: 'wall' | 'sim';
+  private simTimers: Array<{ dueSimMs: number; resolve: () => void }> = [];
+
   constructor(
     map: VillageMap,
     villagers: VillagerConfig[],
     conversations: Conversation[],
     settings: ModelSettings,
+    ports: SimPorts,
   ) {
+    this.mind = ports.mind;
+    this.rng = ports.rng ?? Math.random;
+    this.timestamp = ports.timestamp ?? (() => Date.now());
+    this.timerMode = ports.timers ?? 'wall';
+    this.world = ports.world ?? GENERIC_WORLD_CONTEXT;
     this.map = map;
     this.modelSettings = settings;
     this.conversations = conversations;
@@ -217,7 +240,7 @@ export class VillageSimulation {
     const safeSpawn = findNearestWalkableTile(map, spawn.x, spawn.y);
     this.player = {
       id: 'human-visitor',
-      name: 'Traveler',
+      name: this.world.playerName,
       x: safeSpawn.x,
       y: safeSpawn.y,
       facing: 'down',
@@ -230,6 +253,65 @@ export class VillageSimulation {
     this.syncVillagers(villagers);
   }
 
+  /** While paused the world holds still: no movement, no new turns, and speech is suspended. */
+  get paused(): boolean {
+    return this.pausedFlag;
+  }
+
+  set paused(value: boolean) {
+    if (value === this.pausedFlag) return;
+    this.pausedFlag = value;
+    this.mind.setSpeechPaused(value);
+    if (!value) {
+      const waiters = this.resumeWaiters.splice(0);
+      for (const resume of waiters) resume();
+    }
+    this.notify(true);
+  }
+
+  /**
+   * Gives a line its share of world time, so the pace of events follows the world clock
+   * (and therefore the time slider) rather than how fast text can be produced. Time already
+   * spent since `startedSimMs`, for example on speech playback, counts toward it.
+   */
+  private async paceLine(text: string, startedSimMs: number): Promise<void> {
+    if (this.timerMode !== 'sim') return;
+    const remaining = estimateLineDurationMs(text) - (this.simTimeMs - startedSimMs);
+    if (remaining > 0) await this.waitSimTime(remaining);
+  }
+
+  /** Resolves at once when running, or when the world is next resumed. */
+  private whenRunning(): Promise<void> {
+    if (!this.pausedFlag) return Promise.resolve();
+    return new Promise((resolve) => this.resumeWaiters.push(resolve));
+  }
+
+  /** Timestamp for records created now (wall clock by default, sim-derived in reproducible runs). */
+  private now(): number {
+    return this.timestamp(this.simTimeMs);
+  }
+
+  /** Resolves once the simulation clock has advanced by `ms` (only moves while it is stepped). */
+  public waitSimTime(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      this.simTimers.push({ dueSimMs: this.simTimeMs + ms, resolve });
+    });
+  }
+
+  /** Waits in wall time or, in reproducible runs, in simulation time. */
+  private sleep(ms: number): Promise<void> {
+    if (this.timerMode === 'wall') return new Promise((resolve) => setTimeout(resolve, ms));
+    return this.waitSimTime(ms);
+  }
+
+  private resolveDueSimTimers() {
+    if (this.simTimers.length === 0) return;
+    const due = this.simTimers.filter((t) => t.dueSimMs <= this.simTimeMs);
+    if (due.length === 0) return;
+    this.simTimers = this.simTimers.filter((t) => t.dueSimMs > this.simTimeMs);
+    for (const timer of due) timer.resolve();
+  }
+
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -240,6 +322,13 @@ export class VillageSimulation {
     if (!force && now - this.lastNotifyAt < 120) return;
     this.lastNotifyAt = now;
     for (const fn of this.listeners) fn();
+  }
+
+  /** Switches the setting-specific knowledge, e.g. when a different world pack is loaded. */
+  setWorld(world: WorldContext) {
+    this.world = world;
+    this.player.name = world.playerName;
+    this.notify(true);
   }
 
   updateSettings(settings: ModelSettings) {
@@ -387,7 +476,7 @@ export class VillageSimulation {
     this.configs.clear();
 
     for (const rawVillager of villagers) {
-      const v = ensureVillagerAppearanceSprite(rawVillager);
+      const v = ensureVillagerSprite(rawVillager);
       this.configs.set(v.id, v);
       const existing = this.runtimes.get(v.id);
       if (!existing) {
@@ -401,23 +490,23 @@ export class VillageSimulation {
           state: 'idle',
           activityLabel: v.plan,
           currentIntention: v.plan,
-          worldFeed: [`Entered Selo with purpose: ${v.plan}`],
+          worldFeed: [`Entered ${placeName(this.world)} with purpose: ${v.plan}`],
           blockedTicks: 0,
           memories: [
             {
               id: `mem-init-${v.id}`,
-              timestamp: Date.now(),
+              timestamp: this.now(),
               importance: 5,
               kind: 'observation',
               summary: v.plan,
             },
           ],
-          lastThinkAt: Date.now() - 4500 - Math.random() * 2500,
-          lastMoveAt: Date.now() - 2000 - Math.random() * 2000,
+          lastThinkAt: this.now() - 4500 - this.rng() * 2500,
+          lastMoveAt: this.now() - 2000 - this.rng() * 2000,
           animFrame: 0,
         });
-        this.lastMoveSimMs.set(v.id, this.simTimeMs - 2200 - Math.random() * 2000);
-        this.lastThinkSimMs.set(v.id, this.simTimeMs - 5500 - Math.random() * 2500);
+        this.lastMoveSimMs.set(v.id, this.simTimeMs - 2200 - this.rng() * 2000);
+        this.lastThinkSimMs.set(v.id, this.simTimeMs - 5500 - this.rng() * 2500);
       }
     }
     if (this.timeline.length === 0) {
@@ -484,8 +573,8 @@ export class VillageSimulation {
       rt.memories = cfg
         ? [
             {
-              id: `mem-init-${id}-${Date.now()}`,
-              timestamp: Date.now(),
+              id: `mem-init-${id}-${this.now()}`,
+              timestamp: this.now(),
               importance: 5,
               kind: 'observation',
               summary: cfg.plan,
@@ -613,7 +702,7 @@ export class VillageSimulation {
     this.advanceEntityPath(this.player, rawDt);
     this.player.isMoving =
       this.player.path.length > 0 || performance.now() - this.player.lastNudgeAt < 120;
-    brainRouter.refreshActiveSpatialMix();
+    this.mind.refreshActiveSpatialMix();
 
     if (this.paused || Math.abs(this.speedMultiplier) < 0.001) {
       this.shiftAllBubbleClocks(Math.min(0.1, Math.max(0, rawDt)) * 1000);
@@ -624,7 +713,7 @@ export class VillageSimulation {
 
     if (this.speedMultiplier < 0) {
       if (!this.wasRewinding) {
-        brainRouter.flushAudioQueue();
+        this.mind.flushAudioQueue();
         this.wasRewinding = true;
       }
       this.stepRewind(clampedRaw);
@@ -650,12 +739,13 @@ export class VillageSimulation {
     const dt = clampedRaw * this.speedMultiplier;
     this.simTimeMs += dt * 1000;
     this.tickCount++;
+    this.resolveDueSimTimers();
 
     if (this.speedMultiplier !== 1) {
       this.shiftAllBubbleClocks((1 - this.speedMultiplier) * clampedRaw * 1000);
     }
 
-    const now = Date.now();
+    const now = this.now();
     for (const rt of this.runtimes.values()) {
       const cfg = this.configs.get(rt.id);
       if (!cfg) continue;
@@ -774,7 +864,7 @@ export class VillageSimulation {
   }
 
   private recordTimelineKeyframe() {
-    const now = Date.now();
+    const now = this.now();
     const convSig = this.computeConversationSignature();
     if (convSig !== this.lastConvSignature || this.timeline.length === 0) {
       this.lastConvSignature = convSig;
@@ -861,7 +951,7 @@ export class VillageSimulation {
     const span = frameB.simTimeMs - frameA.simTimeMs;
     const alpha = span > 0 ? Math.max(0, Math.min(1, (targetMs - frameA.simTimeMs) / span)) : 0;
     const discrete = alpha >= 0.5 ? frameB : frameA;
-    const now = Date.now();
+    const now = this.now();
 
     const aById = new Map(frameA.villagers.map((v) => [v.id, v]));
     const bById = new Map(frameB.villagers.map((v) => [v.id, v]));
@@ -1058,7 +1148,7 @@ export class VillageSimulation {
       rt.y = safe.y;
     }
     const res = this.stepAlongPathWithCollision(rt, speed * dt, dt * 5, rt.id);
-    const now = Date.now();
+    const now = this.now();
 
     if (res.progressed && !res.sidestepped) {
       rt.blockedTicks = 0;
@@ -1187,7 +1277,7 @@ export class VillageSimulation {
   }
 
   private runAutonomousDecisions() {
-    const now = Date.now();
+    const now = this.now();
     const runtimesList = [...this.runtimes.values()];
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
@@ -1219,7 +1309,7 @@ export class VillageSimulation {
           if (this.simTimeMs - bThinkSim < 10500 || now - b.lastThinkAt < 3500) continue;
 
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
-          if (dist <= 3.8 && Math.random() < 0.65) {
+          if (dist <= 3.8 && this.rng() < 0.65) {
             this.lastThinkSimMs.set(a.id, this.simTimeMs);
             this.lastThinkSimMs.set(b.id, this.simTimeMs);
             this.startAutonomousConversation(a.id, b.id);
@@ -1234,7 +1324,7 @@ export class VillageSimulation {
       if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0) continue;
       if (this.planningVillagers.has(rt.id)) continue;
       const lastMoveSim = this.lastMoveSimMs.get(rt.id) ?? -9999;
-      if (this.simTimeMs - lastMoveSim < 4200 + Math.random() * 4400) continue;
+      if (this.simTimeMs - lastMoveSim < 4200 + this.rng() * 4400) continue;
 
       const cfg = this.configs.get(rt.id);
       if (!cfg) continue;
@@ -1252,12 +1342,12 @@ export class VillageSimulation {
       targetId !== 'traveler' && this.runtimes.has(targetId) ? targetId : 'traveler';
     if (this.focalWorldlineId === resolved) return;
     this.focalWorldlineId = resolved;
-    brainRouter.refreshActiveSpatialMix();
+    this.mind.refreshActiveSpatialMix();
     const label =
       resolved === 'traveler'
         ? this.player.name
         : this.configs.get(resolved)?.name ?? resolved;
-    brainRouter.log({
+    this.mind.log({
       channel: 'sim',
       level: 'info',
       title: `Worldline POV: ${label}`,
@@ -1278,11 +1368,12 @@ export class VillageSimulation {
   }
 
   private async planNextVillagerAction(cfg: VillagerConfig, rt: VillagerRuntime) {
-    const now = Date.now();
+    const now = this.now();
     const others = [...this.configs.values()].filter((v) => v.id !== cfg.id);
     const landmarks = this.getLandmarks().map((l) => l.label);
 
-    const decision = await brainRouter.decideVillagerNextAction({
+    const decision = await this.mind.decideVillagerNextAction({
+        world: this.world,
       villager: cfg,
       runtime: rt,
       otherNames: others.map((v) => v.name),
@@ -1291,7 +1382,7 @@ export class VillageSimulation {
     });
 
     if (rt.activeConversationId || rt.state !== 'idle') {
-      rt.lastMoveAt = Date.now();
+      rt.lastMoveAt = this.now();
       return;
     }
 
@@ -1321,8 +1412,8 @@ export class VillageSimulation {
       !safeGoal ||
       (safeGoal.x === Math.round(rt.x) && safeGoal.y === Math.round(rt.y))
     ) {
-      const tx = Math.round(rt.x + (Math.random() > 0.5 ? 1 : -1) * (3 + Math.random() * 5));
-      const ty = Math.round(rt.y + (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 5));
+      const tx = Math.round(rt.x + (this.rng() > 0.5 ? 1 : -1) * (3 + this.rng() * 5));
+      const ty = Math.round(rt.y + (this.rng() > 0.5 ? 1 : -1) * (2 + this.rng() * 5));
       safeGoal = findNearestWalkableTile(this.map, tx, ty);
     }
 
@@ -1335,8 +1426,8 @@ export class VillageSimulation {
     if (path.length === 0) {
       const altGoal = findNearestWalkableTile(
         this.map,
-        Math.round(rt.x + (Math.random() * 12 - 6)),
-        Math.round(rt.y + (Math.random() * 10 - 5)),
+        Math.round(rt.x + (this.rng() * 12 - 6)),
+        Math.round(rt.y + (this.rng() * 10 - 5)),
       );
       path = findPath(this.map, { x: rt.x, y: rt.y }, altGoal);
     }
@@ -1350,7 +1441,7 @@ export class VillageSimulation {
       this.appendWorldEvent(rt, `Decided: ${decision.motive}`);
       if (!isTextTooSimilar(decision.motive, rt.recentUtterances ?? [], 0.52)) {
         rt.recentUtterances = [...(rt.recentUtterances ?? []), decision.motive].slice(-6);
-        const nowBubble = Date.now();
+        const nowBubble = this.now();
         rt.currentThoughtBubble = {
           text: decision.motive,
           startedAt: nowBubble,
@@ -1370,7 +1461,7 @@ export class VillageSimulation {
         };
         const mix = thoughtResolver();
         if (mix.inRange) {
-          void brainRouter.speakThought(decision.motive, cfg, this.modelSettings, thoughtResolver);
+          void this.mind.speakThought(decision.motive, cfg, this.modelSettings, thoughtResolver);
         }
       }
     } else {
@@ -1385,7 +1476,7 @@ export class VillageSimulation {
    * walking toward spread-out open destinations across the village.
    */
   scatterVillagers() {
-    const now = Date.now();
+    const now = this.now();
     const list = Array.from(this.runtimes.values());
     const usedGoals = new Set<string>();
     const spawnPoints = this.map.spawnPoints;
@@ -1402,12 +1493,12 @@ export class VillageSimulation {
 
       const sp =
         spawnPoints.length > 0
-          ? spawnPoints[(i * 2 + Math.floor(Math.random() * spawnPoints.length)) % spawnPoints.length]
+          ? spawnPoints[(i * 2 + Math.floor(this.rng() * spawnPoints.length)) % spawnPoints.length]
           : undefined;
-      const offsetX = Math.round(Math.random() * 10 - 5);
-      const offsetY = Math.round(Math.random() * 8 - 4);
-      const rawGoalX = sp ? sp.x + offsetX : Math.round(rt.x + (Math.random() * 14 - 7));
-      const rawGoalY = sp ? sp.y + offsetY : Math.round(rt.y + (Math.random() * 12 - 6));
+      const offsetX = Math.round(this.rng() * 10 - 5);
+      const offsetY = Math.round(this.rng() * 8 - 4);
+      const rawGoalX = sp ? sp.x + offsetX : Math.round(rt.x + (this.rng() * 14 - 7));
+      const rawGoalY = sp ? sp.y + offsetY : Math.round(rt.y + (this.rng() * 12 - 6));
       let goal = findNearestWalkableTile(this.map, rawGoalX, rawGoalY);
 
       if (usedGoals.has(`${goal.x},${goal.y}`) || (goal.x === Math.round(rt.x) && goal.y === Math.round(rt.y))) {
@@ -1430,7 +1521,7 @@ export class VillageSimulation {
         rt.path = path;
         rt.state = 'walking';
         rt.lastMoveAt = now;
-        rt.currentIntention = sp ? `Heading out near ${sp.label}` : 'Exploring Selo lanes';
+        rt.currentIntention = sp ? `Heading out near ${sp.label}` : `Exploring ${placeName(this.world)}`;
         rt.activityLabel = rt.currentIntention;
       }
     }
@@ -1455,7 +1546,7 @@ export class VillageSimulation {
 
   private getNearestLandmarkName(x: number, y: number): string {
     const landmarks = this.getLandmarks();
-    if (landmarks.length === 0) return 'Village Square';
+    if (landmarks.length === 0) return this.world.fallbackLandmark;
     let best = landmarks[0];
     let bestDist = Infinity;
     for (const lm of landmarks) {
@@ -1473,25 +1564,26 @@ export class VillageSimulation {
     text: string,
     speakAudio: boolean,
     spatialResolver?: () => SpatialMix,
+    source: ChatMessage['source'] = 'story-sim',
   ): Promise<void> {
     const clean = text.trim();
     if (!clean) return;
     this.pushConversationMessage(conv, {
-      id: `msg-nar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `msg-nar-${this.now()}-${this.rng().toString(36).slice(2, 6)}`,
       senderId: 'narrator',
       senderName: this.modelSettings.narratorName.trim() || 'Scribe',
       text: clean,
-      timestamp: Date.now(),
+      timestamp: this.now(),
       kind: 'narration',
-      source: 'story-sim',
+      source,
     });
-    conv.updatedAt = Date.now();
+    conv.updatedAt = this.now();
     this.notify(true);
 
     if (speakAudio && this.modelSettings.narratorEnabled) {
       const mix = spatialResolver?.();
       if (!spatialResolver || mix?.inRange) {
-        await brainRouter.speakNarration(clean, this.modelSettings, spatialResolver);
+        await this.mind.speakNarration(clean, this.modelSettings, spatialResolver);
       }
     }
   }
@@ -1507,16 +1599,16 @@ export class VillageSimulation {
     const cfgB = this.configs.get(idB);
     if (!rtA || !rtB || !cfgA || !cfgB) return undefined;
 
-    const convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    if (this.busyConversations.has(convId)) return undefined;
-    this.busyConversations.add(convId);
+    // A villager can only be in one conversation at a time.
+    if (rtA.activeConversationId || rtB.activeConversationId) return undefined;
+    const convId = `conv-${this.now()}-${this.rng().toString(36).slice(2, 6)}`;
 
     const conv: Conversation = {
       id: convId,
       participantIds: [idA, idB],
       messages: [],
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
+      startedAt: this.now(),
+      updatedAt: this.now(),
       active: true,
     };
     this.conversations = [conv, ...this.conversations].slice(0, 40);
@@ -1549,8 +1641,10 @@ export class VillageSimulation {
       const hearSpeech = eavesdropEnabled && this.modelSettings.eavesdropSpeech;
       const hearThoughts = eavesdropEnabled && this.modelSettings.eavesdropThoughts;
       const landmarkName = this.getNearestLandmarkName((rtA.x + rtB.x) / 2, (rtA.y + rtB.y) / 2);
+      await this.whenRunning();
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
-        const introBeat = await brainRouter.generateSceneBeat({
+        const introBeat = await this.mind.generateSceneBeat({
+        world: this.world,
           phase: 'opening',
           villagerA: cfgA,
           runtimeA: rtA,
@@ -1561,12 +1655,14 @@ export class VillageSimulation {
         });
         this.appendWorldEvent(rtA, `Scene near ${landmarkName}: ${introBeat}`);
         this.appendWorldEvent(rtB, `Scene near ${landmarkName}: ${introBeat}`);
+        const beatStartedSimMs = this.simTimeMs;
         await this.emitNarrationTurn(
           conv,
           introBeat,
           hearSpeech,
           midpointResolver,
         );
+        await this.paceLine(introBeat, beatStartedSimMs);
       }
 
       const turns: Array<[VillagerConfig, VillagerRuntime, VillagerConfig]> = [
@@ -1576,6 +1672,7 @@ export class VillageSimulation {
       ];
 
       for (const [speakerCfg, speakerRt, partnerCfg] of turns) {
+        await this.whenRunning();
         if (!this.runtimes.has(speakerCfg.id) || !this.runtimes.has(partnerCfg.id)) break;
         speakerRt.state = 'thinking';
         this.notify(true);
@@ -1591,6 +1688,7 @@ export class VillageSimulation {
           );
         };
 
+        const turnStartedSimMs = this.simTimeMs;
         await this.runVillagerSpeechTurn({
           conv,
           speakerCfg,
@@ -1604,23 +1702,27 @@ export class VillageSimulation {
           restingState: 'conversing',
           resolver,
         });
+        const spokenLine =
+          [...conv.messages].reverse().find((m) => m.senderId === speakerCfg.id && m.kind !== 'thought')?.text ?? '';
+        await this.paceLine(spokenLine, turnStartedSimMs);
 
-        await new Promise((r) => setTimeout(r, 400));
+        await this.sleep(400);
       }
+      await this.whenRunning();
 
       // Reflect short conversation into memory for both villagers
       const transcript = conv.messages
         .filter((m) => m.kind !== 'narration')
         .map((m) => `${m.senderName}: ${m.text}`)
         .join('\n');
-      const memA = await brainRouter.reflectMemory({
+      const memA = await this.mind.reflectMemory({
         villager: cfgA,
         transcript,
         settings: this.modelSettings,
       });
       this.pushVillagerMemory(rtA, {
-        id: `mem-${Date.now()}-a`,
-        timestamp: Date.now(),
+        id: `mem-${this.now()}-a`,
+        timestamp: this.now(),
         importance: 6,
         kind: 'conversation',
         summary: memA,
@@ -1629,8 +1731,8 @@ export class VillageSimulation {
       const firstSpoken = conv.messages.find((m) => m.kind !== 'narration');
       const bSummary = `Talked with ${cfgA.name}: ${firstSpoken?.text.slice(0, 64) ?? ''}`;
       this.pushVillagerMemory(rtB, {
-        id: `mem-${Date.now()}-b`,
-        timestamp: Date.now(),
+        id: `mem-${this.now()}-b`,
+        timestamp: this.now(),
         importance: 6,
         kind: 'conversation',
         summary: bSummary,
@@ -1638,7 +1740,8 @@ export class VillageSimulation {
       this.appendWorldEvent(rtB, bSummary);
 
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
-        const closing = await brainRouter.generateSceneBeat({
+        const closing = await this.mind.generateSceneBeat({
+        world: this.world,
           phase: 'closing',
           villagerA: cfgA,
           runtimeA: rtA,
@@ -1650,19 +1753,20 @@ export class VillageSimulation {
         });
         this.appendWorldEvent(rtA, `Aftermath: ${closing}`);
         this.appendWorldEvent(rtB, `Aftermath: ${closing}`);
+        const closingStartedSimMs = this.simTimeMs;
         await this.emitNarrationTurn(
           conv,
           closing,
           hearSpeech,
           midpointResolver,
         );
+        await this.paceLine(closing, closingStartedSimMs);
       }
       return conv;
     } catch {
       // Ignore transient errors in background chatter
     } finally {
       conv.active = false;
-      this.busyConversations.delete(convId);
       for (const [rt, cfg] of [
         [rtA, cfgA],
         [rtB, cfgB],
@@ -1671,8 +1775,8 @@ export class VillageSimulation {
           rt.activeConversationId = undefined;
           rt.state = 'idle';
           rt.activityLabel = rt.currentIntention || cfg.plan;
-          rt.lastThinkAt = Date.now();
-          rt.lastMoveAt = Date.now();
+          rt.lastThinkAt = this.now();
+          rt.lastMoveAt = this.now();
         }
       }
       this.notify(true);
@@ -1689,11 +1793,11 @@ export class VillageSimulation {
     if (existing) return existing;
 
     const conv: Conversation = {
-      id: `conv-human-${villagerId}-${Date.now()}`,
+      id: `conv-human-${villagerId}-${this.now()}`,
       participantIds: [this.player.id, villagerId],
       messages: [],
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
+      startedAt: this.now(),
+      updatedAt: this.now(),
       active: true,
     };
     this.conversations = [conv, ...this.conversations].slice(0, MAX_CONVERSATIONS);
@@ -1771,8 +1875,8 @@ export class VillageSimulation {
   ) {
     this.appendWorldEvent(rt, `${this.player.name} said: "${userText.slice(0, 90)}"`);
     this.pushVillagerMemory(rt, {
-      id: `mem-dir-${Date.now()}-${slotIndex}`,
-      timestamp: Date.now(),
+      id: `mem-dir-${this.now()}-${slotIndex}`,
+      timestamp: this.now(),
       importance: 6,
       kind: 'observation',
       summary: `${this.player.name} instructed: "${userText.slice(0, 80)}"`,
@@ -1870,7 +1974,7 @@ export class VillageSimulation {
     // General movement prompt (e.g. "@all scatter / wander / move around")
     const sp =
       this.map.spawnPoints.length > 0
-        ? this.map.spawnPoints[(slotIndex + Math.floor(Math.random() * this.map.spawnPoints.length)) % this.map.spawnPoints.length]
+        ? this.map.spawnPoints[(slotIndex + Math.floor(this.rng() * this.map.spawnPoints.length)) % this.map.spawnPoints.length]
         : undefined;
     const goal = findNearestWalkableTile(
       this.map,
@@ -1878,7 +1982,7 @@ export class VillageSimulation {
       Math.round((sp?.y ?? rt.y) + (slotIndex % 3 === 0 ? 2 : -2)),
     );
     const path = findBestPath(goal);
-    rt.currentIntention = sp ? `Roaming paths near ${sp.label}` : 'Moving across Selo';
+    rt.currentIntention = sp ? `Roaming paths near ${sp.label}` : `Moving across ${placeName(this.world)}`;
     rt.activityLabel = rt.currentIntention;
     if (path.length > 0) {
       rt.path = path;
@@ -1923,17 +2027,17 @@ export class VillageSimulation {
     } = opts;
 
     const streamingMsg: ChatMessage = {
-      id: `msg-v-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `msg-v-${this.now()}-${this.rng().toString(36).slice(2, 6)}`,
       senderId: speakerCfg.id,
       senderName: speakerCfg.name,
       text: '',
-      timestamp: Date.now(),
+      timestamp: this.now(),
       kind: 'speech',
       source: 'story-sim',
     };
     const historySnapshot = conv.messages.slice();
     this.pushConversationMessage(conv, streamingMsg);
-    conv.updatedAt = Date.now();
+    conv.updatedAt = this.now();
     this.notify(true);
 
     let rawStream = '';
@@ -1947,7 +2051,7 @@ export class VillageSimulation {
       durationMs: number,
       willSpeakNow: boolean,
     ) => {
-      const nowSp = Date.now();
+      const nowSp = this.now();
       speakerRt.lastLatencyMs = durationMs;
       speakerRt.state = willSpeakNow ? 'speaking' : restingState;
       speakerRt.currentBubble = {
@@ -1971,7 +2075,8 @@ export class VillageSimulation {
     };
 
     try {
-      const res = await brainRouter.generateVillagerReply({
+      const res = await this.mind.generateVillagerReply({
+        world: this.world,
         villager: speakerCfg,
         runtime: speakerRt,
         partnerName,
@@ -1985,7 +2090,7 @@ export class VillageSimulation {
           streamingMsg.text = liveText;
           streamingMsg.reasoning = liveParsed.reasoning.join('\n\n') || undefined;
           if (liveText) {
-            const nowChunk = Date.now();
+            const nowChunk = this.now();
             speakerRt.currentBubble = {
               text: liveText,
               startedAt: speakerRt.currentBubble?.startedAt ?? nowChunk,
@@ -2017,7 +2122,7 @@ export class VillageSimulation {
 
       if (parsed.thoughts.length > 0) {
         const joinedThought = parsed.thoughts.join(' ');
-        const nowTh = Date.now();
+        const nowTh = this.now();
         speakerRt.currentThoughtBubble = {
           text: joinedThought,
           startedAt: nowTh,
@@ -2026,20 +2131,20 @@ export class VillageSimulation {
         if (this.modelSettings.eavesdropThoughts) {
           for (const thought of parsed.thoughts) {
             const thMsg: ChatMessage = {
-              id: `msg-th-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              id: `msg-th-${this.now()}-${this.rng().toString(36).slice(2, 6)}`,
               senderId: speakerCfg.id,
               senderName: speakerCfg.name,
               text: thought,
-              timestamp: Date.now(),
+              timestamp: this.now(),
               kind: 'thought',
               source: res.source,
             };
             const stIdx = conv.messages.indexOf(streamingMsg);
             conv.messages.splice(stIdx >= 0 ? stIdx : conv.messages.length, 0, thMsg);
-            conv.updatedAt = Date.now();
+            conv.updatedAt = this.now();
             this.notify(true);
             if (hearThoughts) {
-              await brainRouter.speakThought(thought, speakerCfg, this.modelSettings, resolver);
+              await this.mind.speakThought(thought, speakerCfg, this.modelSettings, resolver);
             }
           }
         }
@@ -2053,6 +2158,7 @@ export class VillageSimulation {
             actionText,
             hearSpeech && !res.audioHandled,
             resolver,
+            res.source,
           );
         }
       }
@@ -2084,13 +2190,13 @@ export class VillageSimulation {
       if (hearSpeech && !res.audioHandled && lineForTts) {
         const mix = resolver();
         if (mix.inRange) {
-          await brainRouter.speakLine(lineForTts, speakerCfg, this.modelSettings, resolver);
+          await this.mind.speakLine(lineForTts, speakerCfg, this.modelSettings, resolver);
         }
       }
       if (this.modelSettings.speakReasoning && parsed.reasoning.length > 0 && speakReasoningAudio) {
         const mix = resolver();
         if (mix.inRange) {
-          await brainRouter.speakLine(parsed.reasoning.join(' '), speakerCfg, this.modelSettings, resolver);
+          await this.mind.speakLine(parsed.reasoning.join(' '), speakerCfg, this.modelSettings, resolver);
         }
       }
       speakerRt.state = restingState;
@@ -2157,8 +2263,8 @@ export class VillageSimulation {
         onBeforeVoice: (finalSpoken) => {
           const summary = `${this.player.name} said: "${userText.slice(0, 50)}". I replied: "${finalSpoken.slice(0, 55)}"`;
           this.pushVillagerMemory(rt, {
-            id: `mem-u-${Date.now()}`,
-            timestamp: Date.now(),
+            id: `mem-u-${this.now()}`,
+            timestamp: this.now(),
             importance: 7,
             kind: 'conversation',
             summary,
@@ -2169,7 +2275,7 @@ export class VillageSimulation {
       });
     } finally {
       rt.state = rt.path.length > 0 ? 'walking' : 'idle';
-      rt.lastThinkAt = Date.now();
+      rt.lastThinkAt = this.now();
       this.notify(true);
     }
   }
@@ -2181,11 +2287,11 @@ export class VillageSimulation {
   ): Promise<void> {
     const narratorName = this.modelSettings.narratorName.trim() || 'Scribe';
     const streamingMsg: ChatMessage = {
-      id: `msg-nar-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      id: `msg-nar-${this.now()}-${this.rng().toString(36).slice(2, 5)}`,
       senderId: 'narrator',
       senderName: narratorName,
       text: '',
-      timestamp: Date.now(),
+      timestamp: this.now(),
       kind: 'narration',
       source: 'story-sim',
     };
@@ -2193,7 +2299,8 @@ export class VillageSimulation {
     this.notify(true);
 
     let rawNarStream = '';
-    const res = await brainRouter.generateNarratorReply({
+    const res = await this.mind.generateNarratorReply({
+        world: this.world,
       prompt: userText,
       sceneContext: this.buildSceneContext(),
       history: conv.messages.slice(0, -1),
@@ -2211,11 +2318,11 @@ export class VillageSimulation {
     streamingMsg.text = parsedNar.display;
     streamingMsg.reasoning = parsedNar.reasoning.join('\n\n') || undefined;
     streamingMsg.source = res.source;
-    conv.updatedAt = Date.now();
+    conv.updatedAt = this.now();
     this.notify(true);
 
     if (speakReply && this.modelSettings.narratorEnabled && streamingMsg.text.trim()) {
-      await brainRouter.speakNarration(streamingMsg.text, this.modelSettings);
+      await this.mind.speakNarration(streamingMsg.text, this.modelSettings);
     }
   }
 
@@ -2226,14 +2333,14 @@ export class VillageSimulation {
 
     const conv = this.getOrCreateHumanConversation(villagerId);
     this.pushConversationMessage(conv, {
-      id: `msg-u-${Date.now()}`,
+      id: `msg-u-${this.now()}`,
       senderId: this.player.id,
       senderName: this.player.name,
       text,
-      timestamp: Date.now(),
+      timestamp: this.now(),
       source: 'human-text',
     });
-    conv.updatedAt = Date.now();
+    conv.updatedAt = this.now();
     this.applyWorldDirection(cfg, rt, text);
     await this.executeVillagerReplyTurn(conv, cfg, rt, text, speakReply);
   }
@@ -2257,14 +2364,14 @@ export class VillageSimulation {
       if (activeTargetId === 'narrator') {
         const conv = this.getOrCreateHumanConversation('narrator');
         this.pushConversationMessage(conv, {
-          id: `msg-u-${Date.now()}`,
+          id: `msg-u-${this.now()}`,
           senderId: this.player.id,
           senderName: this.player.name,
           text,
-          timestamp: Date.now(),
+          timestamp: this.now(),
           source: 'human-text',
         });
-        conv.updatedAt = Date.now();
+        conv.updatedAt = this.now();
         await this.executeNarratorReplyTurn(conv, text, speakReply);
         return { focusedTargetId: 'narrator' };
       }
@@ -2285,14 +2392,14 @@ export class VillageSimulation {
         : targets[0].id;
     const conv = this.getOrCreateHumanConversation(hostId);
     this.pushConversationMessage(conv, {
-      id: `msg-u-${Date.now()}`,
+      id: `msg-u-${this.now()}`,
       senderId: this.player.id,
       senderName: this.player.name,
       text,
-      timestamp: Date.now(),
+      timestamp: this.now(),
       source: 'human-text',
     });
-    conv.updatedAt = Date.now();
+    conv.updatedAt = this.now();
     this.notify(true);
 
     // Apply instruction & pathing simultaneously to all targeted villagers first
@@ -2344,20 +2451,20 @@ export class VillageSimulation {
     this.notify(true);
 
     const userMsg: ChatMessage = {
-      id: `msg-uv-${Date.now()}`,
+      id: `msg-uv-${this.now()}`,
       senderId: this.player.id,
       senderName: this.player.name,
       text: 'Transcribing voice…',
-      timestamp: Date.now(),
+      timestamp: this.now(),
       source: 'human-voice',
       hasAudio: true,
     };
     const replyMsg: ChatMessage = {
-      id: `msg-vo-${Date.now()}`,
+      id: `msg-vo-${this.now()}`,
       senderId: cfg.id,
       senderName: cfg.name,
       text: '',
-      timestamp: Date.now(),
+      timestamp: this.now(),
       source: 'lfm3-omni',
       hasAudio: true,
     };
@@ -2365,7 +2472,8 @@ export class VillageSimulation {
     this.notify(true);
 
     try {
-      const res = await brainRouter.converseWithVoice({
+      const res = await this.mind.converseWithVoice({
+        world: this.world,
         villager: cfg,
         runtime: rt,
         audioBuffer,
@@ -2373,17 +2481,17 @@ export class VillageSimulation {
         onTextChunk: (chunk) => {
           replyMsg.text += chunk;
           rt.state = 'speaking';
-          rt.currentBubble = { text: replyMsg.text, expiresAt: Date.now() + 8000 };
+          rt.currentBubble = { text: replyMsg.text, expiresAt: this.now() + 8000 };
           this.notify();
         },
       });
       userMsg.text = res.userTranscript;
       replyMsg.text = res.replyText;
       rt.lastLatencyMs = res.durationMs;
-      rt.currentBubble = { text: res.replyText, expiresAt: Date.now() + 7500 };
+      rt.currentBubble = { text: res.replyText, expiresAt: this.now() + 7500 };
       this.pushVillagerMemory(rt, {
-        id: `mem-ov-${Date.now()}`,
-        timestamp: Date.now(),
+        id: `mem-ov-${this.now()}`,
+        timestamp: this.now(),
         importance: 8,
         kind: 'conversation',
         summary: `Voice chat with ${this.player.name}: "${res.userTranscript.slice(0, 50)}"`,
@@ -2391,7 +2499,7 @@ export class VillageSimulation {
     } finally {
       rt.state = 'idle';
       rt.activityLabel = cfg.plan;
-      rt.lastThinkAt = Date.now();
+      rt.lastThinkAt = this.now();
       this.notify(true);
     }
   }

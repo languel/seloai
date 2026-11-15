@@ -1,3 +1,4 @@
+import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
@@ -35,7 +36,7 @@ import {
   getPlayerSpriteCacheCount,
 } from '../engine/playerSpriteGenerator';
 import {
-  detectWorldTheme,
+  resolveWorldTheme,
   loadAestheticSettings,
   resolveAestheticTokens,
   type AestheticSettings,
@@ -56,7 +57,6 @@ import {
   drawVillager,
   getCachedImage,
   getCustomSpriteFrame,
-  getPresetSpriteFrame,
   renderOverlayBatch,
   resolveOverlayBatch,
   SPEECH_BUBBLE_FONT_PX,
@@ -213,7 +213,7 @@ const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }>
   const thumbRef = useRef<HTMLCanvasElement | null>(null);
   const frame = villager.customSprite
     ? getCustomSpriteFrame(villager.customSprite, 'down', 0, false)
-    : getPresetSpriteFrame(villager.spritesheetId, 'down', 0, false);
+    : null;
 
   useEffect(() => {
     const canvas = thumbRef.current;
@@ -402,7 +402,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     loadAestheticSettings(),
   );
   const aestheticSettings = aestheticSettingsProp ?? localAestheticSettings;
-  const worldTheme = detectWorldTheme(sim.map);
+  const worldTheme = resolveWorldTheme(sim.map, sim.world);
   const aestheticTokens = React.useMemo(
     () => resolveAestheticTokens(aestheticSettings, worldTheme),
     [aestheticSettings, worldTheme],
@@ -568,9 +568,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
         sim.nudgePlayer(dx / len, dy / len, dt);
       }
 
-      const simStart = performance.now();
-      sim.stepFrame(dt);
-      const simStepMs = performance.now() - simStart;
+      // The simulation itself is advanced by the app-level driver, not by this view.
+      const simStepMs = getLastSimStepMs();
 
       if (recorderRef.current?.active && now - lastMicUiAt >= 65) {
         lastMicUiAt = now;

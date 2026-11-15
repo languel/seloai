@@ -18,10 +18,46 @@ export function getAudioContext(): AudioContext {
   if (!sharedAudioCtx) {
     sharedAudioCtx = new AudioContext();
   }
-  if (sharedAudioCtx.state === 'suspended') {
+  if (sharedAudioCtx.state === 'suspended' && !audioPaused) {
     sharedAudioCtx.resume().catch(() => {});
   }
   return sharedAudioCtx;
+}
+
+let audioPaused = false;
+const extraPlaybackContexts = new Set<AudioContext>();
+let webSpeechGuard: { arm: () => void; disarm: () => void } | null = null;
+
+/** Registers a one-off playback context so pausing holds it too. Returns an unregister function. */
+export function trackPlaybackContext(ctx: AudioContext): () => void {
+  extraPlaybackContexts.add(ctx);
+  if (audioPaused) ctx.suspend().catch(() => {});
+  return () => extraPlaybackContexts.delete(ctx);
+}
+
+/**
+ * Holds or releases all speech playback mid-utterance. Playback resumes from where it
+ * stopped, and anything waiting for an utterance to end keeps waiting while paused.
+ */
+export function setAudioPaused(paused: boolean): void {
+  if (paused === audioPaused) return;
+  audioPaused = paused;
+  const contexts = [sharedAudioCtx, ...extraPlaybackContexts].filter(
+    (ctx): ctx is AudioContext => Boolean(ctx) && ctx!.state !== 'closed',
+  );
+  for (const ctx of contexts) {
+    (paused ? ctx.suspend() : ctx.resume()).catch(() => {});
+  }
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      if (paused) window.speechSynthesis.pause();
+      else window.speechSynthesis.resume();
+    } catch {
+      // ignore
+    }
+  }
+  if (paused) webSpeechGuard?.disarm();
+  else webSpeechGuard?.arm();
 }
 
 export class MicRecorder {
@@ -132,49 +168,14 @@ export class MicRecorder {
   }
 }
 
-export interface SpatialMix {
-  gain: number;
-  pan: number;
-  distance: number;
-  inRange: boolean;
-}
-
-export const EAVESDROP_SLIDER_MAX = 25;
-export const EAVESDROP_WHOLE_MAP_THRESHOLD = 90;
-export const EAVESDROP_WHOLE_MAP_RADIUS = 999;
-
-export function isWholeMapEavesdrop(radiusTiles: number): boolean {
-  return radiusTiles >= EAVESDROP_WHOLE_MAP_THRESHOLD;
-}
-
-export function computeSpatialMix(
-  speakerX: number,
-  speakerY: number,
-  listenerX: number,
-  listenerY: number,
-  radiusTiles = 9,
-): SpatialMix {
-  const dx = speakerX - listenerX;
-  const dy = speakerY - listenerY;
-  const distance = Math.hypot(dx, dy);
-  if (radiusTiles <= 0) {
-    return { gain: 0, pan: 0, distance, inRange: false };
-  }
-  if (isWholeMapEavesdrop(radiusTiles)) {
-    const normalized = Math.max(0, 1 - distance / 90);
-    const gain = Math.max(0.38, Math.min(1, 0.38 + 0.62 * Math.pow(normalized, 1.1)));
-    const pan = Math.max(-0.85, Math.min(0.85, dx / 24));
-    return { gain, pan, distance, inRange: true };
-  }
-  if (distance >= radiusTiles) {
-    return { gain: 0, pan: 0, distance, inRange: false };
-  }
-  const normalized = 1 - distance / radiusTiles;
-  const gain = Math.max(0, Math.min(1, Math.pow(normalized, 1.5)));
-  const pan = Math.max(-0.92, Math.min(0.92, dx / Math.max(1, radiusTiles * 0.65)));
-  return { gain, pan, distance, inRange: gain > 0.03 };
-}
-
+export {
+  EAVESDROP_SLIDER_MAX,
+  EAVESDROP_WHOLE_MAP_RADIUS,
+  EAVESDROP_WHOLE_MAP_THRESHOLD,
+  computeSpatialMix,
+  isWholeMapEavesdrop,
+  type SpatialMix,
+} from '../engine/spatialMix';
 export interface AcousticShaping {
   pitchSemitones?: number;
   speakingRate?: number;
@@ -373,6 +374,7 @@ export function speakWebSpeechFallback(
       if (settled) return;
       settled = true;
       clearTimeout(guardTimer);
+      if (webSpeechGuard === guard) webSpeechGuard = null;
       if (activeWebSpeechAbort === finish) {
         activeWebSpeechAbort = null;
       }
@@ -380,7 +382,17 @@ export function speakWebSpeechFallback(
     };
     const words = Math.max(1, text.trim().split(/\s+/).length);
     const guardMs = Math.max(2500, Math.min(16000, words * 550));
-    const guardTimer = setTimeout(finish, guardMs);
+    // The guard ends a stuck utterance, but must not fire while playback is deliberately held.
+    let guardTimer: ReturnType<typeof setTimeout> | undefined;
+    const guard = {
+      arm: () => {
+        clearTimeout(guardTimer);
+        guardTimer = setTimeout(finish, guardMs);
+      },
+      disarm: () => clearTimeout(guardTimer),
+    };
+    webSpeechGuard = guard;
+    if (!audioPaused) guard.arm();
     activeWebSpeechAbort = finish;
 
     window.speechSynthesis.cancel();
@@ -391,6 +403,7 @@ export function speakWebSpeechFallback(
     utter.onend = finish;
     utter.onerror = finish;
     window.speechSynthesis.speak(utter);
+    if (audioPaused) window.speechSynthesis.pause();
     return true;
   } catch {
     onEnd?.();

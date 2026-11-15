@@ -70,7 +70,7 @@ export function createBulgarianShevitsaMap(width = 64, height = 48): VillageMap 
         // Outside Bulgaria: Ecru woven linen fabric
         bg0[x][y] = 0;
         // Natural boundary contour (black cross-stitch border contour around the realm)
-        if (isBoundaryEdge(x, y)) {
+        if (isBoundaryEdge(x, y, width, height)) {
           bg1[x][y] = 11; // Black border cross-stitch
           collision[x][y] = !isBorderGate(x, y); // Open at gates
         }
@@ -430,7 +430,7 @@ function isInsideBulgariaContour(x: number, y: number): boolean {
   return true;
 }
 
-function isBoundaryEdge(x: number, y: number): boolean {
+function isBoundaryEdge(x: number, y: number, width: number, height: number): boolean {
   if (isInsideBulgariaContour(x, y)) return false;
   // If not inside, check if an immediate neighbor is inside
   for (let dx = -1; dx <= 1; dx++) {
@@ -438,7 +438,7 @@ function isBoundaryEdge(x: number, y: number): boolean {
       if (dx === 0 && dy === 0) continue;
       const nx = x + dx;
       const ny = y + dy;
-      if (nx >= 0 && nx < 64 && ny >= 0 && ny < 48 && isInsideBulgariaContour(nx, ny)) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && isInsideBulgariaContour(nx, ny)) {
         return true;
       }
     }

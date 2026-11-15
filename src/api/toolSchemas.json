@@ -23,11 +23,9 @@
         },
         "speedMultiplier": {
           "type": "number",
-          "enum": [
-            1,
-            2,
-            4
-          ]
+          "minimum": -10,
+          "maximum": 10,
+          "description": "Simulation pace. Negative values rewind through the recorded timeline."
         },
         "scatter": {
           "type": "boolean",
@@ -876,6 +874,53 @@
   {
     "name": "clear_database",
     "description": "Start a fresh story by clearing all conversation transcripts and villager memories while preserving map and cast.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "apply_world_commands",
+    "description": "Edit the authored world (map, landmarks, stamps, cast, setting) with one or more commands applied as a single undoable step. If any command is invalid, none is applied and the error says why. Command types: map.rename {name}; map.resize {width,height,fillTile?}; map.setTiles {layer,cells:[{x,y,tile}]}; map.fillRect {layer,x,y,width,height,tile}; map.floodFill {layer,x,y,tile}; map.setCollision {cells:[{x,y,blocked}]}; map.collisionRect {x,y,width,height,blocked}; map.placeStamp {stampId,x,y,layer?,blocksMovement?}; map.paintWang {kind:'edge'|'corner',layer,baseTileId,cells:[{x,y}],erase?,emptyTileId?}; map.upsertPoi {poi}; map.removePoi {id}; map.upsertSpawn {spawn}; map.removeSpawn {id}; map.upsertStamp {stamp}; map.removeStamp {id}; cast.upsert {member}; cast.update {id,patch}; cast.remove {id}; context.update {patch}. Layers are bg0, bg1, obj0, obj1; tile -1 is empty.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "label": {
+          "type": "string",
+          "description": "Short name for this step, shown in undo history."
+        }
+      },
+      "required": [
+        "commands"
+      ]
+    }
+  },
+  {
+    "name": "undo_world_edit",
+    "description": "Undo the most recent edit to the authored world (map, cast or setting). Does not rewind the simulation or conversations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "redo_world_edit",
+    "description": "Redo the most recently undone edit to the authored world.",
     "inputSchema": {
       "type": "object",
       "properties": {}

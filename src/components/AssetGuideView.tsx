@@ -60,7 +60,7 @@ Frames 1 to 4 must animate smoothly in a seamless loop at the exact same pixel b
     prompt: `Generate a JSON array of 4 villagers for SeloAI matching the schema in villager-character-template.json.
 Theme: A fantasy and medieval craft village inspired by weaving, blacksmithing, astronomy, alchemy, and herbalism.
 Requirements:
-- Fields per villager: id, name, role, accentColor (hex), spritesheetId ("f1".."f8"), identity (2 vivid sentences), plan (1 current goal), voiceStyle (tone for TTS), homeTile ({x, y} within 12..38, 10..30), speed (0.65..0.9).
+- Fields per villager: id, name, role, accentColor (hex), spritesheetId ("modular"), identity (2 vivid sentences), plan (1 current goal), voiceStyle (tone for TTS), homeTile ({x, y} within 12..38, 10..30), speed (0.65..0.9).
 - Return ONLY valid JSON with no markdown commentary.`,
   },
   {

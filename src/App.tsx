@@ -1,3 +1,9 @@
+import { startSimulationDriver } from './app/simulationDriver';
+import type { WorldCommand } from './world/commands';
+import { WorldStore } from './world/worldStore';
+import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext } from './world/packs';
+import { GENERIC_WORLD_CONTEXT } from './world/worldContext';
+import { createBrowserSimulation } from './app/browserSimulation';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
@@ -19,6 +25,8 @@ import {
   Upload,
   Users,
   Trees,
+  Redo2,
+  Undo2,
 } from 'lucide-react';
 import { bonsaiEngine } from './ai/bonsaiEngine';
 import { brainRouter } from './ai/brainRouter';
@@ -29,7 +37,7 @@ import { seloToolHost, type WorkspaceTabId } from './api/seloToolRegistry';
 import { installSeloWebMcpAndApi } from './api/webMcpBridge';
 import { abbreviateWorldName } from './utils/formatNames';
 import {
-  detectWorldTheme,
+  resolveWorldTheme,
   loadAestheticSettings,
   resolveAestheticTokens,
   saveAestheticSettings,
@@ -55,9 +63,7 @@ import { getSpriteSheetCacheCount } from './engine/spriteGenerator';
 import { VillageSimulation } from './engine/simulation';
 import type { ModelProgress, ModelSettings, VillageMap, VillagerConfig } from './engine/types';
 import {
-  createBalkanMythWorld,
   createBlankWorldMap,
-  createBulgarianShevitsaMap,
   deleteSavedWorld,
   exportCharactersJson,
   exportCharactersWithHistoriesJson,
@@ -74,25 +80,11 @@ import {
   type SavedWorldSlot,
 } from './storage/villageStore';
 
-type DemoWorldId = 'balkan-myth' | 'shevitsa' | 'starter';
+type DemoWorldId = string;
 
-const DEMO_WORLDS: Array<{ id: DemoWorldId; label: string; description: string }> = [
-  {
-    id: 'balkan-myth',
-    label: 'Zmeyovo: Well of the Lamia',
-    description: '48×36 Balkan myth map, 6 embroidered characters, Wang brook & Lamia sacrifice lore',
-  },
-  {
-    id: 'shevitsa',
-    label: 'Шевици: Embroidered Bulgaria',
-    description: '44×32 regional Shevitsa motifs (Elbetitsa, Kanatitsa, Tree of Life) & POIs',
-  },
-  {
-    id: 'starter',
-    label: 'SeloAI Starter Village',
-    description: 'Classic SeloAI starter meadow village, plaza, cottage & default cast',
-  },
-];
+const DEMO_WORLDS: Array<{ id: DemoWorldId; label: string; description: string }> = WORLD_PACKS.map(
+  (pack) => ({ id: pack.id, label: pack.name, description: pack.description }),
+);
 
 type TabId = 'village' | 'observatory' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
 
@@ -120,11 +112,14 @@ export function App() {
   const [omniStatus, setOmniStatus] = useState<ModelProgress>(omniEngine.progress);
   const [dataNotice, setDataNotice] = useState<string | null>(null);
   const [savedWorlds, setSavedWorlds] = useState<SavedWorldSlot[]>([]);
-  const [selectedDemoId, setSelectedDemoId] = useState<DemoWorldId>('balkan-myth');
+  const [selectedDemoId, setSelectedDemoId] = useState<DemoWorldId>(DEFAULT_WORLD_PACK_ID);
   const [selectedSavedWorldId, setSelectedSavedWorldId] = useState<string>('');
   const [saveWorldName, setSaveWorldName] = useState<string>('');
 
   const simRef = useRef<VillageSimulation | null>(null);
+  const storeRef = useRef<WorldStore>(new WorldStore());
+  const syncedCastRef = useRef<VillagerConfig[] | null>(null);
+  const [, setHistoryTick] = useState(0);
   const resetDialogRef = useRef<HTMLDialogElement | null>(null);
   const dataDialogRef = useRef<HTMLDialogElement | null>(null);
   const autoLoadAttemptedRef = useRef(false);
@@ -174,11 +169,13 @@ export function App() {
     let mounted = true;
     Promise.all([loadPersistedState(), listSavedWorlds()]).then(([persisted, saved]) => {
       if (!mounted) return;
-      simRef.current = new VillageSimulation(
+      simRef.current = createBrowserSimulation(
         persisted.map,
         persisted.villagers,
         persisted.conversations,
         persisted.modelSettings,
+        persisted.world,
+        { timers: 'sim' },
       );
       if (persisted.characterHistories) {
         simRef.current.applyCharacterHistories(persisted.characterHistories);
@@ -186,9 +183,12 @@ export function App() {
       if (persisted.focalWorldlineId) {
         simRef.current.setFocalWorldline(persisted.focalWorldlineId);
       }
-      setMap(persisted.map);
-      setVillagers(persisted.villagers);
       setSettings(persisted.modelSettings);
+      storeRef.current.reset({
+        map: persisted.map,
+        cast: persisted.villagers,
+        context: simRef.current.world,
+      });
       setSavedWorlds(saved);
       if (saved.length > 0) {
         setSelectedSavedWorldId(saved[0].id);
@@ -218,17 +218,42 @@ export function App() {
       conversations: simRef.current?.conversations ?? [],
       characterHistories: simRef.current?.exportCharacterHistories(),
       focalWorldlineId: simRef.current?.focalWorldlineId,
+      world: simRef.current?.world,
       savedAt: Date.now(),
     });
   };
 
+  // The world keeps running whichever workspace tab is showing.
+  useEffect(() => {
+    if (!ready) return;
+    return startSimulationDriver(() => simRef.current);
+  }, [ready]);
+
+  // The store is the single path for changing the authored world. Every change, whoever
+  // made it, lands here and is pushed out to the interface, the simulation and storage.
+  useEffect(
+    () =>
+      storeRef.current.subscribe((doc, _previous, reason) => {
+        latestRef.current.map = doc.map;
+        latestRef.current.villagers = doc.cast;
+        setMap(doc.map);
+        setVillagers(doc.cast);
+        setHistoryTick((tick) => tick + 1);
+        const sim = simRef.current;
+        if (sim) {
+          if (sim.world !== doc.context) sim.setWorld(doc.context);
+          if (sim.map !== doc.map) sim.updateMap(doc.map);
+          if (syncedCastRef.current !== doc.cast) sim.syncVillagers(doc.cast);
+        }
+        syncedCastRef.current = doc.cast;
+        const curSettings = latestRef.current.settings;
+        if (reason !== 'reset' && curSettings) persistAll(doc.map, doc.cast, curSettings);
+      }),
+    [],
+  );
+
   const handleApplyMap = (nextMap: VillageMap) => {
-    latestRef.current.map = nextMap;
-    setMap(nextMap);
-    simRef.current?.updateMap(nextMap);
-    const curVillagers = latestRef.current.villagers;
-    const curSettings = latestRef.current.settings;
-    if (curSettings) persistAll(nextMap, curVillagers, curSettings);
+    storeRef.current.dispatch({ type: 'map.replace', map: nextMap }, `Apply map "${nextMap.name}"`);
     brainRouter.log({
       channel: 'storage',
       level: 'info',
@@ -238,18 +263,23 @@ export function App() {
   };
 
   const handleApplyVillagers = (nextVillagers: VillagerConfig[]) => {
-    latestRef.current.villagers = nextVillagers;
-    setVillagers(nextVillagers);
-    simRef.current?.syncVillagers(nextVillagers);
-    const curMap = latestRef.current.map;
-    const curSettings = latestRef.current.settings;
-    if (curMap && curSettings) persistAll(curMap, nextVillagers, curSettings);
+    storeRef.current.dispatch({ type: 'cast.replace', cast: nextVillagers }, 'Update cast');
     brainRouter.log({
       channel: 'storage',
       level: 'info',
       title: 'Roster Updated',
       detail: `Synced ${nextVillagers.length} villagers to live simulation.`,
     });
+  };
+
+  const handleUndoWorld = () => {
+    const label = storeRef.current.undo();
+    if (label) setDataNotice(`Undid: ${label}`);
+  };
+
+  const handleRedoWorld = () => {
+    const label = storeRef.current.redo();
+    if (label) setDataNotice(`Redid: ${label}`);
   };
 
   const handleUpdateSettings = (patch: Partial<ModelSettings>) => {
@@ -275,6 +305,7 @@ export function App() {
         latestRef.current.tab = nextTab;
         setTab(nextTab);
       },
+      getStore: () => storeRef.current,
       applyMap: handleApplyMap,
       applyVillagers: handleApplyVillagers,
       updateSettings: handleUpdateSettings,
@@ -530,16 +561,18 @@ export function App() {
         const nextSettings = { ...settings, ...(parsed.modelSettings ?? {}) };
         const parts: string[] = [];
 
+        const importCommands: WorldCommand[] = [];
         if (parsed.map) {
-          setMap(nextMap);
-          simRef.current?.updateMap(nextMap);
+          importCommands.push({ type: 'map.replace', map: nextMap });
           parts.push(`level "${nextMap.name}"`);
         }
+        const importedContext = parsed.world ?? (parsed.map ? inferWorldContext(parsed.map) : null);
+        if (importedContext) importCommands.push({ type: 'context.update', patch: importedContext });
         if (parsed.villagers) {
-          setVillagers(nextVillagers);
-          simRef.current?.syncVillagers(nextVillagers);
+          importCommands.push({ type: 'cast.replace', cast: nextVillagers });
           parts.push(`${nextVillagers.length} characters`);
         }
+        if (importCommands.length > 0) storeRef.current.dispatchAll(importCommands, 'Import');
         if (parsed.modelSettings) {
           setSettings(nextSettings);
           simRef.current?.updateSettings(nextSettings);
@@ -590,6 +623,7 @@ export function App() {
       conversations: simRef.current?.conversations ?? [],
       characterHistories: simRef.current?.exportCharacterHistories() ?? {},
       focalWorldlineId: simRef.current?.focalWorldlineId ?? 'scribe',
+      world: simRef.current?.world,
       savedAt: Date.now(),
     };
   };
@@ -631,11 +665,13 @@ export function App() {
     if (!target) return;
     brainRouter.flushAudioQueue();
     const s = target.state;
-    const nextSim = new VillageSimulation(
+    const nextSim = createBrowserSimulation(
       structuredClone(s.map),
       structuredClone(s.villagers),
       structuredClone(s.conversations ?? []),
       { ...s.modelSettings },
+      s.world,
+      { timers: 'sim' },
     );
     if (s.characterHistories) {
       nextSim.applyCharacterHistories(structuredClone(s.characterHistories));
@@ -647,8 +683,11 @@ export function App() {
     latestRef.current.map = nextSim.map;
     latestRef.current.villagers = s.villagers;
     latestRef.current.settings = s.modelSettings;
-    setMap(nextSim.map);
-    setVillagers(structuredClone(s.villagers));
+    storeRef.current.reset({
+      map: nextSim.map,
+      cast: structuredClone(s.villagers),
+      context: nextSim.world,
+    });
     setSettings({ ...s.modelSettings });
     savePersistedState({ ...s, savedAt: Date.now() });
     setSelectedSavedWorldId(target.id);
@@ -673,74 +712,53 @@ export function App() {
     await autoBackupCurrentWorld();
     brainRouter.flushAudioQueue();
     const blankMap = createBlankWorldMap(`World ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-    setMap(blankMap);
-    simRef.current?.updateMap(blankMap);
+    storeRef.current.reset({
+      map: blankMap,
+      cast: latestRef.current.villagers,
+      context: structuredClone(GENERIC_WORLD_CONTEXT),
+    });
     simRef.current?.clearDatabase();
     persistAll(blankMap, villagers, settings);
     setDataNotice('Created a new blank world and cleared the story database.');
   };
 
-  const handleLoadShevitsaRealm = async () => {
-    if (!settings) return;
-    await autoBackupCurrentWorld();
-    brainRouter.flushAudioQueue();
-    const shevitsaMap = createBulgarianShevitsaMap();
-    setMap(shevitsaMap);
-    simRef.current?.updateMap(shevitsaMap);
-    simRef.current?.clearDatabase();
-    persistAll(shevitsaMap, villagers, settings);
-    dataDialogRef.current?.close();
-    setDataNotice('Loaded "Шевици: The Embroidered Realm of Bulgaria" with regional embroidery motifs & POIs.');
-  };
-
-  const handleLoadBalkanMythWorld = async () => {
-    if (!settings) return;
-    await autoBackupCurrentWorld();
-    brainRouter.flushAudioQueue();
-    const balkan = createBalkanMythWorld();
-    latestRef.current.map = balkan.map;
-    latestRef.current.villagers = balkan.villagers;
-    setMap(balkan.map);
-    setVillagers(balkan.villagers);
-    simRef.current?.updateMap(balkan.map);
-    simRef.current?.syncVillagers(balkan.villagers);
-    simRef.current?.clearDatabase();
-    simRef.current?.setFocalWorldline('lamia');
-    void simRef.current?.sendUserAddressedMessage('lamia', balkan.openingDirective, false);
-    persistAll(balkan.map, balkan.villagers, settings);
-    dataDialogRef.current?.close();
-    setTab('village');
-    setDataNotice('Loaded "Zmeyovo: Well of the Lamia" — Balkan embroidery village & myth cast.');
-  };
-
   const handleConfirmReset = async () => {
     await autoBackupCurrentWorld();
     const fresh = await resetPersistedState();
-    simRef.current = new VillageSimulation(
+    simRef.current = createBrowserSimulation(
       fresh.map,
       fresh.villagers,
       fresh.conversations,
       fresh.modelSettings,
+      fresh.world,
+      { timers: 'sim' },
     );
-    setMap(fresh.map);
-    setVillagers(fresh.villagers);
+    storeRef.current.reset({ map: fresh.map, cast: fresh.villagers, context: simRef.current.world });
     setSettings(fresh.modelSettings);
   };
 
-  const handleLoadDemoWorld = async (demoId: DemoWorldId) => {
-    setSelectedDemoId(demoId);
-    if (demoId === 'balkan-myth') {
-      await handleLoadBalkanMythWorld();
-    } else if (demoId === 'shevitsa') {
-      await handleLoadShevitsaRealm();
-    } else {
-      await handleConfirmReset();
-      dataDialogRef.current?.close();
-      setDataNotice('Loaded "SeloAI Starter Village" demo.');
+  const handleLoadDemoWorld = async (packId: DemoWorldId) => {
+    const definition = findWorldPack(packId);
+    if (!definition || !settings) return;
+    setSelectedDemoId(packId);
+    await autoBackupCurrentWorld();
+    brainRouter.flushAudioQueue();
+    const pack = definition.build();
+    const nextVillagers = pack.cast ?? latestRef.current.villagers;
+    storeRef.current.reset({ map: pack.map, cast: nextVillagers, context: pack.context });
+    const sim = simRef.current;
+    sim?.clearDatabase();
+    if (pack.story.focalCharacterId) sim?.setFocalWorldline(pack.story.focalCharacterId);
+    if (pack.story.openingDirective && pack.story.focalCharacterId) {
+      void sim?.sendUserAddressedMessage(pack.story.focalCharacterId, pack.story.openingDirective, false);
     }
+    persistAll(pack.map, nextVillagers, settings);
+    dataDialogRef.current?.close();
+    setTab('village');
+    setDataNotice(`Loaded "${pack.name}".`);
   };
 
-  const worldTheme = map ? detectWorldTheme(map) : 'classic';
+  const worldTheme = map ? resolveWorldTheme(map, simRef.current?.world) : 'classic';
   const aestheticTokens = React.useMemo(
     () => resolveAestheticTokens(aestheticSettings, worldTheme),
     [aestheticSettings, worldTheme],
@@ -905,6 +923,34 @@ export function App() {
             <Database className="h-3.5 w-3.5" />
             <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
               World &amp; Data
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleUndoWorld}
+            disabled={!storeRef.current.canUndo}
+            title="Undo world edit"
+            aria-label="Undo world edit"
+            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
+              Undo world edit
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRedoWorld}
+            disabled={!storeRef.current.canRedo}
+            title="Redo world edit"
+            aria-label="Redo world edit"
+            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
+              Redo world edit
             </span>
           </button>
 
@@ -1210,7 +1256,7 @@ export function App() {
                 className="rounded-sm border border-crimson/40 bg-surface px-2 py-1.5 text-left text-crimson hover:border-crimson"
               >
                 <div className="font-semibold">Reset Defaults</div>
-                <div className="text-[10px] text-muted">Starter map &amp; cast</div>
+                <div className="text-[10px] text-muted">Zmeyovo map &amp; cast</div>
               </button>
             </div>
           </section>
@@ -1293,7 +1339,7 @@ export function App() {
           Reset Village to Defaults?
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          This restores the default placeholder map, starter villagers, and clears locally saved
+          This restores the default Zmeyovo map and cast, and clears locally saved
           conversations in IndexedDB. Loaded WebGPU models stay in memory.
         </p>
         <form method="dialog" className="mt-4 flex justify-end gap-2">

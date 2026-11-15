@@ -21,6 +21,9 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { ANIMATION_CATALOG, TILESET_PRESETS } from '../data/defaultData';
+
+/** Tile 0 is the base ground tile in every bundled tileset. */
+const DEFAULT_GROUND_TILE = 0;
 import { createBalkanMythMap } from '../data/balkanMythMap';
 import { createBulgarianShevitsaMap } from '../data/shevitsaMap';
 import { BALKAN_TILES } from '../engine/balkanTileset';
@@ -133,8 +136,8 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
   const [activeLayer, setActiveLayer] = useState<EditorLayer>('bg0');
   const [tool, setTool] = useState<Tool>('brush');
   const [paletteSel, setPaletteSel] = useState<PaletteSelection>({
-    startX: 271 % Math.max(1, Math.floor(map.tileSetDimX / map.tileDim)),
-    startY: Math.floor(271 / Math.max(1, Math.floor(map.tileSetDimX / map.tileDim))),
+    startX: 0,
+    startY: 0,
     w: 1,
     h: 1,
   });
@@ -144,7 +147,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
   const [activeStampId, setActiveStampId] = useState<string | null>(null);
   const [newStampName, setNewStampName] = useState('House');
   const [newStampBlocks, setNewStampBlocks] = useState(true);
-  const [selectedAnimSheet, setSelectedAnimSheet] = useState<string>('campfire.json');
+  const [selectedAnimSheet, setSelectedAnimSheet] = useState<string>(Object.keys(ANIMATION_CATALOG)[0] ?? '');
   const [newSpawnLabel, setNewSpawnLabel] = useState('Village Gathering');
   const [newPoiTag, setNewPoiTag] = useState('Plaza');
   const [newPoiLabel, setNewPoiLabel] = useState('Village Plaza');
@@ -182,7 +185,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
     : undefined;
 
   const pushUndo = (snapshot: VillageMap) => {
-    setUndoStack((prev) => [...prev.slice(-29), cloneMap(snapshot)]);
+    setUndoStack((prev) => [...prev.slice(-49), cloneMap(snapshot)]);
     setRedoStack([]);
   };
 
@@ -563,12 +566,12 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
     }
 
     if (tool === 'fill' && isInitialClick) {
-      pushUndo(draft);
       const next = cloneMap(draft);
       const targetGrid = getActiveTileGrid(next)!;
       const targetVal = targetGrid[tx][ty];
       const replacement = selectedTileIdx;
       if (targetVal === replacement) return;
+      pushUndo(draft);
 
       const queue: Array<[number, number]> = [[tx, ty]];
       const visited = new Set<string>();
@@ -704,7 +707,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
       ...prev,
       width: w,
       height: h,
-      bgTiles: prev.bgTiles.map((l, i) => resizeGrid(l, i === 0 ? 271 : -1)),
+      bgTiles: prev.bgTiles.map((l, i) => resizeGrid(l, i === 0 ? DEFAULT_GROUND_TILE : -1)),
       objectTiles: prev.objectTiles.map((l) => resizeGrid(l, -1)),
       collisionGrid: Array.from({ length: w }, (_, x) =>
         Array.from({ length: h }, (_, y) => prev.collisionGrid[x]?.[y] ?? false),
@@ -759,7 +762,7 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
         ? -1
         : newLevelFill === 'selected'
           ? Math.max(0, selectedTileIdx)
-          : 271;
+          : DEFAULT_GROUND_TILE;
     const makeGrid = (fill: number): TileGrid =>
       Array.from({ length: w }, () => Array.from({ length: h }, () => fill));
     const cx = Math.floor(w / 2);
@@ -918,7 +921,9 @@ export const LevelEditorView: React.FC<LevelEditorViewProps> = ({
                 ['spawns', 'Spawn Points'],
                 ['pois', 'POIs (#Tag)'],
               ] as Array<[EditorLayer, string]>
-            ).map(([id, label]) => (
+            )
+              .filter(([id]) => id !== 'animated' || Object.keys(ANIMATION_CATALOG).length > 0)
+              .map(([id, label]) => (
               <button
                 key={id}
                 type="button"

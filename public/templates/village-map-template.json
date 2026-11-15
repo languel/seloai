@@ -4,19 +4,19 @@
   "tileDim": 32,
   "width": 8,
   "height": 6,
-  "tileSetUrl": "/assets/gentle-obj.png",
-  "tileSetDimX": 1440,
-  "tileSetDimY": 1024,
+  "tileSetUrl": "/assets/balkan-myth-tileset.png",
+  "tileSetDimX": 512,
+  "tileSetDimY": 512,
   "bgTiles": [
     [
-      [271, 271, 271, 271, 271, 271],
-      [271, 271, 271, 271, 271, 271],
-      [271, 271, 962, 962, 271, 271],
-      [271, 271, 962, 962, 271, 271],
-      [271, 271, 962, 962, 271, 271],
-      [271, 271, 962, 962, 271, 271],
-      [271, 271, 271, 271, 271, 271],
-      [271, 271, 271, 271, 271, 271]
+      [0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0],
+      [0, 0, 962, 962, 0, 0],
+      [0, 0, 962, 962, 0, 0],
+      [0, 0, 962, 962, 0, 0],
+      [0, 0, 962, 962, 0, 0],
+      [0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0]
     ]
   ],
   "objectTiles": [
@@ -41,18 +41,7 @@
     [false, false, false, false, false, false],
     [false, false, false, false, false, false]
   ],
-  "animatedSprites": [
-    {
-      "id": "anim-hearth",
-      "x": 96,
-      "y": 64,
-      "w": 32,
-      "h": 32,
-      "layer": 1,
-      "sheet": "campfire.json",
-      "animation": "pixels_large"
-    }
-  ],
+  "animatedSprites": [],
   "spawnPoints": [
     { "id": "spawn-center", "label": "Village Square", "x": 3, "y": 3 }
   ]

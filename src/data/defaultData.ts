@@ -1,17 +1,3 @@
-import * as rawMap from './defaultMapRaw.js';
-import { data as f1 } from './spritesheets/f1';
-import { data as f2 } from './spritesheets/f2';
-import { data as f3 } from './spritesheets/f3';
-import { data as f4 } from './spritesheets/f4';
-import { data as f5 } from './spritesheets/f5';
-import { data as f6 } from './spritesheets/f6';
-import { data as f7 } from './spritesheets/f7';
-import { data as f8 } from './spritesheets/f8';
-import campfireAnim from './animations/campfire.json';
-import gentlesparkleAnim from './animations/gentlesparkle.json';
-import gentlesplashAnim from './animations/gentlesplash.json';
-import gentlewaterfallAnim from './animations/gentlewaterfall.json';
-import windmillAnim from './animations/windmill.json';
 import { createBulgarianShevitsaMap } from './shevitsaMap';
 import {
   createBalkanMythMap,
@@ -23,9 +9,7 @@ import type {
   BrainEngineKind,
   ImageGenProvider,
   ModelSettings,
-  SpritesheetPreset,
   TextDtype,
-  TileGrid,
   VillageMap,
   VillagerConfig,
   VillagerVoiceProfile,
@@ -170,7 +154,7 @@ export function buildNarratorConfig(settings: ModelSettings): VillagerConfig {
     id: 'narrator',
     name: settings.narratorName.trim() || 'Scribe',
     role: 'Village Scribe',
-    spritesheetId: 'f1',
+    spritesheetId: 'custom',
     accentColor: '#c98a3b',
     identity: 'The invisible chronicler of Selo who reads scene beats, gestures, and reflections.',
     plan: 'Observe and narrate non-dialogue moments in turn.',
@@ -184,230 +168,26 @@ export function buildNarratorConfig(settings: ModelSettings): VillagerConfig {
   };
 }
 
+/** Animated prop catalogue. Empty until procedural animated props exist. */
 export const ANIMATION_CATALOG: Record<
   string,
   { label: string; url: string; spritesheet: any; defaultW: number; defaultH: number }
-> = {
-  'campfire.json': {
-    label: 'Hearth Campfire',
-    url: '/assets/spritesheets/campfire.png',
-    spritesheet: campfireAnim,
-    defaultW: 32,
-    defaultH: 32,
-  },
-  'windmill.json': {
-    label: 'Village Windmill',
-    url: '/assets/spritesheets/windmill.png',
-    spritesheet: windmillAnim,
-    defaultW: 208,
-    defaultH: 208,
-  },
-  'gentlesparkle.json': {
-    label: 'Water Sparkle',
-    url: '/assets/spritesheets/gentlesparkle32.png',
-    spritesheet: gentlesparkleAnim,
-    defaultW: 32,
-    defaultH: 32,
-  },
-  'gentlewaterfall.json': {
-    label: 'Waterfall',
-    url: '/assets/spritesheets/gentlewaterfall32.png',
-    spritesheet: gentlewaterfallAnim,
-    defaultW: 32,
-    defaultH: 96,
-  },
-  'gentlesplash.json': {
-    label: 'Water Splash',
-    url: '/assets/spritesheets/gentlewaterfall32.png',
-    spritesheet: gentlesplashAnim,
-    defaultW: 32,
-    defaultH: 64,
-  },
-};
-
-export const SPRITESHEET_PRESETS: SpritesheetPreset[] = [
-  { id: 'f1', label: 'Folk 1 (Blue Tunic)', textureUrl: '/assets/32x32folk.png', data: f1 },
-  { id: 'f2', label: 'Folk 2 (Scholar)', textureUrl: '/assets/32x32folk.png', data: f2 },
-  { id: 'f3', label: 'Folk 3 (Herbalist)', textureUrl: '/assets/32x32folk.png', data: f3 },
-  { id: 'f4', label: 'Folk 4 (Forester)', textureUrl: '/assets/32x32folk.png', data: f4 },
-  { id: 'f5', label: 'Folk 5 (Artisan)', textureUrl: '/assets/32x32folk.png', data: f5 },
-  { id: 'f6', label: 'Folk 6 (Merchant)', textureUrl: '/assets/32x32folk.png', data: f6 },
-  { id: 'f7', label: 'Folk 7 (Elder)', textureUrl: '/assets/32x32folk.png', data: f7 },
-  { id: 'f8', label: 'Folk 8 (Traveler)', textureUrl: '/assets/32x32folk.png', data: f8 },
-];
+> = {};
 
 export const TILESET_PRESETS = [
   { label: 'Balkan Myth Embroidery (Lamia & Zmeyovo)', url: '/assets/balkan-myth-tileset.png', w: 512, h: 512, tileDim: 32 },
   { label: 'Bulgarian Shevitsa (Folk Embroidery)', url: '/assets/shevitsa-tileset.png', w: 512, h: 512, tileDim: 32 },
-  { label: 'Gentle Village (Placeholder)', url: '/assets/gentle-obj.png', w: 1440, h: 1024, tileDim: 32 },
-  { label: 'RPG Classic Tileset', url: '/assets/rpg-tileset.png', w: 1600, h: 1600, tileDim: 80 },
-  { label: 'Mage City Tileset', url: '/assets/magecity.png', w: 256, h: 1450, tileDim: 32 },
 ];
 
 export { createBulgarianShevitsaMap, createBalkanMythMap, createBalkanMythVillagers, createBalkanMythWorld };
 
-function buildInitialCollisionGrid(objectTiles: TileGrid[], width: number, height: number): boolean[][] {
-  const grid: boolean[][] = Array.from({ length: width }, () => Array(height).fill(false));
-  for (let x = 0; x < width; x++) {
-    for (let y = 0; y < height; y++) {
-      for (const layer of objectTiles) {
-        if (layer[x]?.[y] !== undefined && layer[x][y] !== -1) {
-          grid[x][y] = true;
-        }
-      }
-    }
-  }
-  return grid;
-}
-
-function cloneGrids(grids: number[][][]): TileGrid[] {
-  return grids.map((layer) => layer.map((col) => [...col]));
-}
-
+/** The world a fresh install opens with. */
 export function createDefaultMap(): VillageMap {
-  const bgTiles = cloneGrids(rawMap.bgtiles);
-  const objectTiles = cloneGrids(rawMap.objmap);
-  const width = bgTiles[0].length;
-  const height = bgTiles[0][0].length;
-  return {
-    name: 'Selo Horyzont (Placeholder)',
-    tileDim: rawMap.tiledim,
-    width,
-    height,
-    tileSetUrl: rawMap.tilesetpath,
-    tileSetDimX: rawMap.tilesetpxw,
-    tileSetDimY: rawMap.tilesetpxh,
-    bgTiles,
-    objectTiles,
-    collisionGrid: buildInitialCollisionGrid(objectTiles, width, height),
-    animatedSprites: rawMap.animatedsprites.map((s: any, idx: number) => ({
-      id: `anim-${idx}`,
-      x: s.x,
-      y: s.y,
-      w: s.w,
-      h: s.h,
-      layer: s.layer,
-      sheet: s.sheet,
-      animation: s.animation,
-    })),
-    spawnPoints: [
-      { id: 'spawn-plaza', label: 'Village Square', x: 22, y: 16 },
-      { id: 'spawn-mill', label: 'Windmill Meadow', x: 35, y: 20 },
-      { id: 'spawn-well', label: 'River Crossing', x: 14, y: 14 },
-      { id: 'spawn-hearth', label: 'Hearth Fire', x: 28, y: 11 },
-    ],
-    pointsOfInterest: [
-      { id: 'poi-plaza', tag: 'Plaza', label: 'Village Square', x: 22, y: 16, description: 'Central cobble plaza where travelers gather' },
-      { id: 'poi-windmill', tag: 'Windmill', label: 'Windmill Meadow', x: 35, y: 20, description: 'Breezy meadow beneath the wooden windmill' },
-      { id: 'poi-crossing', tag: 'RiverCrossing', label: 'River Crossing', x: 14, y: 14, description: 'Stone ford beside the clear creek' },
-      { id: 'poi-hearth', tag: 'Hearth', label: 'Hearth Fire', x: 28, y: 11, description: 'Warm stone firepit for evening tales' },
-    ],
-    stamps: [],
-  };
+  return createBalkanMythMap();
 }
 
-export const DEFAULT_VILLAGERS: VillagerConfig[] = [
-  {
-    id: 'v-mara',
-    name: 'Mara',
-    role: 'Tapestry Weaver',
-    accentColor: '#b42828',
-    spritesheetId: 'f1',
-    identity:
-      'Mara is a spirited weaver who stitches village legends and star-charts into crimson-and-indigo tapestries. She is warm, observant, and fiercely proud of her craft.',
-    plan: 'Gather madder root dyes near the meadow and compare woven motifs with neighbors.',
-    voiceStyle: 'Warm, melodic, unhurried storyteller.',
-    voice: {
-      gender: 'female',
-      language: 'British English',
-      pitchSemitones: 0.5,
-      speakingRate: 0.96,
-      warmthDb: 2.5,
-    },
-    homeTile: { x: 21, y: 15 },
-    speed: 0.78,
-  },
-  {
-    id: 'v-bram',
-    name: 'Bram',
-    role: 'Clockwork Blacksmith',
-    accentColor: '#c98a2c',
-    spritesheetId: 'f4',
-    identity:
-      'Bram tends the village forge and repairs the wooden windmill gears. Blunt yet deeply generous, he prefers practical fixes over idle philosophy.',
-    plan: 'Inspect the southern windmill blades and trade iron hinges for fresh bread.',
-    voiceStyle: 'Grounded, rhythmic baritone, concise sentences.',
-    voice: {
-      gender: 'male',
-      language: 'American English',
-      pitchSemitones: -2.0,
-      speakingRate: 0.94,
-      warmthDb: 3.5,
-    },
-    homeTile: { x: 31, y: 18 },
-    speed: 0.72,
-  },
-  {
-    id: 'v-lyra',
-    name: 'Lyra',
-    role: 'Herbalist & Apothecary',
-    accentColor: '#2f6b47',
-    spritesheetId: 'f3',
-    identity:
-      'Lyra studies wild thyme, chamomile, and river reeds. She speaks in gentle nature metaphors and remembers every villager’s seasonal ailments.',
-    plan: 'Check the riverbank herbs near the waterfall and brew evening tea for the square.',
-    voiceStyle: 'Soft, curious, lyrical tone.',
-    voice: {
-      gender: 'female',
-      language: 'American English',
-      pitchSemitones: 2.0,
-      speakingRate: 1.02,
-      warmthDb: 1.0,
-    },
-    homeTile: { x: 14, y: 14 },
-    speed: 0.75,
-  },
-  {
-    id: 'v-corin',
-    name: 'Corin',
-    role: 'Lantern Astronomer',
-    accentColor: '#23436b',
-    spritesheetId: 'f7',
-    identity:
-      'Corin maps the constellations above the ridge and keeps the village almanac. He asks quirky questions about time, memory, and how minds work.',
-    plan: 'Stroll toward the campfire to record evening weather notes and debate big ideas.',
-    voiceStyle: 'Thoughtful, inquisitive, slight dry humor.',
-    voice: {
-      gender: 'male',
-      language: 'British English',
-      pitchSemitones: -0.5,
-      speakingRate: 0.98,
-      warmthDb: -1.0,
-    },
-    homeTile: { x: 26, y: 12 },
-    speed: 0.7,
-  },
-  {
-    id: 'v-sera',
-    name: 'Sera',
-    role: 'Traveling Chronicler',
-    accentColor: '#7c3aed',
-    spritesheetId: 'f6',
-    identity:
-      'Sera just arrived from neighboring valleys with songs, rumors, and sketches of ancient stonework. She loves sparking lively debates at the plaza.',
-    plan: 'Interview every resident to compile a living chronicle of the settlement.',
-    voiceStyle: 'Energetic, expressive, playful.',
-    voice: {
-      gender: 'female',
-      language: 'Polish',
-      pitchSemitones: 1.0,
-      speakingRate: 1.06,
-      warmthDb: 0,
-    },
-    homeTile: { x: 24, y: 20 },
-    speed: 0.85,
-  },
-];
+export const DEFAULT_VILLAGERS: VillagerConfig[] = createBalkanMythVillagers();
+
 
 export const API_BRAIN_PRESETS: Array<{
   provider: ApiBrainProvider;

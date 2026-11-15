@@ -13,77 +13,26 @@ import { bonsaiEngine } from './bonsaiEngine';
 import { omniEngine } from './omniEngine';
 import { minicpmEngine } from './minicpmEngine';
 import { chatWithExternalApi, synthesizeSpeechViaApi } from './localApiClient';
+import { isTextTooSimilar, parseDialogueAndNarration, type ParsedDialogue } from '../engine/dialogueText';
+import {
+  GENERIC_WORLD_CONTEXT,
+  describeSetting,
+  fillTemplate,
+  placeName,
+  selectLines,
+  type WorldContext,
+} from '../world/worldContext';
 import { saveLastLoadedModel, type ModelCacheSpec } from './modelCache';
 import {
   StreamingPcmPlayer,
   cancelActiveWebSpeech,
+  setAudioPaused,
+  trackPlaybackContext,
   speakWebSpeechAsync,
   type SpatialMix,
 } from './audioPipeline';
 
-export interface ParsedDialogue {
-  spoken: string;
-  narration: string[];
-  thoughts: string[];
-  reasoning: string[];
-  display: string;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function normalizeTokens(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 2);
-}
-
-/**
- * Detects whether a candidate motive, narration beat, or spoken line is a near-duplicate
- * of recent text so LLM/story-sim characters cannot get stuck repeating the same phrase.
- */
-export function isTextTooSimilar(
-  candidate: string,
-  recentList: string[],
-  threshold = 0.55,
-): boolean {
-  const cleanCand = candidate.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (!cleanCand) return false;
-  const candTokens = normalizeTokens(cleanCand);
-  const candSet = new Set(candTokens);
-
-  for (const prevRaw of recentList) {
-    const prev = prevRaw?.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (!prev) continue;
-    if (cleanCand === prev) return true;
-    if (cleanCand.length >= 16 && prev.length >= 16 && (prev.includes(cleanCand) || cleanCand.includes(prev))) {
-      return true;
-    }
-    const prevTokens = normalizeTokens(prev);
-    if (candTokens.length === 0 || prevTokens.length === 0) continue;
-    const prevSet = new Set(prevTokens);
-    let intersection = 0;
-    for (const t of candSet) {
-      if (prevSet.has(t)) intersection++;
-    }
-    const union = candSet.size + prevSet.size - intersection;
-    if (union > 0 && intersection / union >= threshold) {
-      return true;
-    }
-    // Catch repeated 3+ word lead-in stems like "chase the brass key..."
-    if (
-      candTokens.length >= 4 &&
-      prevTokens.length >= 4 &&
-      candTokens.slice(0, 3).join(' ') === prevTokens.slice(0, 3).join(' ')
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
+export { isTextTooSimilar, parseDialogueAndNarration, type ParsedDialogue };
 
 function pushRing(arr: string[] | undefined, value: string, max = 6): string[] {
   const clean = value.trim();
@@ -100,87 +49,6 @@ function pickFreshCandidate(candidates: string[], avoid: string[], cursorSeed = 
     if (!isTextTooSimilar(c, avoid, 0.52)) return c;
   }
   return candidates[start]!;
-}
-
-/**
- * Separates LLM meta <think>...</think> reasoning, optional <thought>...</thought>
- * inner monologue, inline narrative actions (*looks out*, [waves]), and pure
- * spoken dialogue without accidental self-name prefixes ("Olena: Hello").
- */
-export function parseDialogueAndNarration(
-  rawText: string,
-  speakerName?: string,
-): ParsedDialogue {
-  const reasoning: string[] = [];
-  const thoughts: string[] = [];
-
-  let cleaned = (rawText ?? '')
-    .replace(/<think>([\s\S]*?)(?:<\/think>|$)/gi, (_full, body) => {
-      const trace = String(body ?? '').trim();
-      if (trace) reasoning.push(trace);
-      return '';
-    })
-    .replace(/<thought>([\s\S]*?)(?:<\/thought>|$)/gi, (_full, body) => {
-      const inner = String(body ?? '').trim();
-      if (inner) thoughts.push(inner);
-      return '';
-    })
-    .trim();
-
-  const candidateNames = new Set<string>(['assistant', 'npc', 'villager']);
-  if (speakerName?.trim()) {
-    const trimmed = speakerName.trim();
-    candidateNames.add(trimmed);
-    const firstWord = trimmed.split(/\s+/)[0];
-    if (firstWord && firstWord.length >= 2) {
-      candidateNames.add(firstWord);
-    }
-  }
-  const namesPattern = Array.from(candidateNames).map(escapeRegExp).join('|');
-  const prefixRegex = new RegExp(
-    `^(?:\\*\\*|__)?\\[?(?:${namesPattern})\\]?(?:\\*\\*|__)?\\s*(?:says\\s*)?[:\\-—]\\s*`,
-    'i',
-  );
-
-  for (let i = 0; i < 3; i += 1) {
-    const next = cleaned.replace(prefixRegex, '').trim();
-    if (next === cleaned) break;
-    cleaned = next;
-  }
-
-  // Unwrap balanced outer quotes if prefix removal left a single quoted speech string
-  if (
-    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-    (cleaned.startsWith('“') && cleaned.endsWith('”'))
-  ) {
-    const inner = cleaned.slice(1, -1).trim();
-    if (inner.length > 0 && !inner.slice(0, -1).includes('"')) {
-      cleaned = inner;
-    }
-  }
-
-  const narration: string[] = [];
-  const spoken = cleaned
-    .replace(/(?:\*([^*\n]{2,120})\*|\[([^\]\n]{2,120})\])/g, (_full, starBody, bracketBody) => {
-      const note = String(starBody ?? bracketBody ?? '').trim();
-      if (note) {
-        narration.push(note.charAt(0).toUpperCase() + note.slice(1));
-      }
-      return ' ';
-    })
-    .replace(/\s+([,.;!?])/g, '$1')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-    .replace(prefixRegex, '')
-    .trim();
-
-  return {
-    spoken,
-    narration,
-    thoughts,
-    reasoning,
-    display: spoken || narration.join(' ') || thoughts.join(' ') || cleaned,
-  };
 }
 
 type WorkerEvent =
@@ -240,6 +108,29 @@ class BrainRouter {
     this.activeSpeechInfo = info;
     for (const fn of this.speechListeners) fn(info);
   }
+  private random: () => number = Math.random;
+  private clockNow: () => number = Date.now;
+  private delay: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * Replaces the sources of randomness, time and pacing used by the built-in story engine,
+   * and clears its anti-repetition state, so that a headless run is reproducible.
+   */
+  configureStoryRuntime(opts: {
+    random?: () => number;
+    now?: () => number;
+    delay?: (ms: number) => Promise<void>;
+  }) {
+    if (opts.random) this.random = opts.random;
+    if (opts.now) this.clockNow = opts.now;
+    if (opts.delay) this.delay = opts.delay;
+    resetStoryEngineState();
+  }
+
+  /** In auto mode, skip an unreachable external API until this wall-clock time. */
+  private externalApiRetryAt = 0;
+
   public lastMetrics = {
     avgTokensPerSec: 0,
     lastTextLatencyMs: 0,
@@ -548,6 +439,8 @@ class BrainRouter {
     runtime: VillagerRuntime;
     partnerName: string;
     history: ChatMessage[];
+    /** Setting-specific knowledge; a neutral default is used when omitted. */
+    world?: WorldContext;
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
     onBeforeSpeak?: (info: {
@@ -563,6 +456,7 @@ class BrainRouter {
     audioHandled?: boolean;
   }> {
     const { villager, runtime, partnerName, history, settings } = params;
+    const world = params.world ?? GENERIC_WORLD_CONTEXT;
     const memories = runtime.memories
       .slice(-4)
       .map((m) => `- ${m.summary}`)
@@ -587,7 +481,8 @@ class BrainRouter {
           : `Steer the moment toward a decision: make a pact, warn ${partnerName}, change the subject sharply, or commit to what you'll do next.`;
 
     const systemPrompt = [
-      `You are ${villager.name} in the living village of Selo.`,
+      `You are ${villager.name} in the living ${describeSetting(world)}.`,
+      world.premise ? `Situation: ${world.premise}` : '',
       `Background subtext (keep implicit—NEVER recite your job title or copy this bio): ${villager.identity}`,
       `Current drive: ${runtime.currentIntention || villager.plan}`,
       memories ? `Personal memories:\n${memories}` : '',
@@ -670,7 +565,7 @@ class BrainRouter {
             const rawCleanText = parseDialogueAndNarration(res.text, villager.name).display;
             const repeated = isTextTooSimilar(rawCleanText, recentSelfLines, 0.58);
             const cleanText = repeated
-              ? synthesizeStorySimReply(villager, partnerName, history, recentSelfLines)
+              ? synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world)
               : rawCleanText;
 
             this.lastMetrics.lastOmniLatencyMs = res.durationMs;
@@ -817,7 +712,7 @@ class BrainRouter {
         if (retry && !isTextTooSimilar(retry.text, recentSelfLines, 0.58)) {
           routed = retry;
         } else {
-          const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines);
+          const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world);
           runtime.recentUtterances = pushRing(runtime.recentUtterances, fresh);
           return { ...routed, text: fresh };
         }
@@ -828,8 +723,8 @@ class BrainRouter {
 
     // Story-Sim deterministic persona fallback (instant, zero VRAM)
     const started = performance.now();
-    await new Promise((r) => setTimeout(r, 180));
-    const reply = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines);
+    await this.delay(180);
+    const reply = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world);
     runtime.recentUtterances = pushRing(runtime.recentUtterances, reply);
     const durationMs = Math.round(performance.now() - started);
     this.log({
@@ -996,9 +891,7 @@ class BrainRouter {
       throw new Error('Strict WebGPU mode enabled, but no WebGPU brain model is loaded yet.');
     }
 
-    const useLocalApi =
-      settings.inferenceMode === 'local-api' ||
-      (settings.inferenceMode === 'auto' && settings.localApiEnabled && Boolean(settings.localApiUrl.trim()));
+    const useLocalApi = this.canUseExternalApi(settings);
 
     if (useLocalApi && settings.localApiModel.trim()) {
       const provider = settings.localApiProvider ?? 'ollama';
@@ -1027,6 +920,7 @@ class BrainRouter {
         const src: ChatMessage['source'] = sourceMap[provider] ?? 'custom-api';
         this.lastMetrics.lastTextLatencyMs = res.durationMs;
         this.lastMetrics.totalCalls += 1;
+        this.externalApiRetryAt = 0;
         if (opts.logLabel) {
           this.log({
             channel: 'local-api',
@@ -1045,6 +939,8 @@ class BrainRouter {
           detail: err?.message || String(err),
         });
         if (settings.inferenceMode === 'local-api') throw err;
+        // Fall back to the local story engine and stop retrying a dead endpoint on every call.
+        this.externalApiRetryAt = Date.now() + 30_000;
       }
     }
 
@@ -1058,6 +954,8 @@ class BrainRouter {
     prompt: string;
     sceneContext: string;
     history: ChatMessage[];
+    /** Setting-specific knowledge; a neutral default is used when omitted. */
+    world?: WorldContext;
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
   }): Promise<{ text: string; source: ChatMessage['source']; durationMs: number }> {
@@ -1073,7 +971,7 @@ class BrainRouter {
       {
         role: 'system',
         content: [
-          `You are ${narratorName}, the unseen storyteller weaving the nearby narrative text and local situation of Selo into a living story.`,
+          `You are ${narratorName}, the unseen storyteller weaving the nearby narrative text and local situation of ${placeName(params.world ?? GENERIC_WORLD_CONTEXT)} into a living story.`,
           `Write 1 to 3 evocative third-person sentences (under 65 words) in the voice of a ${toneHint}.`,
           `Default focus: stay grounded in the focal location, nearby characters, and the recent nearby narrative flow—unless the user explicitly instructs you to zoom out, look elsewhere, or shift scenes.`,
           `Rules: NEVER output <think> tags or meta-commentary. NEVER parrot job titles, dump coordinates, or use filler like "they step close to speak". Weave sensory atmosphere, unspoken tension, or story momentum directly from what is unfolding nearby.`,
@@ -1107,7 +1005,7 @@ class BrainRouter {
     }
 
     const started = performance.now();
-    await new Promise((r) => setTimeout(r, 90));
+    await this.delay(90);
     const reply = synthesizeStorySimNarration(params.prompt, params.sceneContext, params.settings);
     const durationMs = Math.round(performance.now() - started);
     this.log({
@@ -1123,6 +1021,17 @@ class BrainRouter {
   /**
    * Creative Dungeon Master scene framing for autonomous encounters (opening catalyst & closing consequence).
    */
+  /** True when text generation may be routed to the configured external API. */
+  private canUseExternalApi(settings: ModelSettings): boolean {
+    if (settings.inferenceMode === 'local-api') return true;
+    return (
+      settings.inferenceMode === 'auto' &&
+      settings.localApiEnabled &&
+      Boolean(settings.localApiUrl.trim()) &&
+      Date.now() >= this.externalApiRetryAt
+    );
+  }
+
   async generateSceneBeat(params: {
     phase: 'opening' | 'closing';
     villagerA: VillagerConfig;
@@ -1131,6 +1040,8 @@ class BrainRouter {
     runtimeB: VillagerRuntime;
     landmarkName: string;
     history?: ChatMessage[];
+    /** Setting-specific knowledge; a neutral default is used when omitted. */
+    world?: WorldContext;
     settings: ModelSettings;
   }): Promise<string> {
     const narratorName = params.settings.narratorName.trim() || 'Scribe';
@@ -1142,7 +1053,7 @@ class BrainRouter {
 
     if (
       params.settings.inferenceMode !== 'story-sim' &&
-      (hasActiveWebGpu || params.settings.inferenceMode === 'local-api')
+      (hasActiveWebGpu || this.canUseExternalApi(params.settings))
     ) {
       const snippet = (params.history ?? [])
         .filter((m) => m.kind !== 'narration')
@@ -1154,7 +1065,8 @@ class BrainRouter {
         : '';
 
       const contextNotes = [
-        `Setting: near ${params.landmarkName} in Selo`,
+        `Setting: near ${params.landmarkName} in ${placeName(params.world ?? GENERIC_WORLD_CONTEXT)}`,
+        params.world?.premise ? `Situation: ${params.world.premise}` : '',
         `${params.villagerA.name}'s current drive: ${params.runtimeA.currentIntention || params.villagerA.plan}`,
         `${params.villagerB.name}'s current drive: ${params.runtimeB.currentIntention || params.villagerB.plan}`,
         recentAvoidNote,
@@ -1174,7 +1086,7 @@ class BrainRouter {
             {
               role: 'system',
               content: [
-                `You are ${narratorName}, creative Dungeon Master of Selo (${params.settings.narratorStyle} style).`,
+                `You are ${narratorName}, creative Dungeon Master of ${placeName(params.world ?? GENERIC_WORLD_CONTEXT)} (${params.settings.narratorStyle} style).`,
                 `Write crisp third-person English prose under 40 words.`,
                 `FORBIDDEN clichés: NEVER list job titles like "the tapestry weaver", NEVER say "steps close to speak", NEVER say "part ways, carrying their thoughts", and NEVER repeat a recently used omen/prop.`,
               ].join('\n'),
@@ -1237,9 +1149,12 @@ class BrainRouter {
     runtime: VillagerRuntime;
     otherNames: string[];
     landmarkNames: string[];
+    /** Setting-specific knowledge; a neutral default is used when omitted. */
+    world?: WorldContext;
     settings: ModelSettings;
   }): Promise<{ action: 'talk' | 'visit' | 'explore'; targetName?: string; motive: string }> {
     const { villager, runtime, otherNames, landmarkNames, settings } = params;
+    const world = params.world ?? GENERIC_WORLD_CONTEXT;
     const avoidMotives = [
       ...(runtime.recentMotives ?? []),
       ...(runtime.worldFeed ?? []).slice(-4),
@@ -1253,10 +1168,10 @@ class BrainRouter {
 
     if (
       settings.inferenceMode !== 'story-sim' &&
-      (hasActiveWebGpu || settings.inferenceMode === 'local-api')
+      (hasActiveWebGpu || this.canUseExternalApi(settings))
     ) {
       const worldContext = [
-        `Neighbors in Selo: ${otherNames.join(', ') || 'none'}`,
+        `Neighbors in ${placeName(world)}: ${otherNames.join(', ') || 'none'}`,
         `Landmarks: ${landmarkNames.join(', ') || 'Village Square'}`,
         avoidMotives.length
           ? `Already pursued recently (DO NOT repeat, rephrase, or continue chasing the exact same object—advance to a new thread or resolution):\n${avoidMotives.slice(-4).map((m) => `- ${m}`).join('\n')}`
@@ -1325,9 +1240,9 @@ class BrainRouter {
     }
 
     // Emergent story-driven fallback motives (curiosity, hunches, rumors), filtered against recent loops
-    const seed = Date.now() + villager.name.charCodeAt(0) + (runtime.recentMotives?.length ?? 0);
-    if (otherNames.length > 0 && Math.random() < 0.65) {
-      const targetName = otherNames[Math.floor(Math.random() * otherNames.length)];
+    const seed = this.clockNow() + villager.name.charCodeAt(0) + (runtime.recentMotives?.length ?? 0);
+    if (otherNames.length > 0 && this.random() < 0.65) {
+      const targetName = otherNames[Math.floor(this.random() * otherNames.length)];
       const socialMotives = [
         `Testing a new theory with ${targetName} before dusk`,
         `Asking ${targetName} what shifted near the outer gate`,
@@ -1340,8 +1255,8 @@ class BrainRouter {
       runtime.recentMotives = pushRing(runtime.recentMotives, motive);
       return { action: 'talk', targetName, motive };
     }
-    if (landmarkNames.length > 0 && Math.random() < 0.68) {
-      const targetName = landmarkNames[Math.floor(Math.random() * landmarkNames.length)];
+    if (landmarkNames.length > 0 && this.random() < 0.68) {
+      const targetName = landmarkNames[Math.floor(this.random() * landmarkNames.length)];
       const placeMotives = [
         `Checking odd lantern reflections around ${targetName}`,
         `Following fresh footprints leading past ${targetName}`,
@@ -1355,7 +1270,7 @@ class BrainRouter {
       return { action: 'visit', targetName, motive };
     }
     const wanderMotives = [
-      `Watching the wind shift over Selo rooftops`,
+      `Watching the wind shift over the rooftops of ${placeName(world)}`,
       `Tracing a fresh hunch nobody else has voiced yet`,
       `Loitering along the side lane to gauge who hurries by`,
       `Counting lit shutters before the mist settles in`,
@@ -1433,6 +1348,7 @@ class BrainRouter {
           });
           if (typeof AudioContext !== 'undefined') {
             const ctx = new AudioContext();
+            const untrack = trackPlaybackContext(ctx);
             let src: AudioBufferSourceNode | null = null;
             let gainNode: GainNode | null = null;
             let panner: StereoPannerNode | null = null;
@@ -1467,6 +1383,7 @@ class BrainRouter {
               } catch {
                 // ignore
               }
+              untrack();
               await ctx.close().catch(() => undefined);
             }
           }
@@ -1616,6 +1533,11 @@ class BrainRouter {
     await this.speakLine(clean, narratorCfg, settings, spatialResolver);
   }
 
+  /** Holds or releases speech playback mid-utterance (used when the world is paused). */
+  setSpeechPaused(paused: boolean) {
+    setAudioPaused(paused);
+  }
+
   flushAudioQueue() {
     this.speechEpoch += 1;
     this.speechQueue = Promise.resolve();
@@ -1643,6 +1565,8 @@ class BrainRouter {
     villager: VillagerConfig;
     runtime: VillagerRuntime;
     audioBuffer: AudioBuffer;
+    /** Setting-specific knowledge; a neutral default is used when omitted. */
+    world?: WorldContext;
     settings: ModelSettings;
     onTextChunk?: (chunk: string) => void;
   }): Promise<{ userTranscript: string; replyText: string; durationMs: number }> {
@@ -1666,7 +1590,7 @@ class BrainRouter {
       ? voice.language
       : `English (with a subtle ${voice.language} accent, never switching written or spoken language away from English)`;
     const systemPrompt = [
-      `You are ${params.villager.name}, the ${params.villager.role} in the village of Selo.`,
+      `You are ${params.villager.name}, the ${params.villager.role} in the ${describeSetting(params.world ?? GENERIC_WORLD_CONTEXT)}.`,
       params.villager.identity,
       `Always respond and speak strictly in ${accentCue} using a ${voice.gender} voice. Style: ${params.villager.voiceStyle}.`,
       `Respond naturally to the visitor in 1 to 2 short spoken sentences. NEVER utter or prefix your own name.`,
@@ -1760,15 +1684,6 @@ const DM_ENCOUNTER_CLOSINGS = [
     `The tension loosens by a single degree, though ${a} and ${b} both know the rumor around ${place} is only half-buried.`,
 ];
 
-const BALKAN_DM_OPENINGS = [
-  (a: string, b: string, place: string) =>
-    `Dry wind hisses up from the stone mouth near ${place}; ${a} eyes the empty water pitchers between them as ${b} fingers a silver coin.`,
-  (a: string, b: string, place: string) =>
-    `A bronze kuker bell chimes once in the dusty air around ${place}, drawing ${a} and ${b} toward the Lamia's warning ribbon.`,
-  (a: string, b: string, place: string) =>
-    `Emerald mist coils over the cracked mortar beside ${place}; ${a} whispers of the well's sacrifice demand while ${b} grips a bundle of basil.`,
-];
-
 function synthesizeDungeonMasterBeat(params: {
   phase: 'opening' | 'closing';
   villagerA: VillagerConfig;
@@ -1776,71 +1691,35 @@ function synthesizeDungeonMasterBeat(params: {
   villagerB: VillagerConfig;
   runtimeB: VillagerRuntime;
   landmarkName: string;
+  world?: WorldContext;
 }): string {
   const { phase, villagerA, villagerB, landmarkName } = params;
+  const world = params.world ?? GENERIC_WORLD_CONTEXT;
   const idx = dmBeatCursor++;
-  const combinedLore = `${villagerA.identity} ${villagerB.identity} ${landmarkName}`.toLowerCase();
-  const isBalkanMyth = /lamia|zmeyovo|kuker|samodiva|shevitsa|well/.test(combinedLore);
-  const pool =
-    phase === 'opening'
-      ? isBalkanMyth
-        ? [...BALKAN_DM_OPENINGS, ...DM_ENCOUNTER_OPENINGS]
-        : DM_ENCOUNTER_OPENINGS
-      : DM_ENCOUNTER_CLOSINGS;
-  const rendered = pool.map((fn) => fn(villagerA.name, villagerB.name, landmarkName));
-  return pickFreshCandidate(rendered, recentDmBeats, idx);
+  const values = { a: villagerA.name, b: villagerB.name, place: landmarkName };
+  const worldBeats = (
+    phase === 'opening' ? world.storyLines.openingBeats : world.storyLines.closingBeats
+  ).map((template) => fillTemplate(template, values));
+  const genericBeats = (phase === 'opening' ? DM_ENCOUNTER_OPENINGS : DM_ENCOUNTER_CLOSINGS).map(
+    (fn) => fn(villagerA.name, villagerB.name, landmarkName),
+  );
+  return pickFreshCandidate([...worldBeats, ...genericBeats], recentDmBeats, idx);
 }
 
-function buildPersonaLoreCandidates(
+/** Scripted lines the world pack offers this character for the current scene. */
+function buildWorldLineCandidates(
+  world: WorldContext,
   villager: VillagerConfig,
   partnerName: string,
   dmBeat: string,
   lastTextLower: string,
 ): string[] {
-  const persona = `${villager.role} ${villager.identity} ${villager.plan}`.toLowerCase();
-  const lines: string[] = [];
-
-  if (persona.includes('lamia') || lastTextLower.includes('lamia') || lastTextLower.includes('well')) {
-    if (persona.includes('lamia') || villager.id === 'lamia') {
-      lines.push(
-        `Come no closer with hollow jugs, ${partnerName}. The springs stay chained in darkness until Zmeyovo lays true tribute on my altar stone.`,
-        `Gold rings hollow and steel breaks against river-stone, ${partnerName}. Bring honeyed wheat, silver obols, or an oath worth my thirst.`,
-        `I taste the Samodiva brook upon your boots, ${partnerName}. Would you bargain for rain, or test how deep my coils reach?`,
-      );
-    } else if (persona.includes('kuker') || persona.includes('bell')) {
-      lines.push(
-        `Let the Lamia hiss from the shaft, ${partnerName}—three chimes of bronze chanove bells at #KukeriHearth will rattle every stone around #LamiaWell!`,
-        `My mask is carved to frighten winter spirits, ${partnerName}, yet even I heard brass groan down #LamiaWell before dawn.`,
-      );
-    } else if (persona.includes('znaharka') || persona.includes('herb')) {
-      lines.push(
-        `Hush your iron boasting, ${partnerName}. Our grandmothers appeased the Lamia with sweet kolivo, basil, and braided martenitsa wool—never drawn knives.`,
-        `Every gourd along #BabaHerbhouse stays parched, ${partnerName}, until someone sets an honest offering on #LamiaWell's threshold.`,
-      );
-    } else if (persona.includes('samodiva') || persona.includes('vila')) {
-      lines.push(
-        `Only the birch-ringed basin at #SamodivaSpring still sings sweet and clear, ${partnerName}—never cross my glade with angry steel.`,
-        `The Lamia fears living water freely shared, ${partnerName}. Leave scarlet thread by the moss stone and draw what you need.`,
-      );
-    } else if (persona.includes('weaver') || persona.includes('shevitsa')) {
-      lines.push(
-        `Look at the Elbetitsa stars in #KhoroStar, ${partnerName}—eight directions stitched in red thread will turn the Lamia's drought into autumn rain.`,
-        `I am finishing the covenant border at #WeaverCardak, ${partnerName}; will you stand witness with me at #LamiaWell?`,
-      );
-    } else if (persona.includes('blacksmith') || persona.includes('yunak')) {
-      lines.push(
-        `My forge quench-trough is bone dry, ${partnerName}. Whether by iron hook or honest riddle at #LamiaWell, water runs for Zmeyovo before dusk.`,
-        `Cross #YunakBridge with me, ${partnerName}—we either trade with Samodiva Raina or settle terms with the serpent herself.`,
-      );
-    }
-  }
-
-  if (lastTextLower.includes('sacrifice') || lastTextLower.includes('tribute') || lastTextLower.includes('offering') || dmBeat.includes('coin')) {
-    lines.push(
-      `Look at the silver coins and honey jar left before #LamiaWell, ${partnerName}—half the village thinks appeasement works, the other half wants to break the chains.`,
-    );
-  }
-  return lines;
+  const sceneText = `${lastTextLower} ${dmBeat}`;
+  const templates = [
+    ...selectLines(world.storyLines.characterLines[villager.id], sceneText),
+    ...world.storyLines.sharedLines.flatMap((pool) => selectLines(pool, sceneText)),
+  ];
+  return templates.map((template) => fillTemplate(template, { partner: partnerName }));
 }
 
 function synthesizeStorySimReply(
@@ -1848,6 +1727,7 @@ function synthesizeStorySimReply(
   partnerName: string,
   history: ChatMessage[],
   avoidLines: string[] = [],
+  world: WorldContext = GENERIC_WORLD_CONTEXT,
 ): string {
   const spokenHistory = history.filter((m) => m.kind !== 'narration');
   const dmBeat = [...history].reverse().find((m) => m.kind === 'narration')?.text.toLowerCase() ?? '';
@@ -1855,7 +1735,7 @@ function synthesizeStorySimReply(
   const turn = spokenHistory.length;
   const seed = turn + villager.name.charCodeAt(0) + avoidLines.length;
   const lastTextLower = last?.text.toLowerCase() ?? '';
-  const personaLines = buildPersonaLoreCandidates(villager, partnerName, dmBeat, lastTextLower);
+  const personaLines = buildWorldLineCandidates(world, villager, partnerName, dmBeat, lastTextLower);
 
   // React directly to concrete DM scene hooks when opening (unless we've already used that reaction)
   if (!last) {
@@ -1889,7 +1769,7 @@ function synthesizeStorySimReply(
     candidates.push(`If it fits the old cellar latch by the mill, we're not telling a soul until nightfall—agreed, ${partnerName}?`);
   }
   if (lower.includes('mark') || lower.includes('rumor') || lower.includes('note') || lower.includes('secret')) {
-    candidates.push(`Keep your voice down, ${partnerName}. Half of Selo pretends not to watch the lanes, yet every door has ears.`);
+    candidates.push(`Keep your voice down, ${partnerName}. Half of ${placeName(world)} pretends not to watch the lanes, yet every door has ears.`);
   }
   if (lower.includes('?')) {
     candidates.push(
@@ -1909,6 +1789,12 @@ function synthesizeStorySimReply(
 }
 
 let dmNarrationCursor = 0;
+
+function resetStoryEngineState() {
+  recentDmBeats.length = 0;
+  dmBeatCursor = 0;
+  dmNarrationCursor = 0;
+}
 
 function synthesizeStorySimNarration(
   prompt: string,

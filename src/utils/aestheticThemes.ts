@@ -160,6 +160,16 @@ export const BUBBLE_STYLE_OPTIONS: ReadonlyArray<{
   { id: 'minimal-pill', label: 'Compact Pill', hint: 'Streamlined rounded pill cards for dense crowds' },
 ];
 
+/** The world's declared theme when it has one, otherwise a guess from the map. */
+export function resolveWorldTheme(
+  map?: Pick<VillageMap, 'tileSetUrl' | 'name'> | null,
+  world?: { themeId?: string } | null,
+): WorldThemeKind {
+  const declared = world?.themeId;
+  if (declared === 'balkan-myth' || declared === 'shevitsa' || declared === 'classic') return declared;
+  return detectWorldTheme(map);
+}
+
 /** Detect the world aesthetic motif from the active map tileset / world name. */
 export function detectWorldTheme(
   map?: Pick<VillageMap, 'tileSetUrl' | 'name'> | null,

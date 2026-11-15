@@ -1,6 +1,22 @@
 import { registerAgentImageHandler, type AgentImageHandler } from '../ai/localApiClient';
 import { SELO_TOOL_DEFINITIONS, seloToolHost, type SeloToolDefinition } from './seloToolRegistry';
 
+/**
+ * Tool calls over postMessage can reconfigure backends and export the world, so they are
+ * accepted only from this page's own origin or from origins listed (comma-separated) in
+ * the build-time VITE_SELOAI_ALLOWED_ORIGINS variable.
+ */
+export function isAllowedToolCallOrigin(origin: string, selfOrigin?: string): boolean {
+  const own = selfOrigin ?? (typeof window !== 'undefined' ? window.location.origin : '');
+  if (!origin || origin === 'null') return false;
+  if (origin === own) return true;
+  const extra = String((import.meta as any).env?.VITE_SELOAI_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return extra.includes(origin);
+}
+
 export interface SeloWindowApi {
   version: string;
   listTools: () => SeloToolDefinition[];
@@ -94,6 +110,7 @@ export function installSeloWebMcpAndApi(): () => void {
   const onMessage = async (event: MessageEvent) => {
     const data = event.data;
     if (!data || typeof data !== 'object' || data.type !== 'SELOAI_TOOL_CALL') return;
+    if (!isAllowedToolCallOrigin(event.origin)) return;
     const replyTarget = (event.source as WindowProxy | null) ?? window;
     try {
       const result = await seloToolHost.callTool(String(data.name || ''), data.args ?? {});
