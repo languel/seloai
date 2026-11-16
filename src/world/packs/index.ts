@@ -6,9 +6,10 @@ import { GENERIC_WORLD_CONTEXT, type WorldContext } from '../worldContext';
 import type { WorldPackDefinition } from '../worldPack';
 import { SHEVITSA_CONTEXT, shevitsaPack } from './shevitsa';
 import { ZMEYOVO_CONTEXT, zmeyovoPack } from './zmeyovo';
+import { VALLEY_CONTEXT, valleyPack } from './valley';
 
 /** The worlds that ship with the app. The first is the default. */
-export const WORLD_PACKS: WorldPackDefinition[] = [zmeyovoPack, shevitsaPack];
+export const WORLD_PACKS: WorldPackDefinition[] = [zmeyovoPack, shevitsaPack, valleyPack];
 
 export const DEFAULT_WORLD_PACK_ID = zmeyovoPack.id;
 
@@ -20,6 +21,7 @@ export function findWorldPack(id: string): WorldPackDefinition | undefined {
 export function worldContextForPack(id: string): WorldContext {
   if (id === zmeyovoPack.id) return structuredClone(ZMEYOVO_CONTEXT);
   if (id === shevitsaPack.id) return structuredClone(SHEVITSA_CONTEXT);
+  if (id === valleyPack.id) return structuredClone(VALLEY_CONTEXT);
   return structuredClone(GENERIC_WORLD_CONTEXT);
 }
 

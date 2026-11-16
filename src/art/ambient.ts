@@ -54,7 +54,7 @@ function claim(taken: Set<number>, x: number, y: number, w = 1, h = 1) {
 }
 
 function feature(kind: SceneFeature['kind'], x: number, y: number, w = 1, h = 1): SceneFeature {
-  return { kind, x, y, w, h, seed: hashString(`${kind}:${x}:${y}`) };
+  return { id: `amb-${kind}-${x}-${y}`, kind, x, y, w, h, seed: hashString(`${kind}:${x}:${y}`) };
 }
 
 function shuffle<T>(items: T[], rng: Rng): T[] {

@@ -9,6 +9,9 @@ import type {
 } from '../engine/types';
 import { paintWangCornerCell, paintWangEdgeCell } from '../engine/wangTiling';
 import type { WorldDocument } from './document';
+import { findGenerator, generatedFromTileMap, type SceneParams } from './sceneGenerators';
+import { mapFromScene, type SceneEdit, type SceneRecipe, type WorldScene } from './worldScene';
+import type { FeatureKind, Terrain } from '../art/scene';
 import type { WorldContext } from './worldContext';
 
 export type MapLayerId = 'bg0' | 'bg1' | 'obj0' | 'obj1';
@@ -45,6 +48,16 @@ export type WorldCommand =
   | { type: 'map.removeSpawn'; id: string }
   | { type: 'map.upsertStamp'; stamp: TileMacroStamp }
   | { type: 'map.removeStamp'; id: string }
+  /** Make a new world from a generator. Replaces the map; the cast stays. */
+  | { type: 'scene.create'; generator: string; params?: SceneParams; seed?: number; name?: string }
+  /** Turn the current tile map into a scene (frozen as it is), so it can be edited as a place. */
+  | { type: 'scene.fromTiles' }
+  /** Change the generator, its parameters or the seed. Hand edits are kept. */
+  | { type: 'scene.setRecipe'; generator?: string; params?: SceneParams; seed?: number }
+  /** Add one hand edit on top of the generated world. */
+  | { type: 'scene.edit'; edit: SceneEdit }
+  | { type: 'scene.removeEdit'; index: number }
+  | { type: 'scene.clearEdits' }
   | { type: 'cast.replace'; cast: VillagerConfig[] }
   | { type: 'cast.upsert'; member: VillagerConfig }
   | { type: 'cast.update'; id: string; patch: Partial<VillagerConfig> }
@@ -241,6 +254,104 @@ function applyMapCommand(map: VillageMap, command: Extract<WorldCommand, { type:
   }
 }
 
+const TERRAINS: readonly Terrain[] = ['ground', 'water', 'road', 'dry', 'wall', 'bridge'];
+
+function requireScene(map: VillageMap): WorldScene {
+  if (!map.scene) fail('This world is a tile map, not a scene. Run scene.fromTiles first, or scene.create.');
+  return map.scene;
+}
+
+function rederive(map: VillageMap, scene: WorldScene): VillageMap {
+  const titled = [...scene.edits].reverse().find((e): e is Extract<SceneEdit, { op: 'title' }> => e.op === 'title');
+  try {
+    return mapFromScene(scene, titled?.title ?? map.name);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function checkEdit(edit: SceneEdit) {
+  if (!edit || typeof edit.op !== 'string') fail('A scene edit needs an op.');
+  switch (edit.op) {
+    case 'terrain':
+      if (!TERRAINS.includes(edit.terrain)) fail(`"${edit.terrain}" is not a terrain (${TERRAINS.join(', ')}).`);
+      if (!Array.isArray(edit.cells)) fail('cells must be a list of [x, y].');
+      return;
+    case 'place': {
+      const f = edit.feature;
+      if (!f?.id || !f.kind) fail('A placed feature needs an id and a kind.');
+      requireInt(f.x, 'feature.x');
+      requireInt(f.y, 'feature.y');
+      if (!(f.w >= 1 && f.h >= 1)) fail('A placed feature needs a size of at least 1×1.');
+      return;
+    }
+    case 'move':
+    case 'remove':
+    case 'removeLandmark':
+    case 'removeSpawn':
+      if (!edit.id) fail(`${edit.op} needs an id.`);
+      return;
+    case 'landmark':
+      if (!edit.landmark?.id || !edit.landmark.label) fail('A landmark needs an id and a label.');
+      return;
+    case 'spawn':
+      if (!edit.spawn?.id) fail('A spawn point needs an id.');
+      return;
+    case 'title':
+      if (!edit.title?.trim()) fail('A title cannot be empty.');
+      return;
+    default:
+      fail(`Unknown scene edit "${(edit as { op: string }).op}".`);
+  }
+}
+
+function applySceneCommand(map: VillageMap, command: WorldCommand): VillageMap | undefined {
+  switch (command.type) {
+    case 'scene.create': {
+      const generator = findGenerator(command.generator);
+      if (!generator) fail(`Unknown world generator "${command.generator}".`);
+      const recipe: SceneRecipe = {
+        generator: generator.id,
+        params: generator.resolveParams(command.params),
+        seed: command.seed === undefined ? 1 : requireInt(command.seed, 'seed'),
+      };
+      return rederive({ ...map, name: command.name ?? '' }, { recipe, edits: [] });
+    }
+    case 'scene.fromTiles': {
+      if (map.scene) fail('This world is already a scene.');
+      return rederive(map, { recipe: { generator: 'tiles', params: {}, seed: 0 }, edits: [], base: generatedFromTileMap(map) });
+    }
+    case 'scene.setRecipe': {
+      const scene = requireScene(map);
+      if (scene.base) fail('This world was frozen from a tile map and has no generator to rerun.');
+      const generatorId = command.generator ?? scene.recipe.generator;
+      const generator = findGenerator(generatorId);
+      if (!generator) fail(`Unknown world generator "${generatorId}".`);
+      const params = generator.resolveParams({ ...(generatorId === scene.recipe.generator ? scene.recipe.params : {}), ...command.params });
+      const seed = command.seed === undefined ? scene.recipe.seed : requireInt(command.seed, 'seed');
+      return rederive(map, { ...scene, recipe: { generator: generatorId, params, seed } });
+    }
+    case 'scene.edit': {
+      const scene = requireScene(map);
+      checkEdit(command.edit);
+      return rederive(map, { ...scene, edits: [...scene.edits, command.edit] });
+    }
+    case 'scene.removeEdit': {
+      const scene = requireScene(map);
+      const index = requireInt(command.index, 'index');
+      if (index < 0 || index >= scene.edits.length) fail(`There is no edit ${index}.`);
+      return rederive(map, { ...scene, edits: scene.edits.filter((_, i) => i !== index) });
+    }
+    case 'scene.clearEdits':
+      return rederive(map, { ...requireScene(map), edits: [] });
+    default:
+      return undefined;
+  }
+}
+
+/** Feature kinds a hand edit may place. */
+export const PLACEABLE_FEATURES: readonly FeatureKind[] = ['house', 'tree', 'pine', 'well', 'hearth', 'star', 'pool', 'wheat', 'flowers', 'prop', 'field', 'vineyard', 'haystack', 'woodpile', 'sunflower'];
+
 /**
  * Pure: returns the document that results from a command, or throws WorldCommandError
  * with a message an editor or an agent can act on. The input is never modified.
@@ -277,8 +388,9 @@ export function applyCommand(doc: WorldDocument, command: WorldCommand): WorldDo
       };
     }
     default: {
+      if (command.type.startsWith('scene.')) return { ...doc, map: applySceneCommand(doc.map, command)! };
       if (!command.type.startsWith('map.')) fail(`Unknown command "${(command as { type: string }).type}".`);
-      const map = applyMapCommand(doc.map, command);
+      const map = applyMapCommand(doc.map, command as Extract<WorldCommand, { type: `map.${string}` }>);
       if (!map) fail(`Unknown command "${(command as { type: string }).type}".`);
       return { ...doc, map };
     }

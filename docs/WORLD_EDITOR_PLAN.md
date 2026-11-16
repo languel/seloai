@@ -153,8 +153,17 @@ interface. The database view stays as a plain table for inspection.
 
 ## Order of work
 
-1. Scene document, `bakeScene`, `mapFromScene`, generator registry, scene commands, Wang
-   worlds playable (and bundled worlds as `from-tiles` scenes). Tests.
+1. ~~Scene document, `bakeScene`, `mapFromScene`, generator registry, scene commands, Wang
+   worlds playable (and bundled worlds as `from-tiles` scenes). Tests.~~ Done:
+   `src/world/worldScene.ts` (scene, edits, bake, walkability, map derivation) and
+   `src/world/sceneGenerators.ts` (`wang-valley`, `zmeyovo`, `shevitsa`, and a frozen base
+   for any other tile map). Commands: `scene.create`, `scene.fromTiles`, `scene.setRecipe`,
+   `scene.edit` (one command carrying any hand edit: terrain, place, move, remove,
+   landmark, spawn, title), `scene.removeEdit`, `scene.clearEdits`. The valley generator
+   now builds a bridge wherever the river would cut the land in two, names its hamlets
+   (neighbouring house chunks are one hamlet), gathering places, bridges and the deepest
+   wood, and is titled after its first hamlet. "Valley (procedural)" is a world pack. The
+   bundled packs still load as tile maps until the editor opens them as scenes.
 2. World editor tab, replacing Level Editor and Tapestry Studio.
 3. Director camera. Independent of the editors (it touches the village view and the
    simulation, not the world document), so it can also run alongside steps 1 and 2.

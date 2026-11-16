@@ -680,7 +680,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
       const map = sim.map;
       const tilesetImg = getCachedImage(map.tileSetUrl);
       const tilesetCols = Math.max(1, Math.floor(map.tileSetDimX / map.tileDim));
-      const worldLook = aestheticSettings.worldLook;
+      // A world authored as a scene has no tiles, so the tiles look shows it as festive cloth.
+      const worldLook = map.scene && aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook;
       const canvasTheme =
         worldLook === 'tiles'
           ? aestheticTokens.canvasTheme

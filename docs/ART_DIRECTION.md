@@ -814,7 +814,7 @@ one has missed the point.
 8. ~~**Tile meanings in packs**~~, done, with a Shevitsa table (section 8).
 9. ~~**Conversation threads**~~, first pass done (section 9).
 10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Bold faces and the maker's quirks done (first passes).
-11. **Scene-level world authoring** (next up) and procedural world generators (section 8, item 2);
+11. **Scene-level world authoring**: worlds as scenes done (see `docs/WORLD_EDITOR_PLAN.md`); the world editor is next and procedural world generators (section 8, item 2);
     the Wang worlds are the generator to build on.
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.
 

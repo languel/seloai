@@ -1,4 +1,5 @@
 import type { TileMeaningTable } from '../art/scene';
+import type { WorldScene } from '../world/worldScene';
 export type Direction = 'down' | 'left' | 'right' | 'up';
 
 /** Tile matrix indexed as [x][y] (column-major). -1 means empty. */
@@ -64,6 +65,11 @@ export interface VillageMap {
    * Supplied by the world that made the map; without it a map is drawn from walkability.
    */
   tileMeanings?: TileMeaningTable;
+  /**
+   * The world as a place: a generator recipe plus hand edits. When present it is the
+   * authored thing, and size, walkability, places and spawns are derived from it.
+   */
+  scene?: WorldScene;
 }
 
 export interface CustomSpriteSheet {

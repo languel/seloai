@@ -83,6 +83,8 @@ export function validateTileMeanings(table: unknown): string[] {
 }
 
 export interface SceneFeature {
+  /** Stable name for edits to refer to; generators set it, ambient features use `amb-`. */
+  id?: string;
   kind: FeatureKind;
   x: number;
   y: number;

@@ -1,0 +1,299 @@
+/**
+ * A world authored as a place: a recipe (a generator, its parameters and a seed) plus the
+ * hand edits made on top of it. Baking runs the generator, applies the edits and returns
+ * the SceneModel the art looks draw; `mapFromScene` derives everything the simulation
+ * needs (where people can walk, the named places, where they start) from that model.
+ *
+ * Edits are kept apart from the recipe, so changing a parameter or the seed never throws
+ * away hand work. An edit that no longer makes sense in the new world (it moves a house
+ * the new seed did not build) is skipped and reported, not lost.
+ */
+import { withAmbience } from '../art/ambient';
+import type { FeatureKind, SceneFeature, SceneModel, Terrain } from '../art/scene';
+import { hashString } from '../core/rng';
+import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
+import { findGenerator, type GeneratedWorld, type SceneParams } from './sceneGenerators';
+
+export interface SceneRecipe {
+  generator: string;
+  params: SceneParams;
+  seed: number;
+}
+
+export type SceneEdit =
+  | { op: 'terrain'; cells: Array<[number, number]>; terrain: Terrain }
+  | { op: 'place'; feature: { id: string; kind: FeatureKind; x: number; y: number; w: number; h: number } }
+  | { op: 'move'; id: string; x: number; y: number }
+  | { op: 'remove'; id: string }
+  | { op: 'landmark'; landmark: PointOfInterest }
+  | { op: 'removeLandmark'; id: string }
+  | { op: 'spawn'; spawn: SpawnPoint }
+  | { op: 'removeSpawn'; id: string }
+  | { op: 'title'; title: string };
+
+export interface WorldScene {
+  recipe: SceneRecipe;
+  edits: SceneEdit[];
+  /**
+   * A frozen generator output, for worlds that cannot be regenerated from parameters (a
+   * tile map read once through its meanings). When present the recipe is not run.
+   */
+  base?: GeneratedWorld;
+}
+
+export interface BakedScene {
+  model: SceneModel;
+  spawns: SpawnPoint[];
+  /** Cells blocked before any edit, when the source world authored its own walkability. */
+  baseBlocked?: boolean[][];
+  /** Cells an edit touched: their walkability is worked out from the scene, never the base. */
+  touched: Set<number>;
+  /** Indexes into `edits` that could not be applied, with the reason. */
+  skipped: Array<{ index: number; reason: string }>;
+}
+
+const cellKey = (x: number, y: number) => x * 100003 + y;
+
+function touchRect(touched: Set<number>, x: number, y: number, w: number, h: number) {
+  for (let i = x; i < x + w; i++) for (let j = y; j < y + h; j++) touched.add(cellKey(i, j));
+}
+
+/** Runs the recipe (or reads the frozen base), then applies the edits in order. */
+export function bakeScene(scene: WorldScene): BakedScene {
+  const generated = scene.base ?? runRecipe(scene.recipe);
+  const model: SceneModel = {
+    ...generated.model,
+    terrain: generated.model.terrain.map((col) => [...col]),
+    features: generated.model.features.map((f) => ({ ...f })),
+    landmarks: generated.model.landmarks.map((l) => ({ ...l })),
+  };
+  let spawns = generated.spawns.map((s) => ({ ...s }));
+  const touched = new Set<number>();
+  const skipped: BakedScene['skipped'] = [];
+  const lateRemovals: Array<{ index: number; id: string }> = [];
+  const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < model.width && y < model.height;
+
+  scene.edits.forEach((edit, index) => {
+    switch (edit.op) {
+      case 'terrain':
+        for (const [x, y] of edit.cells) {
+          if (!inside(x, y)) continue;
+          model.terrain[x][y] = edit.terrain;
+          touched.add(cellKey(x, y));
+        }
+        return;
+      case 'place': {
+        const f = edit.feature;
+        if (!inside(f.x, f.y)) return void skipped.push({ index, reason: `${f.kind} is outside the world` });
+        model.features = model.features.filter((g) => g.id !== f.id);
+        model.features.push({ ...f, seed: hashString(`${f.kind}:${f.id}`) });
+        touchRect(touched, f.x, f.y, f.w, f.h);
+        return;
+      }
+      case 'move': {
+        const f = model.features.find((g) => g.id === edit.id);
+        if (!f) return void skipped.push({ index, reason: `nothing called ${edit.id} to move` });
+        if (!inside(edit.x, edit.y)) return void skipped.push({ index, reason: `${edit.id} would leave the world` });
+        touchRect(touched, f.x, f.y, f.w, f.h);
+        f.x = edit.x;
+        f.y = edit.y;
+        touchRect(touched, f.x, f.y, f.w, f.h);
+        return;
+      }
+      case 'remove': {
+        const f = model.features.find((g) => g.id === edit.id);
+        if (!f) {
+          // Ambient detail is only added after the edits; try again once it exists.
+          if (edit.id.startsWith('amb-')) lateRemovals.push({ index, id: edit.id });
+          else skipped.push({ index, reason: `nothing called ${edit.id} to remove` });
+          return;
+        }
+        touchRect(touched, f.x, f.y, f.w, f.h);
+        model.features = model.features.filter((g) => g !== f);
+        return;
+      }
+      case 'landmark':
+        if (!inside(edit.landmark.x, edit.landmark.y)) return void skipped.push({ index, reason: `${edit.landmark.label} is outside the world` });
+        model.landmarks = [...model.landmarks.filter((l) => l.id !== edit.landmark.id), { ...edit.landmark }];
+        return;
+      case 'removeLandmark':
+        if (!model.landmarks.some((l) => l.id === edit.id)) return void skipped.push({ index, reason: `no landmark ${edit.id}` });
+        model.landmarks = model.landmarks.filter((l) => l.id !== edit.id);
+        return;
+      case 'spawn':
+        if (!inside(edit.spawn.x, edit.spawn.y)) return void skipped.push({ index, reason: `${edit.spawn.label} is outside the world` });
+        spawns = [...spawns.filter((s) => s.id !== edit.spawn.id), { ...edit.spawn }];
+        return;
+      case 'removeSpawn':
+        if (!spawns.some((s) => s.id === edit.id)) return void skipped.push({ index, reason: `no spawn point ${edit.id}` });
+        spawns = spawns.filter((s) => s.id !== edit.id);
+        return;
+      case 'title':
+        model.title = edit.title;
+        return;
+    }
+  });
+
+  model.features.sort((a, b) => a.y + a.h - (b.y + b.h));
+  const seed = scene.base ? hashString(model.title ?? 'world') : scene.recipe.seed;
+  let ambient = withAmbience(model, seed);
+  for (const { index, id } of lateRemovals) {
+    if (!ambient.features.some((f) => f.id === id)) skipped.push({ index, reason: `nothing called ${id} to remove` });
+    ambient = { ...ambient, features: ambient.features.filter((f) => f.id !== id) };
+  }
+  return { model: ambient, spawns, baseBlocked: generated.blocked, touched, skipped };
+}
+
+function runRecipe(recipe: SceneRecipe): GeneratedWorld {
+  const generator = findGenerator(recipe.generator);
+  if (!generator) throw new Error(`Unknown world generator "${recipe.generator}".`);
+  return generator.generate(generator.resolveParams(recipe.params), recipe.seed);
+}
+
+const BLOCKING_TERRAIN: ReadonlySet<Terrain> = new Set(['water', 'wall']);
+
+/**
+ * Which cells of a feature's footprint stop a walker. Buildings and wells block all but
+ * their top row (so people pass behind a roof); trees only their trunk; flat things such
+ * as fields, flowers and dancing grounds, and all ambient detail, block nothing.
+ */
+function blockedCells(f: SceneFeature): Array<[number, number]> {
+  if (f.id?.startsWith('amb-')) return [];
+  const cells: Array<[number, number]> = [];
+  const rect = (x0: number, y0: number, w: number, h: number) => {
+    for (let x = x0; x < x0 + w; x++) for (let y = y0; y < y0 + h; y++) cells.push([x, y]);
+  };
+  switch (f.kind) {
+    case 'house':
+    case 'well':
+    case 'hearth':
+    case 'pool':
+      rect(f.x, f.y + (f.h > 1 ? 1 : 0), f.w, Math.max(1, f.h - 1));
+      break;
+    case 'tree':
+    case 'pine':
+    case 'grove':
+    case 'sapling':
+      rect(f.x, f.y + f.h - 1, f.w, 1);
+      break;
+    case 'prop':
+    case 'haystack':
+    case 'woodpile':
+      rect(f.x, f.y, f.w, f.h);
+      break;
+    default:
+      break;
+  }
+  return cells;
+}
+
+/** Marks open cells cut off from the largest open region as blocked, so no one is stranded. */
+function closePockets(grid: boolean[][]) {
+  const w = grid.length;
+  const h = grid[0]?.length ?? 0;
+  const region = new Int32Array(w * h).fill(-1);
+  const sizes: number[] = [];
+  for (let sx = 0; sx < w; sx++) {
+    for (let sy = 0; sy < h; sy++) {
+      if (grid[sx][sy] || region[sx * h + sy] >= 0) continue;
+      const id = sizes.length;
+      let size = 0;
+      const stack = [[sx, sy]];
+      region[sx * h + sy] = id;
+      while (stack.length) {
+        const [x, y] = stack.pop()!;
+        size++;
+        for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h || grid[nx][ny] || region[nx * h + ny] >= 0) continue;
+          region[nx * h + ny] = id;
+          stack.push([nx, ny]);
+        }
+      }
+      sizes.push(size);
+    }
+  }
+  if (sizes.length < 2) return;
+  const main = sizes.indexOf(Math.max(...sizes));
+  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) if (!grid[x][y] && region[x * h + y] !== main) grid[x][y] = true;
+}
+
+/** Where people cannot walk, worked out from the scene (and the base grid where untouched). */
+export function walkabilityFor(baked: BakedScene): boolean[][] {
+  const { model, baseBlocked, touched } = baked;
+  const grid: boolean[][] = Array.from({ length: model.width }, (_, x) =>
+    Array.from({ length: model.height }, (_, y) => BLOCKING_TERRAIN.has(model.terrain[x][y])),
+  );
+  for (const f of model.features) {
+    for (const [x, y] of blockedCells(f)) if (grid[x]?.[y] !== undefined) grid[x][y] = true;
+  }
+  if (baseBlocked) {
+    for (let x = 0; x < model.width; x++) {
+      for (let y = 0; y < model.height; y++) {
+        if (!touched.has(cellKey(x, y)) && baseBlocked[x]?.[y] !== undefined) grid[x][y] = baseBlocked[x][y];
+      }
+    }
+  } else {
+    closePockets(grid);
+  }
+  return grid;
+}
+
+function nearestOpen(grid: boolean[][], x: number, y: number): [number, number] {
+  const w = grid.length;
+  const h = grid[0]?.length ?? 0;
+  const sx = Math.max(0, Math.min(w - 1, Math.round(x)));
+  const sy = Math.max(0, Math.min(h - 1, Math.round(y)));
+  for (let r = 0; r < Math.max(w, h); r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = sx + dx;
+        const ny = sy + dy;
+        if (nx >= 0 && ny >= 0 && nx < w && ny < h && !grid[nx][ny]) return [nx, ny];
+      }
+    }
+  }
+  return [sx, sy];
+}
+
+const TILE_DIM = 32;
+
+/**
+ * A playable map for a scene: size, walkability, named places and start points, with the
+ * scene kept on the map so it can be redrawn and edited. It carries no tiles.
+ */
+export function mapFromScene(scene: WorldScene, name?: string): VillageMap {
+  const baked = bakeScene(scene);
+  const { model } = baked;
+  const collisionGrid = walkabilityFor(baked);
+  const empty = () => Array.from({ length: model.width }, () => Array<number>(model.height).fill(-1));
+  // Landmarks and spawns stand on open ground, so a character can reach them.
+  const pointsOfInterest = model.landmarks.map((l) => {
+    if (!collisionGrid[l.x]?.[l.y]) return l;
+    const [x, y] = nearestOpen(collisionGrid, l.x, l.y);
+    return { ...l, x, y };
+  });
+  const spawnSource = baked.spawns.length > 0 ? baked.spawns : pointsOfInterest.map((l) => ({ id: `spawn-${l.id}`, label: l.label, x: l.x, y: l.y }));
+  const spawnPoints = (spawnSource.length > 0 ? spawnSource : [{ id: 'spawn-centre', label: 'The middle', x: model.width / 2, y: model.height / 2 }]).map(
+    (s) => {
+      const [x, y] = nearestOpen(collisionGrid, s.x, s.y);
+      return { ...s, x, y };
+    },
+  );
+  return {
+    name: name ?? model.title ?? 'A procedural world',
+    tileDim: TILE_DIM,
+    width: model.width,
+    height: model.height,
+    tileSetUrl: '',
+    tileSetDimX: 0,
+    tileSetDimY: 0,
+    bgTiles: [empty()],
+    objectTiles: [empty()],
+    collisionGrid,
+    animatedSprites: [],
+    spawnPoints,
+    pointsOfInterest,
+    scene,
+  };
+}

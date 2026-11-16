@@ -7,6 +7,7 @@ import type { VillageMap } from '../engine/types';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureView } from './figures';
 import { withAmbience } from './ambient';
+import { bakeScene } from '../world/worldScene';
 import { buildSceneModel, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { bounds, type Pt, type Shape } from './shapes';
@@ -43,7 +44,9 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
     palette: PALETTES[look],
     seed: hashString(map.name),
   };
-  const shapes = sceneShapes(withAmbience(buildSceneModel(map, semantics), hashString(map.name)));
+  // A world authored as a scene is drawn from the scene itself (already with its ambience).
+  const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, semantics), hashString(map.name));
+  const shapes = sceneShapes(model);
   if (isThread(look)) {
     paintLinen(ctx, canvas.width, canvas.height, options);
     renderEmbroidery(ctx, shapes, options);
