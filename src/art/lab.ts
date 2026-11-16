@@ -3,6 +3,7 @@
  * side, so looks and algorithms can be judged by eye. Open /art-lab.html?seed=7.
  */
 import { createSeededRng } from '../core/rng';
+import { expressionFor, getFigureRig, paintRig } from './gameLook';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type PaletteName } from './looks';
 import { lettering, ribbon } from './lettering';
 import { cloth, figure, treeOfLife } from './motifs';
@@ -91,6 +92,73 @@ if (!only || only === 'lettering') {
       panel(palette, 520, 210, palette === 'ink' || palette === 'night' ? 'line' : 'thread', palette, 4.2, [8, 26], words),
     ),
   );
+}
+
+// Motion: the rig walking, idling, talking and thinking, in two looks, animated live.
+if (!only || only === 'motion') {
+  const states = [
+    { label: 'walking', state: 'walking', moving: true },
+    { label: 'idle', state: 'idle', moving: false },
+    { label: 'speaking', state: 'speaking', moving: false, line: 'Welcome, friend, the rain is coming!' },
+    { label: 'speaking, grim', state: 'speaking', moving: false, line: 'Never cross the well after dark.' },
+    { label: 'thinking', state: 'thinking', moving: false },
+    { label: 'listening', state: 'listening', moving: false },
+  ];
+  const panels = (['ink', 'festive'] as const).map((look) => {
+    const wrap = document.createElement('figure');
+    const canvas = document.createElement('canvas');
+    const width = 760;
+    const height = 200;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    const ctx = canvas.getContext('2d')!;
+    const tile = 64;
+    let walkX = 0;
+    let walkDir = 1;
+    let stride = 0;
+    let last = performance.now();
+    const tick = (nowMs: number) => {
+      const dt = Math.min(0.05, (nowMs - last) / 1000);
+      last = nowMs;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const options = { unit: 4, origin: [0, 0] as [number, number], palette: PALETTES[look], seed };
+      if (look === 'festive') paintLinen(ctx, width, height, options);
+      else {
+        ctx.fillStyle = PALETTES[look].ground;
+        ctx.fillRect(0, 0, width, height);
+      }
+      walkX += walkDir * dt * 40;
+      stride += dt * 6;
+      if (walkX > 50 || walkX < -50) walkDir *= -1;
+      states.forEach((entry, i) => {
+        const id = `lab-${seed}-${i}`;
+        const rig = getFigureRig(id, look, tile * 1.75, expressionFor(entry.state, entry.line));
+        const x = 50 + i * 120 + (entry.moving ? walkX : 0);
+        paintRig(ctx, rig, x, 92, tile, {
+          id: `${id}-${look}`,
+          facing: entry.moving ? (walkDir > 0 ? 'right' : 'left') : 'down',
+          moving: entry.moving,
+          animFrame: entry.moving ? stride : 0,
+          state: entry.state,
+          time: nowMs / 1000,
+        });
+        ctx.fillStyle = look === 'festive' ? '#3a2e24' : '#6b655c';
+        ctx.font = '11px ui-sans-serif, system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(entry.label, 50 + i * 120 + tile / 2, 188);
+      });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    const caption = document.createElement('figcaption');
+    caption.textContent = look === 'ink' ? 'Line art' : 'Thread, festive';
+    wrap.append(canvas, caption);
+    return wrap;
+  });
+  row('Motion: walk, idle, talk and think', panels);
 }
 
 // A cast: every seed is a different person.

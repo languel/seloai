@@ -556,7 +556,19 @@ export interface VillagerRenderOptions {
 
 export type BodyPainter = (
   ctx: CanvasRenderingContext2D,
-  body: { id: string; tileX: number; tileY: number; tileDim: number; scale: number; facing: Direction; moving: boolean; animFrame: number },
+  body: {
+    id: string;
+    tileX: number;
+    tileY: number;
+    tileDim: number;
+    scale: number;
+    facing: Direction;
+    moving: boolean;
+    animFrame: number;
+    state?: string;
+    /** What the character is saying now, if anything. */
+    line?: string;
+  },
 ) => void;
 
 export function drawVillager(
@@ -624,6 +636,8 @@ export function drawVillager(
         facing: rt.facing,
         moving: isMoving,
         animFrame: rt.animFrame,
+        state: rt.state,
+        line: rt.currentBubble?.text,
       });
     } else if (frame) {
       const img = getCachedImage(frame.url);

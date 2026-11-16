@@ -331,14 +331,41 @@ What exists:
 - Four headdresses: crown of knots, kerchief, horns, wreath.
 - Boots, hem knots, and a slight lean so no two stand alike.
 
+Done since the first pass:
+
+- **Parts and joints.** `figureParts(rng, options)` returns legs, skirt, torso, head and two
+  arms with pivots (waist, neck, both shoulders), the person's lean and their resting
+  expression. `figure()` flattens it. The seed fixes the person; changing `expression`
+  changes only the face (the generator always draws the seeded values first so the rest of
+  the figure cannot shift).
+- **The rig.** `getFigureRig(id, look, heightPx, expression)` renders each part to its own
+  cached canvas; only the head is re-rendered per expression. `paintRig` poses the parts
+  every frame with eased motion: walking blends in and out over about 0.2 s, a step bobs
+  and squashes at foot contact, the skirt swings late, arms swing opposite, the head lags,
+  the body leans into travel, turning round squashes the figure through its edge, idle
+  figures breathe and sway, talking nods and gestures with the right arm, thinking tilts
+  the head. Per-character easing state lives in `motionMemory`.
+- **Expressions from the simulation.** `expressionFor(state, line)` maps thinking to `sly`,
+  listening and conversing to `calm`, and speaking to `grim`, `awed` or `glad` from a small
+  word list and a trailing question mark. Otherwise the resting expression shows.
+- **Lab.** `/art-lab.html?seed=11&only=motion` animates walk, idle, two kinds of speech,
+  thinking and listening in line art and thread.
+
 What is wrong and needs doing, in priority order:
 
-1. **Expression is fixed by the seed.** It should follow the simulation. Map
+1. ~~Expression is fixed by the seed.~~ Done as above; the sentiment rule is crude. Feed it
+   the conversation's tone from the model, or a per-line mood tag, when one exists.
+2. **More charm still.** The rig is a good base, not a finished performance. Next: an
+   anticipation dip before the first step, a small overshoot settle on stopping, blinks,
+   headdress and hair lag (split them off the head), a skirt hem that ripples rather than
+   rotates rigidly, and per-character gait (some brisk, some shuffling) from the seed.
+   Judge every change in the motion lab row first.
+3. **Former item 1, kept for its detail.** Expression was fixed by the seed. It should follow the simulation. Map
    `VillagerRuntime.state` and the tone of the last line to an expression (thinking to
    `sly` or `calm`, speaking to `glad` or `grim` by sentiment, listening to `awed`). The
    sprite cache key in `getFigureSprite` must then include the expression. Five expressions
    per character per look is cheap.
-2. **Animation lacks charm** (the owner's explicit note). Today walking is a rotation and a
+4. **Former item 2, now largely done; kept for its notes.** Animation lacked charm (the owner's explicit note). Today walking is a rotation and a
    bob of one cached image (`paintFigure`). Wanted: squash and stretch on each step, a skirt
    that swings out of phase with the body, arms that swing, a head that leads the turn, a
    small settle when stopping, idle breathing, a gesture when speaking, an anticipation lean
@@ -346,18 +373,18 @@ What is wrong and needs doing, in priority order:
    offsets, head tilt) and regenerate, or split the figure into separately cached parts
    (skirt, torso, head, each arm) and transform those. The second is cheaper per frame and
    is the recommended route. Ease everything; nothing should move linearly.
-3. **Figures ignore who the character is.** Lamia Zmeitsa is a serpent but is drawn as a
+5. **Figures ignore who the character is.** Lamia Zmeitsa is a serpent but is drawn as a
    villager. Add figure "kinds" selected by the world pack per cast member (human, serpent,
    masked kuker, samodiva), and let `VillagerConfig` traits steer skirt, headdress and inks.
    Put the mapping in the pack, not in `figure`.
-4. **More outsider folk art.** The owner's note was "a bit less stick figure". Sleeves and
+6. **More outsider folk art.** The owner's note was "a bit less stick figure". Sleeves and
    boots helped. Push further: uneven hems, hands of different sizes, heads off-centre,
    patterns that do not quite line up, bolder oversized motifs on aprons, occasional
    profile figures. Asymmetry is the point.
-5. **Legibility at game size.** Faces and garment patterns vanish in the thread looks at
+7. **Legibility at game size.** Faces and garment patterns vanish in the thread looks at
    normal zoom. Options: simplify detail by size (a level-of-detail switch in `figure`),
    enlarge heads further at small sizes, or thicken face marks relative to thread width.
-6. Men, children and elders. Every figure is currently a skirted adult.
+8. Men, children and elders. Every figure is currently a skirted adult.
 
 ---
 
@@ -605,9 +632,9 @@ one has missed the point.
 
 ## 12. Suggested order of work
 
-1. **Animation charm** (section 7, item 2). The owner named it. Split figures into parts,
-   add eased walk, idle and speak cycles, and show them in a new lab row.
-2. **Expressions driven by the simulation** (section 7, item 1). Small, high impact.
+1. ~~Animation charm, first pass~~ and ~~expressions from the simulation~~: done (section 7).
+   Continue with the "more charm still" list there.
+2. **Glyph toolbar** (section 10, item 0). Small and the owner asked for it.
 3. **Interface restyle** (section 10). The owner named it. Primitives first, then bubbles
    and labels, then the HUD, then panels.
 4. **Cast-specific figures** (section 7, item 3), starting with Lamia.

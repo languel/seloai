@@ -331,9 +331,38 @@ function face(centre: Pt, r: number, expression: Expression): Shape[] {
  * A standing figure in the manner of embroidered dancers and the mother-goddess sign:
  * a bell skirt, a small torso, raised or resting arms, a headdress. Every seed is a person.
  */
+/** A figure split into parts that can move independently, with the joints they turn about. */
+export interface FigureParts {
+  legs: Shape[];
+  skirt: Shape[];
+  torso: Shape[];
+  head: Shape[];
+  armLeft: Shape[];
+  armRight: Shape[];
+  pivots: { waist: Pt; neck: Pt; shoulderLeft: Pt; shoulderRight: Pt };
+  /** The slight lean this person stands with, in radians about the feet. */
+  lean: number;
+  /** The expression this person shows when nothing is happening to them. */
+  restingExpression: Expression;
+}
+
+/** A standing figure drawn as one picture. */
 export function figure(rng: Rng, options: FigureOptions): Shape[] {
+  const p = figureParts(rng, options);
+  return place([...p.legs, ...p.skirt, ...p.torso, ...p.head, ...p.armLeft, ...p.armRight], { rot: p.lean });
+}
+
+/**
+ * The same figure as `figure`, kept in parts for animation. The seed decides the person;
+ * `expression` changes only the face, so a character keeps their looks whatever their mood.
+ */
+export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
   const { height } = options;
-  const shapes: Shape[] = [];
+  const skirt: Shape[] = [];
+  const legs: Shape[] = [];
+  const torso: Shape[] = [];
+  const headPart: Shape[] = [];
+  let shapes = skirt;
   const skirtW = height * between(rng, 0.4, 0.58);
   const waistW = height * between(rng, 0.1, 0.15);
   const skirtH = height * between(rng, 0.44, 0.52);
@@ -396,7 +425,7 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
   }
   for (const side of [-1, 1] as const) {
     const bx = side * skirtW * 0.17;
-    shapes.push({
+    legs.push({
       kind: 'area',
       points: [[bx - height * 0.035, 0], [bx + height * 0.035, 0], [bx + side * height * 0.075, height * 0.055], [bx - height * 0.04, height * 0.055]],
       ink: 'dark',
@@ -409,6 +438,7 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
     shapes.push({ kind: 'knot', at: [x, -height * 0.035], r: height * 0.013, ink: i % 2 ? 'gold' : 'primary' });
   }
 
+  shapes = torso;
   const bodice: Pt[] = [[-waistW / 2, -skirtH], [waistW / 2, -skirtH], [shoulderW / 2, shoulderY], [-shoulderW / 2, shoulderY]];
   if (rng() < 0.35) {
     // An open bodice: outline with a stitched placket down the front.
@@ -423,8 +453,11 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
 
   const headR = height * between(rng, 0.115, 0.14);
   const headY = shoulderY - headR * 1.12;
-  const expression = options.expression ?? pick(rng, EXPRESSIONS);
-  const skinTone = options.skinTone ?? Math.floor(rng() * 5);
+  // Draw from the seed even when overridden, so that every other trait stays the same.
+  const restingExpression = pick(rng, EXPRESSIONS);
+  const seededSkinTone = Math.floor(rng() * 5);
+  const expression = options.expression ?? restingExpression;
+  const skinTone = options.skinTone ?? seededSkinTone;
   const hairInk = pick(rng, ['dark', 'dark', 'gold', 'accent'] as const);
   shapes.push({
     kind: 'area',
@@ -433,6 +466,7 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
     grain: UP,
     tone: skinTone,
   });
+  shapes = headPart;
   shapes.push({ kind: 'area', points: circle([0, headY], headR, 18), ink: 'skin', grain: 0, tone: skinTone });
   // Hair: a cap over the crown, and for some a fall of hair to the shoulders.
   const hairline = headY - headR * 0.28;
@@ -531,9 +565,24 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
     arm.push({ kind: 'line', points: [hand, [hand[0], hand[1] - height * 0.15]], ink: 'dark', weight: 0.45 });
     arm.push(...place(head(pick(rng, ['tulip', 'blossom', 'star'] as const), height * 0.085, rng), { dx: hand[0], dy: hand[1] - height * 0.15 }));
   }
-  shapes.push(...mirrored(arm));
   // Nobody stands perfectly straight: a slight lean about the feet.
-  return place(shapes, { rot: (rng() - 0.5) * 0.09 });
+  const lean = (rng() - 0.5) * 0.09;
+  return {
+    legs,
+    skirt,
+    torso,
+    head: headPart,
+    armLeft: place(arm, { mirrorX: true }),
+    armRight: arm,
+    pivots: {
+      waist: [0, -skirtH],
+      neck: [0, shoulderY],
+      shoulderLeft: [-shoulder[0], shoulder[1]],
+      shoulderRight: shoulder,
+    },
+    lean,
+    restingExpression,
+  };
 }
 
 /**

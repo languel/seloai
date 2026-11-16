@@ -1,8 +1,9 @@
 import {
   FIGURE_HEIGHT_SCALE,
   clothOverlayColours,
-  getFigureSprite,
-  paintFigure,
+  expressionFor,
+  getFigureRig,
+  paintRig,
   renderWorldLayer,
   type WorldLook,
 } from '../art/gameLook';
@@ -786,8 +787,20 @@ export const VillageView: React.FC<VillageViewProps> = ({
         worldLook === 'tiles'
           ? undefined
           : (bodyCtx, body) => {
-              const sprite = getFigureSprite(body.id, worldLook, body.tileDim * body.scale * FIGURE_HEIGHT_SCALE);
-              paintFigure(bodyCtx, sprite, body.tileX, body.tileY, body.tileDim, body.facing === 'left', body.moving, body.animFrame);
+              const rig = getFigureRig(
+                body.id,
+                worldLook,
+                body.tileDim * body.scale * FIGURE_HEIGHT_SCALE,
+                expressionFor(body.state, body.line),
+              );
+              paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, {
+                id: body.id,
+                facing: body.facing,
+                moving: body.moving,
+                animFrame: body.animFrame,
+                state: body.state,
+                time: timeSec,
+              });
             };
 
       // Collect deferred Y-sorted character sprites + measure labels and bubbles
