@@ -9,6 +9,7 @@ import { createSeededRng, type Rng } from '../core/rng';
 import { createBalkanMythMap } from '../data/balkanMythMap';
 import { createBulgarianShevitsaMap } from '../data/shevitsaMap';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
+import { generatePatchworkVillage } from './patchworkVillage';
 
 export type SceneParamValue = number | boolean | string;
 export type SceneParams = Record<string, SceneParamValue>;
@@ -276,6 +277,30 @@ export const wangValley: SceneGenerator = {
   },
 };
 
+const PATCHWORK_PARAMS: readonly SceneParamSpec[] = [
+  { key: 'rings', label: 'Size', hint: 'How far the village spreads from its square', type: 'int', min: 3, max: 7, default: 5 },
+  { key: 'side', label: 'Patch size', hint: 'Larger patches, fewer of them', type: 'int', min: 3, max: 6, default: 4 },
+  { key: 'houses', label: 'Houses', hint: 'How built-up the village is', type: 'float', min: 0, max: 1, step: 0.05, default: 0.55 },
+  { key: 'stream', label: 'Stream', hint: 'A stream across the village', type: 'bool', default: true },
+];
+
+export const patchworkVillage: SceneGenerator = {
+  id: 'patchwork',
+  name: 'Patchwork village',
+  description: 'A village cut from an irregular quad grid and filled like a Klee patchwork: houses along roads round a square, gardens, fields, orchards and a stream.',
+  params: PATCHWORK_PARAMS,
+  resolveParams: resolver(PATCHWORK_PARAMS),
+  generate(params, seed) {
+    return generatePatchworkVillage({
+      rings: params.rings as number,
+      side: params.side as number,
+      houses: params.houses as number,
+      stream: params.stream as boolean,
+      seed,
+    });
+  },
+};
+
 /** A bundled tile map read through its meanings, keeping its own walkability and places. */
 function fromTileMap(map: VillageMap): GeneratedWorld {
   const model = buildSceneModel(map, map.tileMeanings ? semanticsFromTable(map.tileMeanings) : undefined);
@@ -304,7 +329,7 @@ export const shevitsaWorld: SceneGenerator = {
   generate: () => fromTileMap(createBulgarianShevitsaMap()),
 };
 
-export const SCENE_GENERATORS: readonly SceneGenerator[] = [wangValley, zmeyovoWorld, shevitsaWorld];
+export const SCENE_GENERATORS: readonly SceneGenerator[] = [wangValley, patchworkVillage, zmeyovoWorld, shevitsaWorld];
 
 export function findGenerator(id: string): SceneGenerator | undefined {
   return SCENE_GENERATORS.find((g) => g.id === id);

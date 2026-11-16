@@ -5,7 +5,7 @@
 import { createSeededRng } from '../core/rng';
 import { ribbon } from './lettering';
 import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
-import { cellRng, type SceneFeature, type SceneModel, type Terrain } from './scene';
+import { cellRng, type Patch, type SceneFeature, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
 import type { PatternReference } from './patternReferences';
@@ -434,10 +434,70 @@ function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
   return shapes;
 }
 
+/**
+ * A patchwork ground, in the manner of a Klee village: every patch filled in its own thread
+ * and stitch direction, dark couched seams between them, houses marked with a gable and a
+ * door, vineyards with rows of knots, roads left as bare linen.
+ */
+function patchShapes(patches: Patch[]): Shape[] {
+  const shapes: Shape[] = [];
+  for (const p of patches) {
+    const pts = p.points.map(([x, y]): Pt => [x * U, y * U]);
+    if (p.kind !== 'road') shapes.push({ kind: 'area', points: pts, ink: p.ink, grain: p.grain });
+    if (p.kind === 'house') {
+      // A gable and a door, small marks inside the patch, as Klee draws his houses.
+      const cx = pts.reduce((a, q) => a + q[0], 0) / pts.length;
+      const cy = pts.reduce((a, q) => a + q[1], 0) / pts.length;
+      const size = Math.min(...pts.map((q) => Math.hypot(q[0] - cx, q[1] - cy))) * 0.7;
+      shapes.push({ kind: 'line', points: [[cx - size, cy], [cx, cy - size * 0.8], [cx + size, cy]], ink: 'dark', weight: 0.45 });
+      shapes.push({ kind: 'line', points: [[cx, cy + size * 0.15], [cx, cy + size * 0.75]], ink: 'dark', weight: 0.55 });
+    } else if (p.kind === 'water') {
+      // Water: wavy running lines across the patch, like the river elsewhere on the cloth.
+      const xs = pts.map((q) => q[0]);
+      const ys = pts.map((q) => q[1]);
+      for (let y = Math.min(...ys) + 1.6; y < Math.max(...ys) - 0.8; y += 2.2) {
+        const wave: Pt[] = [];
+        for (let x = Math.min(...xs); x <= Math.max(...xs); x += 0.8) {
+          const q: Pt = [x, y + Math.sin(x * 0.9) * 0.55];
+          if (pointIn(q, pts)) wave.push(q);
+          else if (wave.length > 1) {
+            shapes.push({ kind: 'line', points: [...wave], ink: 'dark', weight: 0.3 });
+            wave.length = 0;
+          } else wave.length = 0;
+        }
+        if (wave.length > 1) shapes.push({ kind: 'line', points: wave, ink: 'dark', weight: 0.3 });
+      }
+    } else if (p.kind === 'vineyard') {
+      const rng = createSeededRng(p.seed);
+      const xs = pts.map((q) => q[0]);
+      const ys = pts.map((q) => q[1]);
+      for (let x = Math.min(...xs) + 2; x < Math.max(...xs) - 1; x += 2.6) {
+        for (let y = Math.min(...ys) + 2; y < Math.max(...ys) - 1; y += 2.2) {
+          if (pointIn([x, y], pts)) shapes.push({ kind: 'knot', at: [x + (rng() - 0.5) * 0.6, y], r: 0.45, ink: 'dark' });
+        }
+      }
+    }
+    // The seam: a dark running line round the patch, like the cut edges in a quilt.
+    shapes.push({ kind: 'line', points: pts, ink: 'dark', weight: 0.32, closed: true });
+  }
+  return shapes;
+}
+
+function pointIn([x, y]: Pt, poly: Pt[]): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
 /** Everything that does not move, in drawing order. */
 export function sceneShapes(model: SceneModel): Shape[] {
   const refs = worldReferences(model.motifs);
-  const shapes = [...terrainShapes(model), ...model.features.flatMap((f) => featureShapes(f, refs)), ...clothBorder(model, refs)];
+  const ground = model.patches ? patchShapes(model.patches) : terrainShapes(model);
+  const shapes = [...ground, ...model.features.flatMap((f) => featureShapes(f, refs)), ...clothBorder(model, refs)];
   if (model.title) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
     shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));

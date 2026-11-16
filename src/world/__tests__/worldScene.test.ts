@@ -67,7 +67,7 @@ describe('worlds authored as scenes', () => {
   });
 
   it('turns a tile map into a frozen scene that keeps its walkability', () => {
-    for (const generator of SCENE_GENERATORS.filter((g) => g.id !== 'wang-valley')) {
+    for (const generator of SCENE_GENERATORS.filter((g) => g.id === 'zmeyovo' || g.id === 'shevitsa')) {
       const map = mapFromScene({ recipe: { generator: generator.id, params: {}, seed: 0 }, edits: [] });
       const world = generator.generate({}, 0);
       expect(map.collisionGrid).toEqual(world.blocked);
@@ -111,5 +111,37 @@ describe('editing is local', () => {
     const changed = [...before.filter((f) => !after.some((g) => key(g) === key(f))), ...after.filter((f) => !before.some((g) => key(g) === key(f)))];
     const far = changed.filter((f) => Math.hypot(f.x - 7, f.y - 7) > 12);
     expect(far.length).toBeLessThanOrEqual(changed.length * 0.1 + 1);
+  });
+});
+
+describe('a patchwork village', () => {
+  it('cuts an irregular quad grid whose faces are all four-sided and nearly square', async () => {
+    const { irregularQuadGrid } = await import('../../art/irregularGrid');
+    const mesh = irregularQuadGrid(4, 4, 9, 60);
+    expect(mesh.faces.every((f) => f.length === 4)).toBe(true);
+    // After relaxing, opposite sides of most quads are of similar length.
+    const ratios = mesh.faces.map((f) => {
+      const side = (a: number, b: number) => Math.hypot(mesh.vertices[a][0] - mesh.vertices[b][0], mesh.vertices[a][1] - mesh.vertices[b][1]);
+      const s = [side(f[0], f[1]), side(f[1], f[2]), side(f[2], f[3]), side(f[3], f[0])];
+      return Math.max(...s) / Math.min(...s);
+    });
+    expect(ratios.filter((r) => r < 2).length / ratios.length).toBeGreaterThan(0.8);
+  });
+
+  it('is playable: houses front roads, named places are reachable, and it is reproducible', async () => {
+    const { patchworkVillage } = await import('../sceneGenerators');
+    for (const seed of [1, 3, 8]) {
+      const scene = { recipe: { generator: 'patchwork', params: patchworkVillage.resolveParams({}), seed }, edits: [] };
+      const map = mapFromScene(scene);
+      expect(JSON.stringify(mapFromScene(scene).collisionGrid)).toBe(JSON.stringify(map.collisionGrid));
+      const model = bakeScene(map.scene!).model;
+      const kinds = new Set(model.patches!.map((p) => p.kind));
+      for (const k of ['house', 'road', 'square', 'field']) expect(kinds.has(k as never)).toBe(true);
+      expect(map.pointsOfInterest!.length).toBeGreaterThanOrEqual(3);
+      const [a, ...rest] = map.pointsOfInterest!;
+      for (const b of rest) expect(findPath(map, { x: a.x, y: a.y }, { x: b.x, y: b.y }).length).toBeGreaterThan(0);
+      // No ambient clutter on a patchwork: only the world's own features.
+      expect(model.features.every((f) => !f.id?.startsWith('amb-'))).toBe(true);
+    }
   });
 });

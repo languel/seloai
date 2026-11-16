@@ -150,7 +150,8 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
 
   model.features.sort((a, b) => a.y + a.h - (b.y + b.h));
   const seed = scene.base ? hashString(model.title ?? 'world') : scene.recipe.seed;
-  let ambient = withAmbience(model, seed);
+  // A patchwork world is already a full quilt; ambient detail would only crowd it.
+  let ambient = model.patches ? model : withAmbience(model, seed);
   for (const { index, id } of lateRemovals) {
     if (!ambient.features.some((f) => f.id === id)) skipped.push({ index, reason: `nothing called ${id} to remove` });
     ambient = { ...ambient, features: ambient.features.filter((f) => f.id !== id) };

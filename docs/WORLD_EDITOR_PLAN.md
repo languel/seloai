@@ -188,6 +188,20 @@ sources, patterns should be generated procedurally, based on references.
    (neighbouring house chunks are one hamlet), gathering places, bridges and the deepest
    wood, and is titled after its first hamlet. "Valley (procedural)" is a world pack. The
    bundled packs still load as tile maps until the editor opens them as scenes.
+1b. **Patchwork village** generator (owner request: wave function collapse, a Klee
+   patchwork, the Wang work): `src/art/irregularGrid.ts` cuts an irregular quad grid the
+   Townscaper way (a hexagon of triangles paired at random into quads, every face split
+   into quads, relaxed toward squares); `src/world/patchworkVillage.ts` plans a square,
+   spokes and sometimes a ring road, and a stream the roads avoid and cross on bridges, then
+   decides the remaining patches least uncertain first (most decided neighbours), weighted
+   by distance from the square and by neighbours (houses front roads and cluster, fields
+   keep to the outside and share a crop, gardens in between, orchards, vineyards, meadows).
+   Neighbouring houses sometimes join into odd-shaped buildings, the outer patches fray into
+   bare linen, and blue is kept for water. `SceneModel.patches` draws as a Klee quilt in
+   thread (each patch its own colour and stitch direction, dark seams, gables and doors on
+   houses, waves on water, knots in vineyards); walkability comes from the patches. In the
+   World Editor as "Patchwork village" and as the world pack "Patchwork village
+   (procedural)".
 2. ~~World editor tab, replacing Level Editor and Tapestry Studio.~~ First pass done
    (`src/components/WorldEditorView.tsx`, the "World Editor" tab; the two old tabs are gone
    from the bar, their code stays until step 7). Recipe panel built from the generator's

@@ -4,6 +4,7 @@
  */
 import { createSeededRng, hashString } from '../core/rng';
 import type { PointOfInterest, VillageMap } from '../engine/types';
+import type { Ink } from './shapes';
 
 export type Terrain = 'ground' | 'water' | 'road' | 'dry' | 'wall' | 'bridge';
 export type FeatureKind =
@@ -104,6 +105,22 @@ export interface SceneModel {
   title?: string;
   /** Ids of the pattern references the world's motifs are grown from (default: Shevitsa). */
   motifs?: string[];
+  /**
+   * A patchwork world: the ground as irregular patches (houses, fields, gardens, roads), in
+   * the manner of a Klee village, drawn instead of the cell terrain. Points are in cells.
+   */
+  patches?: Patch[];
+}
+
+export type PatchKind = 'house' | 'road' | 'square' | 'garden' | 'field' | 'orchard' | 'meadow' | 'water' | 'vineyard';
+
+export interface Patch {
+  kind: PatchKind;
+  points: Array<[number, number]>;
+  ink: Ink;
+  /** Direction the patch is stitched in, radians. */
+  grain: number;
+  seed: number;
 }
 
 export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): SceneModel {
