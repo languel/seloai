@@ -124,17 +124,18 @@ describe('bubble tails', () => {
 describe('figures in builds and views', () => {
   // Pinned output of the skirted front figure. Five seeds were rebaselined when the newer
   // headdresses arrived; only their head part changed (checked when the change was made).
+  // Rebaselined when the left foot was made the mirror of the right (only legLeft changed).
   it('draws the skirted front figure exactly as pinned', async () => {
     const { createHash } = await import('node:crypto');
     const expected: Record<number, string> = {
-      1: '7d62e79a064e18cb',
-      5: '3b6f576ae0aa8ed4',
-      7: '56f290af71ce5b1c',
-      11: 'ffea56eb5627446e',
-      42: 'f7aa6037cd8f62e2',
-      99: '7b0805b331380eb4',
-      1234: 'b89ad5db2cc322e9',
-      98765: '42fb7597c39121a6',
+      1: '39ec3671ee4ee7a3',
+      5: '0a22efe15df4806f',
+      7: '89e49257ceee0ed4',
+      11: '7b5c75b08d8d710f',
+      42: 'bcd4c47b2112efd7',
+      99: '300e8e844194d5f5',
+      1234: '57a45b1da19899fe',
+      98765: 'b4925b35b5c1b25b',
     };
     for (const [seed, hash] of Object.entries(expected)) {
       const json = JSON.stringify(figure(createSeededRng(Number(seed)), { height: 30 }));

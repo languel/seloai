@@ -9,6 +9,14 @@
  * walkability, and is decided by the map's seed so it never changes between redraws.
  */
 import { createSeededRng, hashString, type Rng } from '../core/rng';
+
+/**
+ * A stable random stream for one place: decisions about a spot depend only on the seed and
+ * that spot, so an edit elsewhere on the map never reshuffles this one.
+ */
+function spotRng(seed: number, x: number, y: number, salt: number): Rng {
+  return createSeededRng((seed ^ (x * 73856093) ^ (y * 19349663) ^ (salt * 83492791)) >>> 0);
+}
 import type { SceneFeature, SceneModel } from './scene';
 
 type Cell = [number, number];
@@ -67,8 +75,9 @@ function shuffle<T>(items: T[], rng: Rng): T[] {
 }
 
 /** Yards in front of each house: a fence, a haystack or woodpile, sunflowers, a hen. */
-function yards(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeature[]) {
+function yards(model: SceneModel, taken: Set<number>, seed: number, out: SceneFeature[]) {
   for (const house of model.features.filter((f) => f.kind === 'house')) {
+    const rng = spotRng(seed, house.x, house.y, 1);
     // A yard goes in front of the house if there is room, else beside it or behind it.
     const options: Array<[number, number, number, number]> = [
       [house.x - 1, house.y + house.h, house.w + 2, 2],
@@ -102,17 +111,23 @@ function yards(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeatur
 }
 
 /** Groves: trees around a few centres, thinning with distance, never crowding a path. */
-function groves(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeature[]) {
-  const candidates: Cell[] = [];
-  for (let x = 2; x < model.width - 2; x++) {
-    for (let y = 3; y < model.height - 2; y++) {
-      if (free(model, taken, x, y, 1, 2) && !nearTerrain(model, x, y, 'road', 2)) candidates.push([x, y]);
+function groves(model: SceneModel, taken: Set<number>, seed: number, out: SceneFeature[]) {
+  // Grove centres sit on a coarse lattice, each lattice cell deciding for itself whether it
+  // holds one, so the groves stay put when the map is edited elsewhere.
+  const LATTICE = 9;
+  const centres: Cell[] = [];
+  for (let gx = 0; gx < model.width; gx += LATTICE) {
+    for (let gy = 0; gy < model.height; gy += LATTICE) {
+      const r = spotRng(seed, gx, gy, 2);
+      if (r() > 0.55) continue;
+      const cx = gx + Math.floor(r() * LATTICE);
+      const cy = gy + Math.floor(r() * LATTICE);
+      if (cx < 2 || cy < 3 || cx >= model.width - 2 || cy >= model.height - 2) continue;
+      if (free(model, taken, cx, cy, 1, 2) && !nearTerrain(model, cx, cy, 'road', 2)) centres.push([cx, cy]);
     }
   }
-  if (candidates.length === 0) return;
-  const count = Math.max(2, Math.min(7, Math.round(candidates.length / 70)));
-  const centres = shuffle(candidates, rng).slice(0, count);
   for (const [cx, cy] of centres) {
+    const rng = spotRng(seed, cx, cy, 3);
     const radius = 2.2 + rng() * 2.3;
     for (let x = Math.floor(cx - radius); x <= cx + radius; x++) {
       for (let y = Math.floor(cy - radius); y <= cy + radius; y++) {
@@ -127,12 +142,15 @@ function groves(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeatu
 }
 
 /** Strip fields: a block of open ground near the houses, worked in parallel rows. */
-function fields(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeature[]) {
+function fields(model: SceneModel, taken: Set<number>, seed: number, out: SceneFeature[]) {
   const houses = model.features.filter((f) => f.kind === 'house');
   const anchors = houses.length > 0 ? houses : model.landmarks.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y), w: 1, h: 1 }));
   let made = 0;
-  for (const anchor of shuffle(anchors, rng)) {
+  // The anchors in an order fixed by their own positions, not by how many there are.
+  const ordered = [...anchors].sort((a, b) => spotRng(seed, a.x, a.y, 4)() - spotRng(seed, b.x, b.y, 4)());
+  for (const anchor of ordered) {
     if (made >= 2) break;
+    const rng = spotRng(seed, anchor.x, anchor.y, 5);
     for (let attempt = 0; attempt < 24 && made < 2; attempt++) {
       const w = 3 + Math.floor(rng() * 3);
       const h = 2 + Math.floor(rng() * 2);
@@ -148,9 +166,10 @@ function fields(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeatu
 }
 
 /** Reeds on the banks, and the odd duck on the water. */
-function waterLife(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeature[]) {
+function waterLife(model: SceneModel, taken: Set<number>, seed: number, out: SceneFeature[]) {
   for (let x = 1; x < model.width - 1; x++) {
     for (let y = 2; y < model.height - 1; y++) {
+      const rng = spotRng(seed, x, y, 6);
       const t = model.terrain[x][y];
       if (t === 'ground' && !taken.has(key(x, y)) && nearTerrain(model, x, y, 'water') && rng() < 0.28) {
         out.push(feature('reeds', x, y));
@@ -163,13 +182,13 @@ function waterLife(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFe
 }
 
 /** A sparse lattice of small rosettes over open meadow: the filling of an embroidered ground. */
-function groundCover(model: SceneModel, taken: Set<number>, rng: Rng, out: SceneFeature[]) {
+function groundCover(model: SceneModel, taken: Set<number>, seed: number, out: SceneFeature[]) {
   for (let x = 1; x < model.width - 1; x++) {
     for (let y = 2; y < model.height - 1; y++) {
       // Every third cell on a diagonal lattice, so it reads as a pattern rather than noise.
       if ((x + y * 2) % 3 !== 0 || (x + y) % 2 !== 0) continue;
       if (taken.has(key(x, y)) || model.terrain[x][y] !== 'ground') continue;
-      if (rng() < 0.55) out.push(feature('rosette', x, y));
+      if (spotRng(seed, x, y, 7)() < 0.55) out.push(feature('rosette', x, y));
     }
   }
 }
@@ -179,14 +198,14 @@ function groundCover(model: SceneModel, taken: Set<number>, rng: Rng, out: Scene
  * world's own features so a house or a well always sits on top of its yard and meadow.
  */
 export function withAmbience(model: SceneModel, seed: number): SceneModel {
-  const rng = createSeededRng(seed ^ 0x5eed);
+  const s = (seed ^ 0x5eed) >>> 0;
   const taken = occupancy(model);
   const added: SceneFeature[] = [];
-  yards(model, taken, rng, added);
-  fields(model, taken, rng, added);
-  groves(model, taken, rng, added);
-  waterLife(model, taken, rng, added);
-  groundCover(model, taken, rng, added);
+  yards(model, taken, s, added);
+  fields(model, taken, s, added);
+  groves(model, taken, s, added);
+  waterLife(model, taken, s, added);
+  groundCover(model, taken, s, added);
   const under = added.filter((f) => f.kind === 'rosette' || f.kind === 'field' || f.kind === 'vineyard' || f.kind === 'fence' || f.kind === 'reeds' || f.kind === 'duck');
   const among = added.filter((f) => !under.includes(f));
   const sorted = [...model.features, ...among].sort((a, b) => a.y + a.h - (b.y + b.h));

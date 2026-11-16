@@ -264,7 +264,7 @@ function requireScene(map: VillageMap): WorldScene {
 function rederive(map: VillageMap, scene: WorldScene): VillageMap {
   const titled = [...scene.edits].reverse().find((e): e is Extract<SceneEdit, { op: 'title' }> => e.op === 'title');
   try {
-    return mapFromScene(scene, titled?.title ?? map.name);
+    return mapFromScene(scene, titled?.title ?? (map.name || undefined));
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
@@ -315,7 +315,8 @@ function applySceneCommand(map: VillageMap, command: WorldCommand): VillageMap |
         params: generator.resolveParams(command.params),
         seed: command.seed === undefined ? 1 : requireInt(command.seed, 'seed'),
       };
-      return rederive({ ...map, name: command.name ?? '' }, { recipe, edits: [] });
+      // A new world takes its generator's own title unless a name is given.
+      return rederive({ ...map, name: command.name ?? '' }, { recipe, edits: command.name ? [{ op: 'title', title: command.name }] : [] });
     }
     case 'scene.fromTiles': {
       if (map.scene) fail('This world is already a scene.');

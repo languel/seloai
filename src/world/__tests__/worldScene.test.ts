@@ -101,3 +101,15 @@ describe('a procedural world runs', () => {
     expect(result.trace.length).toBeGreaterThan(0);
   }, 30000);
 });
+
+describe('editing is local', () => {
+  it('a placed house changes the decoration only near it', () => {
+    const base = valley(4);
+    const before = bakeScene(base).model.features.filter((f) => f.id?.startsWith('amb-'));
+    const after = bakeScene({ ...base, edits: [{ op: 'place', feature: { id: 'h', kind: 'house', x: 6, y: 6, w: 2, h: 2 } }] }).model.features.filter((f) => f.id?.startsWith('amb-'));
+    const key = (f: { id?: string }) => f.id!;
+    const changed = [...before.filter((f) => !after.some((g) => key(g) === key(f))), ...after.filter((f) => !before.some((g) => key(g) === key(f)))];
+    const far = changed.filter((f) => Math.hypot(f.x - 7, f.y - 7) > 12);
+    expect(far.length).toBeLessThanOrEqual(changed.length * 0.1 + 1);
+  });
+});

@@ -222,6 +222,19 @@ function drawTraits(rng: Rng, height: number): Traits {
   };
 }
 
+/**
+ * A boot seen from the front, side or back, standing at (x, top). Each foot is the mirror of
+ * the other: the toe points outward (or forward, side-on), and from behind only the heel
+ * shows, so both boots are the same blunt shape.
+ */
+function footOutline(x: number, top: number, height: number, view: FigureView, toe: number, ankle: number, reach: number, heel: number, drop: number): Pt[] {
+  const bottom = top + height * drop;
+  if (view === 'back') {
+    return [[x - height * ankle, top], [x + height * ankle, top], [x + height * heel, bottom], [x - height * heel, bottom]];
+  }
+  return [[x - toe * height * ankle, top], [x + toe * height * ankle, top], [x + toe * height * reach, bottom], [x - toe * height * heel, bottom]];
+}
+
 /** Squeezes shapes horizontally and shifts them: a front drawing turned side-on. */
 function squeezeX(shapes: Shape[], k: number, dx = 0): Shape[] {
   const p = ([x, y]: Pt): Pt => [x * k + dx, y];
@@ -949,7 +962,7 @@ function skirtedParts(t: Traits, height: number, view: FigureView, expression: E
     feet.push([
       {
         kind: 'area',
-        points: [[bx - height * 0.035, 0], [bx + height * 0.035, 0], [bx + toe * height * 0.075, height * 0.055], [bx - height * 0.04, height * 0.055]],
+        points: footOutline(bx, 0, height, view, toe, 0.035, 0.075, 0.04, 0.055),
         ink: 'dark',
         grain: 0,
       },
@@ -1044,7 +1057,7 @@ function trouseredParts(t: Traits, height: number, view: FigureView, expression:
     const toe = view === 'side' ? 1 : side;
     leg.push({
       kind: 'area',
-      points: [[x - height * 0.04, ankleY], [x + height * 0.04, ankleY], [x + toe * height * 0.09, height * 0.035], [x - height * 0.045, height * 0.035]],
+      points: footOutline(x, ankleY, height, view, toe, 0.04, 0.09, 0.045, height * 0.035 / height - ankleY / height),
       ink: 'dark',
       grain: 0,
     });

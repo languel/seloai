@@ -380,6 +380,13 @@ Done since the first pass:
   stopping. A view change squashes the figure through its edge. Each leg is now its own part
   swinging from the hip (a full stride side-on, a shuffle under a skirt). The Style panel's
   "Walking figures" switch (`AestheticSettings.figureTurns`) turns this off.
+- **Walking toward us and away** (owner request; the side view was already right). Head-on
+  a stepping leg lifts and foreshortens (a touch larger coming toward us, smaller going
+  away) while the other stays planted, the body rolls and shifts its weight over the
+  planted foot instead of leaning into travel, the skirt sways against the weight, and the
+  arms shorten as they swing forward rather than flapping sideways. The two boots are now
+  mirror images (the left one had been a sliver), toes out from the front and blunt heels
+  from behind.
 - **Portraits match the world.** `figurePortrait(id, look, size, build, framing)` draws the
   same figure, head and shoulders or whole, on a transparent ground. The village roster and
   the Characters tab roster use it in the art looks, and the Characters tab's four-direction

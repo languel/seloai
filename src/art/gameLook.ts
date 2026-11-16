@@ -8,7 +8,7 @@ import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
-import { buildSceneModel, type TileSemantics } from './scene';
+import { buildSceneModel, semanticsFromTable, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { bounds, type Pt, type Shape } from './shapes';
 
@@ -45,7 +45,8 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
     seed: hashString(map.name),
   };
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
-  const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, semantics), hashString(map.name));
+  const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
+  const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
   const shapes = sceneShapes(model);
   if (isThread(look)) {
     paintLinen(ctx, canvas.width, canvas.height, options);
@@ -314,35 +315,56 @@ export function paintRig(
   const facingSign = memory.flip >= 0 ? 1 : -1;
   // Changing view squashes the figure through its edge for a moment, like turning round.
   const turnScale = Math.sign(memory.flip || 1) * Math.max(0.12, Math.abs(memory.flip)) * (0.35 + 0.65 * turnIn);
-  const bodyRotate = rig.lean + move * 0.07 * facingSign + still * Math.sin(t * 0.6 + phase) * 0.012;
+  const side = rig.view === 'side';
+  // Side-on the body leans into travel. Walking toward us or away, it rolls and shifts its
+  // weight over the planted foot instead, the way a person sways when seen head-on.
+  const roll = side ? move * 0.07 * facingSign : move * step * 0.04;
+  const weightShift = side ? 0 : -move * step * h * 0.022;
+  const bodyRotate = rig.lean + roll + still * Math.sin(t * 0.6 + phase) * 0.012;
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
-  ctx.translate(tileX + tileDim / 2, tileY + tileDim - 3 - lift);
+  ctx.translate(tileX + tileDim / 2 + weightShift, tileY + tileDim - 3 - lift);
   ctx.rotate(bodyRotate);
   ctx.scale(turnScale * squashX, squashY);
 
   const { waist, neck, shoulderLeft, shoulderRight, hipLeft, hipRight } = rig.pivots;
   const density = rig.density;
-  const side = rig.view === 'side';
 
-  // Legs swing from the hip in opposite phase: a real stride side-on, a small shuffle under
-  // a skirt from the front or back.
-  const legSwing = move * step * (side ? 0.5 : rig.build === 'trousered' ? 0.16 : 0.1);
-  const legShift = side ? 0 : move * step * h * 0.012;
-  ctx.save();
-  ctx.translate(legShift, 0);
-  aboutPivot(ctx, hipLeft, legSwing);
-  drawPart(ctx, rig.parts.legLeft, density);
-  ctx.restore();
-  ctx.save();
-  ctx.translate(-legShift, 0);
-  aboutPivot(ctx, hipRight, -legSwing);
-  drawPart(ctx, rig.parts.legRight, density);
-  ctx.restore();
+  if (side) {
+    // Side-on, the legs swing from the hip in opposite phase: a real stride.
+    const legSwing = move * step * 0.5;
+    ctx.save();
+    aboutPivot(ctx, hipLeft, legSwing);
+    drawPart(ctx, rig.parts.legLeft, density);
+    ctx.restore();
+    ctx.save();
+    aboutPivot(ctx, hipRight, -legSwing);
+    drawPart(ctx, rig.parts.legRight, density);
+    ctx.restore();
+  } else {
+    // Head-on, a stepping leg lifts and foreshortens (a touch bigger coming toward us,
+    // smaller going away) while the other stays planted under the weight.
+    const toward = rig.view === 'front' ? 1 : -1;
+    const legs: Array<[PartSprite, Pt, number]> = [
+      [rig.parts.legLeft, hipLeft, Math.max(0, step)],
+      [rig.parts.legRight, hipRight, Math.max(0, -step)],
+    ];
+    for (const [part, hip, raised] of legs) {
+      const up = move * raised;
+      ctx.save();
+      ctx.translate(0, -up * h * (rig.build === 'trousered' ? 0.045 : 0.03));
+      aboutPivot(ctx, hip, 0, 1 + up * 0.05 * toward, 1 - up * 0.1);
+      drawPart(ctx, part, density);
+      ctx.restore();
+    }
+  }
 
   ctx.save();
-  const skirtSwing = move * Math.sin(stride - 0.9) * 0.07 + still * Math.sin(t * 0.8 + phase) * 0.018;
+  // The skirt swings late; head-on it sways against the weight shift rather than rotating.
+  const skirtSwing = side
+    ? move * Math.sin(stride - 0.9) * 0.07 + still * Math.sin(t * 0.8 + phase) * 0.018
+    : -move * Math.sin(stride - 0.7) * 0.05 + still * Math.sin(t * 0.8 + phase) * 0.018;
   aboutPivot(ctx, waist, skirtSwing, 1 + move * 0.035 * Math.abs(Math.sin(stride - 0.9)), 1);
   drawPart(ctx, rig.parts.skirt, density);
   ctx.restore();
@@ -366,19 +388,22 @@ export function paintRig(
   drawPart(ctx, rig.parts.head, density);
   ctx.restore();
 
-  // Side-on, the near arm swings against the near (right) leg.
-  const swing = move * step * (side ? 0.55 : 0.38);
+  // Side-on, the near arm swings against the near (right) leg. Head-on an arm swinging
+  // forward foreshortens, so it shortens a little and turns in rather than flapping out.
+  const swing = move * step * (side ? 0.55 : 0.16);
+  const reachL = side ? 1 : 1 - move * Math.max(0, -step) * 0.14;
+  const reachR = side ? 1 : 1 - move * Math.max(0, step) * 0.14;
   const drift = still * Math.sin(t * 1.1 + phase) * 0.045;
   ctx.save();
   ctx.translate(0, neckRise);
-  aboutPivot(ctx, shoulderLeft, -swing + drift);
+  aboutPivot(ctx, shoulderLeft, -swing + drift, 1, reachL);
   drawPart(ctx, rig.parts.armLeft, density);
   ctx.restore();
 
   ctx.save();
   ctx.translate(0, neckRise);
   const gesture = talk * (-0.3 - 0.18 * Math.sin(t * 4.6 + phase));
-  aboutPivot(ctx, shoulderRight, swing - drift + gesture);
+  aboutPivot(ctx, shoulderRight, swing - drift + gesture, 1, reachR);
   drawPart(ctx, rig.parts.armRight, density);
   ctx.restore();
 

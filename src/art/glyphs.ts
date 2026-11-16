@@ -36,7 +36,16 @@ export type GlyphName =
   | 'characters'
   | 'monitor'
   | 'guides'
-  | 'close';
+  | 'close'
+  | 'world'
+  | 'select'
+  | 'paint'
+  | 'place'
+  | 'erase'
+  | 'landmark'
+  | 'spawn'
+  | 'dice'
+  | 'walkable';
 
 const W = 1.1; // the usual stroke weight
 const line = (points: Pt[], ink: Ink = 'dark', weight = W, closed = false): Shape => ({ kind: 'line', points, ink, weight, closed });
@@ -228,6 +237,57 @@ const GLYPHS: Record<GlyphName, () => Shape[]> = {
     line([[2, -1.4], [5, -2]], 'primary', 0.6),
   ],
   close: () => [line([[-5, -5], [5, 5]], 'dark', 1.3), line([[5, -5], [-5, 5]], 'dark', 1.3)],
+  // A little world: a hill, a river winding past a house.
+  world: () => [
+    line(quadCurve([-7, 1], [-2, -7], [3, 1]), 'secondary'),
+    line(quadCurve([-6, 6.5], [0, 2], [7, 4.5]), 'accent', 1.2),
+    area([[2, -1.5], [4.5, -4.5], [7, -1.5]], 'primary', 0),
+    line(rect(2.6, -1.5, 6.4, 1.5), 'dark', 0.8, true),
+  ],
+  // A pointer.
+  select: () => [line([[-4, -6.5], [-4, 4.5], [-1, 1.8], [1.4, 6.5], [3.2, 5.6], [0.8, 1], [4.6, 0.6], [-4, -6.5]], 'dark', W, true)],
+  // A stroke of running stitch laid by a needle.
+  paint: () => [
+    { kind: 'line', points: quadCurve([-7, 5], [-1, -2], [3, 4], 10), ink: 'primary', weight: 1.4, closed: false },
+    line([[2, 2], [6.5, -6]], 'dark', 1.2),
+    line(circle([6, -5.2], 0.7, 8), 'dark', 0.6, true),
+  ],
+  // A house with a plus.
+  place: () => [
+    area([[-6.5, -1], [-2, -5.5], [2.5, -1]], 'primary', 0),
+    line(rect(-5.2, -1, 1.2, 5), 'dark', W, true),
+    line([[5, -6], [5, 0]], 'accent', 1.2),
+    line([[2, -3], [8, -3]], 'accent', 1.2),
+  ],
+  // Scissors.
+  erase: () => [
+    ring([-4, 4], 2.2, 'dark'),
+    ring([4, 4], 2.2, 'dark'),
+    line([[-2.6, 2.4], [4.5, -6.5]], 'dark', 1.1),
+    line([[2.6, 2.4], [-4.5, -6.5]], 'dark', 1.1),
+    knot([0, -0.6], 0.8, 'primary'),
+  ],
+  // A pin flag on a pole.
+  landmark: () => [line([[-3, 7], [-3, -6.5]], 'dark', 1.2), area([[-3, -6.5], [6, -4], [-3, -1.5]], 'primary', 0)],
+  // Two footprints.
+  spawn: () => [
+    line(circle([-2.8, 2.5], 1.8, 12).map(([x, y]): Pt => [x, y * 1.5]), 'dark', 0.9, true),
+    line(circle([2.8, -2.5], 1.8, 12).map(([x, y]): Pt => [x, y * 1.5]), 'dark', 0.9, true),
+    knot([-2.8, -1.4], 0.6, 'primary'),
+    knot([2.8, -6.4], 0.6, 'primary'),
+  ],
+  // A die showing five.
+  dice: () => [line(rect(-6, -6, 6, 6), 'dark', W, true), ...([[-3, -3], [3, -3], [0, 0], [-3, 3], [3, 3]] as Pt[]).map((p) => knot(p, 0.9, 'primary'))],
+  // A grid with crossed-out cells: where one can and cannot walk.
+  walkable: () => [
+    line(rect(-6.5, -6.5, 6.5, 6.5), 'dark', 0.8, true),
+    line([[-6.5, 0], [6.5, 0]], 'dark', 0.6),
+    line([[0, -6.5], [0, 6.5]], 'dark', 0.6),
+    line([[1.5, 1.5], [5, 5]], 'primary', 1),
+    line([[5, 1.5], [1.5, 5]], 'primary', 1),
+    line([[-5, -5], [-1.5, -1.5]], 'primary', 1),
+    line([[-1.5, -5], [-5, -1.5]], 'primary', 1),
+  ],
 };
 
 export const GLYPH_NAMES = Object.keys(GLYPHS) as GlyphName[];

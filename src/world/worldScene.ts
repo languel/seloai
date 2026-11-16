@@ -58,8 +58,22 @@ function touchRect(touched: Set<number>, x: number, y: number, w: number, h: num
   for (let i = x; i < x + w; i++) for (let j = y; j < y + h; j++) touched.add(cellKey(i, j));
 }
 
-/** Runs the recipe (or reads the frozen base), then applies the edits in order. */
+const bakeCache = new WeakMap<WorldScene, BakedScene>();
+
+/**
+ * Runs the recipe (or reads the frozen base), then applies the edits in order. Scenes are
+ * never changed in place (every command makes a new one), so a bake is cached per scene.
+ * Treat the result as read-only.
+ */
 export function bakeScene(scene: WorldScene): BakedScene {
+  const hit = bakeCache.get(scene);
+  if (hit) return hit;
+  const baked = bakeSceneUncached(scene);
+  bakeCache.set(scene, baked);
+  return baked;
+}
+
+function bakeSceneUncached(scene: WorldScene): BakedScene {
   const generated = scene.base ?? runRecipe(scene.recipe);
   const model: SceneModel = {
     ...generated.model,

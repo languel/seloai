@@ -45,12 +45,14 @@
           "enum": [
             "village",
             "observatory",
+            "world",
             "level",
             "tapestry",
             "characters",
             "monitor",
             "guides"
-          ]
+          ],
+          "description": "Workspace tab. \"level\" and \"tapestry\" are older names for the World editor."
         }
       }
     }

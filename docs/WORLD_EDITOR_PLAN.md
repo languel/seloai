@@ -141,7 +141,31 @@ Built with the same shape-and-looks pipeline as everything else (threads are `li
 shapes, knots are `knot` shapes), drawn in the current art look, with the stitched
 interface. The database view stays as a plain table for inspection.
 
-## 6. Retiring the old paths
+## 6. The pattern studio: procedural motifs from references
+
+Owner note: Tapestry Studio has useful lessons, but rather than digitising patterns from
+sources, patterns should be generated procedurally, based on references.
+
+- **A motif grammar** for counted thread work: a grid, a symmetry (mirror, four-fold,
+  eight-fold, a running border repeat), and generators that grow a motif inside it (stepped
+  diagonals, the eight-pointed star of the elbetitsa, hooked lozenges with no hooked cross,
+  tree-of-life axes, rosettes, meanders, chevron friezes), each with typed parameters and a
+  seed, like the world generators.
+- **A reference is a described style**, not a picture to copy: a named recipe of grammar,
+  symmetry, density, line habits and ink roles (for example "Shopluk elbetitsa: eight-fold,
+  stepped diagonals, dense, red and black"). References live in packs, so a world brings its
+  own regional styles; the Shevitsa regions are the first set. A generated motif is new each
+  seed but reads as belonging to its reference.
+- **Lessons kept from Tapestry Studio**: the indexed palette (inks as roles, never colours),
+  a cell editor for touching up a generated motif by hand (as an edit layer on top of the
+  generator, the same recipe-plus-edits idea), the pattern library, and emitting a motif as
+  code/data an agent can read. Dropped: image import, segmentation and tileset packing.
+- **Where motifs go**: world features (a dancing ground's star, a house's gable), garments
+  (the oversized apron motif, skirt bands), the cloth border, interface frames, and the Loom.
+- Open question for later: whether a user's own image may be used only to *estimate* a
+  reference's parameters (symmetry, density, ink proportions), never traced.
+
+## 7. Retiring the old paths
 
 - Remove the Level Editor and Tapestry Studio tabs, `TapestryStudioView`, the segmentation
   client and worker and their models, the Classic tiles look and the sprite sheet paths.
@@ -164,13 +188,26 @@ interface. The database view stays as a plain table for inspection.
    (neighbouring house chunks are one hamlet), gathering places, bridges and the deepest
    wood, and is titled after its first hamlet. "Valley (procedural)" is a world pack. The
    bundled packs still load as tile maps until the editor opens them as scenes.
-2. World editor tab, replacing Level Editor and Tapestry Studio.
+2. ~~World editor tab, replacing Level Editor and Tapestry Studio.~~ First pass done
+   (`src/components/WorldEditorView.tsx`, the "World Editor" tab; the two old tabs are gone
+   from the bar, their code stays until step 7). Recipe panel built from the generator's
+   schema with a dice for the seed; the world drawn live in the current look with pan and
+   zoom; tools to select and drag, paint ground (six terrains, three brush sizes), place a
+   feature, cut away a feature, landmark or start point, name a place and add a start
+   point; a walkability overlay; the list of hand edits (each removable, edits that no
+   longer apply shown as such); undo and redo through the world store; "Edit this world as
+   a place" for tile maps; "Make a new world". Ambient decoration now depends only on
+   position, so an edit changes the decoration near it and nowhere else. Still to do:
+   import and export of a world pack from the editor, rectangle and line painting, feature
+   thumbnails in the place palette, and the editor's own small multiples of seeds.
 3. Director camera. Independent of the editors (it touches the village view and the
    simulation, not the world document), so it can also run alongside steps 1 and 2.
 4. The Loom: first the cloth and its navigation from the records the simulation already
    keeps, then basting and deviations, then kept branches (a simulation change: rewinding
    forks instead of truncating). Also independent of the editors.
 5. Character editor: trait overrides and the new editor.
-6. Retire the old code, the tiles look and the old agent tools; update docs and tests.
+6. Pattern studio: the motif grammar and the first references (Shevitsa regions), then the
+   cell editor and library, then motifs in features and garments.
+7. Retire the old code, the tiles look and the old agent tools; update docs and tests.
 
 Each step lands on its own branch and is usable on its own.

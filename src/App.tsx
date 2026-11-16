@@ -36,10 +36,10 @@ import {
 import { AestheticStudioPanel } from './components/AestheticStudioPanel';
 import { AssetGuideView } from './components/AssetGuideView';
 import { CharacterEditorView } from './components/CharacterEditorView';
-import { LevelEditorView } from './components/LevelEditorView';
 import { MonitorView } from './components/MonitorView';
 import { ObservatoryView } from './components/ObservatoryView';
-import { TapestryStudioView } from './components/TapestryStudioView';
+import WorldEditorView from './components/WorldEditorView';
+import { WorldCommandError } from './world/commands';
 import { VillageView } from './components/VillageView';
 import {
   generateProceduralPlayerCustomSprite,
@@ -76,7 +76,7 @@ const DEMO_WORLDS: Array<{ id: DemoWorldId; label: string; description: string }
   (pack) => ({ id: pack.id, label: pack.name, description: pack.description }),
 );
 
-type TabId = 'village' | 'observatory' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
+type TabId = 'village' | 'observatory' | 'world' | 'characters' | 'monitor' | 'guides';
 
 export function App() {
   const [tab, setTab] = useState<TabId>('village');
@@ -256,6 +256,17 @@ export function App() {
     });
   };
 
+  /** Runs one world command from an editor; returns its error message, or null. */
+  const handleWorldCommand = (command: WorldCommand, label: string): string | null => {
+    try {
+      storeRef.current.dispatch(command, label);
+      return null;
+    } catch (error) {
+      if (error instanceof WorldCommandError || error instanceof Error) return error.message;
+      return String(error);
+    }
+  };
+
   const handleApplyVillagers = (nextVillagers: VillagerConfig[]) => {
     storeRef.current.dispatch({ type: 'cast.replace', cast: nextVillagers }, 'Update cast');
     brainRouter.log({
@@ -295,7 +306,9 @@ export function App() {
       getVillagers: () => latestRef.current.villagers,
       getSettings: () => latestRef.current.settings!,
       getTab: () => latestRef.current.tab,
-      setTab: (nextTab) => {
+      setTab: (requested) => {
+        // The Level Editor and Tapestry Studio are now the World editor.
+        const nextTab: TabId = requested === 'level' || requested === 'tapestry' ? 'world' : requested;
         latestRef.current.tab = nextTab;
         setTab(nextTab);
       },
@@ -798,8 +811,7 @@ export function App() {
             [
               ['village', 'Village', 'village'],
               ['observatory', 'Control Room', 'observatory'],
-              ['level', 'Level Editor', 'level'],
-              ['tapestry', 'Tapestry Studio', 'tapestry'],
+              ['world', 'World Editor', 'world'],
               ['characters', 'Characters', 'characters'],
               ['monitor', 'AI & Voice Monitor', 'monitor'],
               ['guides', 'Guides & Templates', 'guides'],
@@ -973,18 +985,15 @@ export function App() {
             }}
           />
         )}
-        {tab === 'level' && (
-          <LevelEditorView
+        {tab === 'world' && (
+          <WorldEditorView
             map={map}
-            onApplyMap={handleApplyMap}
-            onOpenTapestryStudio={() => setTab('tapestry')}
-          />
-        )}
-        {tab === 'tapestry' && (
-          <TapestryStudioView
-            map={map}
-            onApplyMap={handleApplyMap}
-            onOpenLevelEditor={() => setTab('level')}
+            look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName}
+            dispatch={handleWorldCommand}
+            canUndo={storeRef.current.canUndo}
+            canRedo={storeRef.current.canRedo}
+            onUndo={handleUndoWorld}
+            onRedo={handleRedoWorld}
           />
         )}
         {tab === 'characters' && (
