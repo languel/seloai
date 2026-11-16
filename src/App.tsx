@@ -971,6 +971,7 @@ export function App() {
             onUpdateSettings={handleUpdateSettings}
             onOpenMonitor={() => setTab('monitor')}
             aestheticSettings={aestheticSettings}
+            onUpdateAesthetic={handleUpdateAesthetic}
             sidebarOpen={sidebarOpen}
           />
         )}

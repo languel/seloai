@@ -117,7 +117,7 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   figureTurns: true,
   figureQuirks: true,
   speechStyle: 'woven',
-  wovenHand: 'satin',
+  wovenHand: 'script',
   wovenSize: 1,
   wovenWeight: 0.075,
   wovenSlant: 0.15,

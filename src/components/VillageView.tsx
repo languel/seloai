@@ -104,6 +104,8 @@ interface VillageViewProps {
   onUpdateSettings: (patch: Partial<ModelSettings>) => void;
   onOpenMonitor: () => void;
   aestheticSettings?: AestheticSettings;
+  /** Changes a style setting from the village toolbar (the letters of woven text). */
+  onUpdateAesthetic?: (next: AestheticSettings) => void;
   sidebarOpen?: boolean;
 }
 
@@ -227,6 +229,8 @@ function serializeComposerText(root: HTMLElement | null): string {
 function SpeedRange({ stitched, ...rest }: React.InputHTMLAttributes<HTMLInputElement> & { stitched: boolean }) {
   return stitched ? <StitchSlider {...rest} /> : <input type="range" {...rest} />;
 }
+
+const HAND_NAMES = { script: 'Script', ductus: 'Hand-sewn', satin: 'Satin', counted: 'Counted' } as const;
 
 /** A #rrggbb colour darkened by `amount` (0..1). */
 function deepen(hex: string, amount: number): string {
@@ -436,6 +440,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onUpdateSettings,
   onOpenMonitor,
   aestheticSettings: aestheticSettingsProp,
+  onUpdateAesthetic,
   sidebarOpen: sidebarOpenProp,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -444,7 +449,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? 'narrator');
   const [tick, setTick] = useState(0);
   const [showPaths, setShowPaths] = useState(false);
-  const [showLabels, setShowLabels] = useState(true);
+  const [showLabels, setShowLabels] = useState(false);
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [showThoughtBubbles, setShowThoughtBubbles] = useState(true);
   const [showScribeSubtitles, setShowScribeSubtitles] = useState(true);
@@ -1804,6 +1809,22 @@ export const VillageView: React.FC<VillageViewProps> = ({
             <GlyphButton glyph="speech" label="Show speech bubbles" pressed={showSpeechBubbles} dimOff onClick={() => setShowSpeechBubbles((s) => !s)} />
             <GlyphButton glyph="thoughts" label="Show thought bubbles" pressed={showThoughtBubbles} dimOff onClick={() => setShowThoughtBubbles((t) => !t)} />
             <GlyphButton glyph="subtitles" label="Show the Scribe's subtitles" pressed={showScribeSubtitles} dimOff onClick={() => setShowScribeSubtitles((s) => !s)} />
+            {aestheticSettings.speechStyle === 'woven' && onUpdateAesthetic && (
+              <button
+                type="button"
+                className="glyph-button group relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm px-1 text-[12px] italic"
+                aria-label={`Letters for woven text: ${HAND_NAMES[aestheticSettings.wovenHand]}. Click for the next; more in Style.`}
+                onClick={() => {
+                  const order = ['script', 'ductus', 'satin', 'counted'] as const;
+                  const next = order[(order.indexOf(aestheticSettings.wovenHand) + 1) % order.length];
+                  onUpdateAesthetic({ ...aestheticSettings, wovenHand: next });
+                }}
+                style={{ fontFamily: aestheticSettings.wovenHand === 'script' ? '"Bradley Hand", "Segoe Print", cursive' : 'Georgia, serif' }}
+              >
+                Aa
+                <GlyphTip>Letters: {HAND_NAMES[aestheticSettings.wovenHand]} (click for the next)</GlyphTip>
+              </button>
+            )}
             <GlyphButton
               glyph="story"
               label={storyMode ? 'Story mode is on: the camera follows the story. Pan or zoom to take over.' : 'Story mode: let the camera follow the story'}

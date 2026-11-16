@@ -19,7 +19,15 @@ interface Shown {
 }
 
 const WRITE_CPS = 26;
-const FADE_SEC = 1.4;
+const FADE_SEC = 0.9;
+
+/** The same colour with no opacity, for gradients that fade out. */
+function clearOf(colour: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(colour);
+  if (!m) return 'rgba(255,255,255,0)';
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0)`;
+}
 
 export class ScribeBand {
   private shown: Shown[] = [];
@@ -82,7 +90,9 @@ export class ScribeBand {
       const fade = s.gone ? Math.max(0, 1 - (t - s.gone) / FADE_SEC) : 1;
       const lines = ScribeBand.wrap(s.text, xh, maxW).slice(-3);
       const visible = Math.floor((t - s.since) * WRITE_CPS);
-      const top = bottom - lines.length * lineH;
+      // A line on its way out rises a little as it fades, so it never sits under the new one.
+      const lift = s.gone ? Math.min(1, (t - s.gone) / FADE_SEC) * lineH * 1.2 : 0;
+      const top = bottom - lines.length * lineH - lift;
       // A soft wash of the cloth's own colour behind the words, with no edge, so they read
       // over a river or a road without sitting in a box.
       if (ground) {
@@ -95,9 +105,10 @@ export class ScribeBand {
         ctx.translate(cx, cy);
         ctx.scale(1, ry / rx);
         const wash = ctx.createRadialGradient(0, 0, rx * 0.2, 0, 0, rx);
+        // Fade to the same colour made clear, never to clear black (which shows as a grey halo).
         wash.addColorStop(0, ground);
         wash.addColorStop(0.65, ground);
-        wash.addColorStop(1, 'rgba(0,0,0,0)');
+        wash.addColorStop(1, clearOf(ground));
         ctx.fillStyle = wash;
         ctx.beginPath();
         ctx.arc(0, 0, rx, 0, Math.PI * 2);
