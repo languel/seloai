@@ -22,6 +22,7 @@ import type {
   VoiceGender,
 } from '../engine/types';
 import { ModularCharacterCreator } from './ModularCharacterCreator';
+import { FigureAppearance } from './FigureAppearance';
 import {
   FIGURE_HEIGHT_SCALE,
   chooseFigureView,
@@ -52,8 +53,8 @@ const PREVIEW_W = 296;
 function RosterPortrait({ villager, look }: { villager: VillagerConfig; look: PaletteName }) {
   const src = React.useMemo(
     () => {
-      const { build, kind } = figureLooksFor(villager);
-      return figurePortrait(villager.id, look, 34, build, 'bust', 2, kind)?.toDataURL() ?? '';
+      const { build, kind, seed, traits } = figureLooksFor(villager);
+      return figurePortrait(villager.id, look, 34, build, 'bust', 2, kind, { seed, traits })?.toDataURL() ?? '';
     },
     [villager, look],
   );
@@ -458,9 +459,9 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
             <div className="rushnyk-card rounded-sm p-2.5">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                  Walk Cycle Preview (4 Directions)
+                  {worldLook !== 'tiles' ? 'The figure' : 'Walk Cycle Preview (4 Directions)'}
                 </span>
-                <div className="flex items-center gap-2">
+                <div className={`flex items-center gap-2 ${worldLook !== 'tiles' ? 'hidden' : ''}`}>
                   <span className="text-[11px] text-muted">
                     {current.appearance
                       ? 'Modular Auto-Sprite (128×128)'
@@ -532,6 +533,9 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                     </select>
                   </label>
                 </div>
+              )}
+              {worldLook !== 'tiles' && (
+                <FigureAppearance villager={current} look={worldLook} onChange={(figure) => updateCurrent({ figure })} />
               )}
             </div>
 
@@ -793,8 +797,9 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
               );
             })()}
 
-            {/* Spritesheet Picker + Modular Auto-Sprite Creator + Custom Upload */}
-            <div className="rushnyk-card rounded-sm p-2.5 space-y-2.5">
+            {/* Spritesheet Picker + Modular Auto-Sprite Creator + Custom Upload (the tiles look only;
+                the art looks draw the procedural figure, edited under the preview above). */}
+            <div className={`rushnyk-card rounded-sm p-2.5 space-y-2.5 ${worldLook !== 'tiles' ? 'hidden' : ''}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">

@@ -5,7 +5,7 @@
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
-import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureView } from './figures';
+import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureTraits, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
 import { buildSceneModel, semanticsFromTable, type TileSemantics } from './scene';
@@ -89,6 +89,10 @@ export interface FigureLooks {
   detail?: FigureDetail;
   /** The maker's quirks (`FigureOptions.quirks`). On unless turned off in the Style panel. */
   quirks?: boolean;
+  /** The seed to draw from instead of the id's own. */
+  seed?: number;
+  /** Traits chosen by hand. */
+  traits?: FigureTraits;
 }
 
 /** Below this on-screen height a figure is drawn bold so its face still reads. */
@@ -134,18 +138,19 @@ export function getFigureRig(
   look: PaletteName,
   heightPx: number,
   expression?: Expression,
-  { build = 'skirted', view = 'front', kind = 'human', detail = 'full', quirks = true }: FigureLooks = {},
+  { build = 'skirted', view = 'front', kind = 'human', detail = 'full', quirks = true, seed: chosenSeed, traits }: FigureLooks = {},
 ): FigureRig {
   const size = Math.max(16, Math.round(heightPx));
-  const seed = hashString(id);
-  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks });
+  const seed = chosenSeed ?? hashString(id);
+  const who = `${id}|${seed}|${traits ? JSON.stringify(traits) : ''}`;
+  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits });
   const mood = expression ?? resting.restingExpression;
-  const key = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|${mood}`;
+  const key = `${who}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|${mood}`;
   const cached = rigCache.get(key);
   if (cached) return cached;
 
   const unit = (size / FIGURE_UNITS) * DENSITY;
-  const bodyKey = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|body`;
+  const bodyKey = `${who}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|body`;
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
@@ -176,7 +181,7 @@ export function getFigureRig(
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks, traits }).head, look, unit, seed),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
@@ -539,14 +544,15 @@ export function figurePortrait(
   framing: 'bust' | 'full' = 'bust',
   pixelRatio = 2,
   kind: FigureKind = 'human',
+  person: { seed?: number; traits?: FigureTraits; expression?: Expression } = {},
 ): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null;
   const px = Math.max(8, Math.round(sizePx * pixelRatio));
-  const key = `${id}|${look}|${px}|${kind}|${build}|${framing}`;
+  const seed = person.seed ?? hashString(id);
+  const key = `${id}|${seed}|${person.traits ? JSON.stringify(person.traits) : ''}|${person.expression ?? ''}|${look}|${px}|${kind}|${build}|${framing}`;
   const hit = portraitCache.get(key);
   if (hit) return hit;
-  const seed = hashString(id);
-  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, kind, quirks: true });
+  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, kind, quirks: true, traits: person.traits, expression: person.expression });
   const shapes = [...parts.legLeft, ...parts.legRight, ...parts.skirt, ...parts.torso, ...parts.head, ...parts.armLeft, ...parts.armRight];
   const box = bounds(shapes);
   const top = box.minY - 0.6;
@@ -571,6 +577,8 @@ export function figureKindFor(cfg?: { figure?: { kind?: FigureKind } }): FigureK
 }
 
 /** Build and kind for a character, ready to pass to `getFigureRig`. */
-export function figureLooksFor(cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind } }): Required<Omit<FigureLooks, 'view' | 'detail' | 'quirks'>> {
-  return { build: figureBuildFor(cfg), kind: figureKindFor(cfg) };
+export function figureLooksFor(
+  cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind; seed?: number; traits?: FigureTraits } },
+): Required<Pick<FigureLooks, 'build' | 'kind'>> & Pick<FigureLooks, 'seed' | 'traits'> {
+  return { build: figureBuildFor(cfg), kind: figureKindFor(cfg), seed: cfg.figure?.seed, traits: cfg.figure?.traits };
 }

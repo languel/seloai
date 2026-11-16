@@ -229,8 +229,8 @@ function SubtitleBox({ stitched, ...rest }: React.HTMLAttributes<HTMLDivElement>
 const FigurePortraitThumb: React.FC<{ villager: VillagerConfig; look: PaletteName; size: number }> = ({ villager, look, size }) => {
   const src = React.useMemo(() => {
     const ratio = typeof window === 'undefined' ? 2 : Math.max(2, Math.ceil(window.devicePixelRatio || 1));
-    const { build, kind } = figureLooksFor(villager);
-    return figurePortrait(villager.id, look, size, build, 'bust', ratio, kind)?.toDataURL() ?? '';
+    const { build, kind, seed, traits } = figureLooksFor(villager);
+    return figurePortrait(villager.id, look, size, build, 'bust', ratio, kind, { seed, traits })?.toDataURL() ?? '';
   }, [villager, look, size]);
   return <img src={src} width={size} height={size} alt="" aria-hidden="true" className="shrink-0" style={{ width: size, height: size }} />;
 };

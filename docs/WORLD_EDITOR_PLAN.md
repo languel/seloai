@@ -231,7 +231,20 @@ sources, patterns should be generated procedurally, based on references.
    places with the saved world (today it starts afresh when the app loads), deviations
    (red knots where what happened left what was intended), kept branches (rewinding forks
    instead of truncating), and arranging by story line.
-5. Character editor: trait overrides and the new editor.
+5. ~~Character editor: trait overrides and the new editor.~~ First pass done.
+   `VillagerConfig.figure` carries `seed` (default: from the id) and `traits`, hand choices
+   applied after the seed and the kind (`FigureOptions.traits`, `FIGURE_TRAIT_SPECS`,
+   `seededFigureTraits` in `src/art/figures.ts`): headdress (women) or hat (men), skirt
+   style and pattern, the inks of skirt or trousers, bodice or vest, apron and hair, open
+   bodice, coloured sleeves, long hair or moustache, arms, skin and resting face. Choosing
+   a value the seed already chose changes nothing, and choosing one never changes another.
+   In the art looks the Characters tab shows, under the walk preview, a full portrait, the
+   five moods, a dice for a new person (chosen traits stay), "back to the original",
+   "clear choices", and a control per trait showing what the seed chose (thread colours as
+   swatches). The bitmap sprite tools are hidden in the art looks (removed in step 7). The
+   rig, the village and every portrait follow the seed and choices. Still to do: children
+   and elders (scale and proportion), more kinds, and listing the trait schema in the
+   agent API.
 6. Pattern studio: the motif grammar and the first references (Shevitsa regions), then the
    cell editor and library, then motifs in features and garments.
 7. Retire the old code, the tiles look and the old agent tools; update docs and tests.

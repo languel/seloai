@@ -57,6 +57,201 @@ export interface FigureOptions {
    * skirts. All seeded, so a person's quirks never change. Off by default.
    */
   quirks?: boolean;
+  /**
+   * Traits chosen by hand, which win over what the seed drew (and over the kind). Applied
+   * after every random draw, so choosing one never changes another.
+   */
+  traits?: FigureTraits;
+}
+
+/** The traits a person's look can be set by hand in the character editor. */
+export interface FigureTraits {
+  headdress?: Headdress;
+  hat?: BaseHeaddress;
+  skirtStyle?: 'filled' | 'outlined' | 'apron';
+  pattern?: 'dots' | 'stripes' | 'diamonds';
+  skirtInk?: Ink;
+  bodiceInk?: Ink;
+  apronInk?: Ink;
+  hairInk?: Ink;
+  hairFalls?: boolean;
+  sleeveFilled?: boolean;
+  openBodice?: boolean;
+  pose?: Pose;
+  skinTone?: number;
+  expression?: Expression;
+}
+
+export type FigureTraitKey = keyof FigureTraits;
+type TraitValue = string | number | boolean;
+
+export interface FigureTraitSpec {
+  key: FigureTraitKey;
+  label: string;
+  /** Which builds the trait shows on. */
+  builds: readonly FigureBuild[];
+  /** Ink choices are drawn as swatches of the current look. */
+  ink?: boolean;
+  options: ReadonlyArray<{ value: TraitValue; label: string }>;
+}
+
+const INK_CHOICES = [
+  { value: 'primary', label: 'First thread' },
+  { value: 'secondary', label: 'Second thread' },
+  { value: 'accent', label: 'Third thread' },
+  { value: 'accent2', label: 'Fourth thread' },
+  { value: 'gold', label: 'Gold' },
+  { value: 'dark', label: 'Dark' },
+] as const;
+const YES_NO = [
+  { value: true, label: 'Yes' },
+  { value: false, label: 'No' },
+] as const;
+
+/** Every hand-settable trait, with its choices, for editors and agents. */
+export const FIGURE_TRAIT_SPECS: readonly FigureTraitSpec[] = [
+  {
+    key: 'headdress',
+    label: 'Headdress',
+    builds: ['skirted'],
+    options: [
+      { value: 'crown', label: 'Crown of knots' },
+      { value: 'kerchief', label: 'Kerchief' },
+      { value: 'wreath', label: 'Wreath' },
+      { value: 'sokai', label: 'Sokai with coins' },
+      { value: 'coins', label: 'Coin band and braids' },
+      { value: 'sprig', label: 'Sprig of flowers' },
+      { value: 'veil', label: 'Embroidered veil' },
+      { value: 'braids', label: 'Braided crown' },
+      { value: 'horns', label: 'Horns' },
+    ],
+  },
+  {
+    key: 'hat',
+    label: 'Hat',
+    builds: ['trousered'],
+    options: [
+      { value: 'crown', label: 'Fur kalpak' },
+      { value: 'kerchief', label: 'Flat cap' },
+      { value: 'wreath', label: 'Bare, a flower at the ear' },
+      { value: 'horns', label: 'Horns' },
+    ],
+  },
+  {
+    key: 'skirtStyle',
+    label: 'Skirt',
+    builds: ['skirted'],
+    options: [
+      { value: 'filled', label: 'Solid' },
+      { value: 'outlined', label: 'Outlined, with a pattern' },
+      { value: 'apron', label: 'Solid, with an apron' },
+    ],
+  },
+  {
+    key: 'pattern',
+    label: 'Skirt pattern',
+    builds: ['skirted'],
+    options: [
+      { value: 'dots', label: 'Dots' },
+      { value: 'stripes', label: 'Stripes' },
+      { value: 'diamonds', label: 'Diamonds' },
+    ],
+  },
+  { key: 'skirtInk', label: 'Skirt or trousers', builds: ['skirted', 'trousered'], ink: true, options: INK_CHOICES },
+  { key: 'bodiceInk', label: 'Bodice or vest', builds: ['skirted', 'trousered'], ink: true, options: INK_CHOICES },
+  { key: 'apronInk', label: 'Apron', builds: ['skirted'], ink: true, options: INK_CHOICES },
+  { key: 'openBodice', label: 'Open bodice or vest', builds: ['skirted', 'trousered'], options: YES_NO },
+  { key: 'sleeveFilled', label: 'Coloured sleeves', builds: ['skirted', 'trousered'], options: YES_NO },
+  { key: 'hairInk', label: 'Hair', builds: ['skirted', 'trousered'], ink: true, options: INK_CHOICES },
+  { key: 'hairFalls', label: 'Long hair (a moustache on a man)', builds: ['skirted', 'trousered'], options: YES_NO },
+  {
+    key: 'pose',
+    label: 'Arms',
+    builds: ['skirted', 'trousered'],
+    options: [
+      { value: 'raised', label: 'Raised' },
+      { value: 'offering', label: 'Offering a flower' },
+      { value: 'akimbo', label: 'Hands on hips' },
+      { value: 'resting', label: 'Resting' },
+    ],
+  },
+  {
+    key: 'skinTone',
+    label: 'Skin',
+    builds: ['skirted', 'trousered'],
+    options: [0, 1, 2, 3, 4].map((v) => ({ value: v, label: ['Lightest', 'Light', 'Middle', 'Dark', 'Darkest'][v] })),
+  },
+  {
+    key: 'expression',
+    label: 'Resting face',
+    builds: ['skirted', 'trousered'],
+    options: [
+      { value: 'calm', label: 'Calm' },
+      { value: 'glad', label: 'Glad' },
+      { value: 'grim', label: 'Grim' },
+      { value: 'awed', label: 'Awed' },
+      { value: 'sly', label: 'Sly' },
+    ],
+  },
+];
+
+/** What the seed chose for each hand-settable trait, so an editor can show it. */
+export function seededFigureTraits(rng: Rng, kind: FigureKind = 'human'): Required<Omit<FigureTraits, 'pattern' | 'apronInk'>> & Pick<FigureTraits, 'pattern' | 'apronInk'> {
+  const t = drawTraits(rng, 30);
+  applyKind(t, kind);
+  return {
+    headdress: t.headdress,
+    hat: t.baseHeaddress,
+    skirtStyle: t.skirtStyle,
+    pattern: t.pattern,
+    skirtInk: t.skirtInk,
+    bodiceInk: t.bodiceInk,
+    apronInk: t.apronInk,
+    hairInk: t.hairInk,
+    hairFalls: t.hairFalls,
+    sleeveFilled: t.sleeveFilled,
+    openBodice: t.openBodice,
+    pose: t.pose,
+    skinTone: t.seededSkinTone,
+    expression: t.restingExpression,
+  };
+}
+
+function applyKind(t: Traits, kind: FigureKind) {
+  if (kind === 'samodiva') {
+    Object.assign(t, { hairFalls: true, longHair: true, headdress: 'wreath', sleeveFilled: false, skirtStyle: 'outlined', pattern: 'dots' });
+  } else if (kind === 'serpent') {
+    Object.assign(t, { headdress: 'crown', hairInk: 'accent' });
+  } else if (kind === 'kuker') {
+    Object.assign(t, { sleeveFilled: true, bodiceInk: 'gold', hairFalls: false });
+  }
+}
+
+/** Hand-chosen traits win, applied after the seed and the kind. */
+function applyChosen(t: Traits, chosen: FigureTraits | undefined) {
+  if (!chosen) return;
+  if (chosen.headdress) t.headdress = chosen.headdress;
+  if (chosen.hat) t.baseHeaddress = chosen.hat;
+  if (chosen.skirtStyle) t.skirtStyle = chosen.skirtStyle;
+  if (t.skirtStyle === 'outlined') {
+    t.pattern = chosen.pattern ?? t.pattern ?? 'dots';
+    if (t.pattern === 'stripes') t.stripes = t.stripes ?? 4;
+  }
+  if (t.skirtStyle === 'apron') t.apronInk = chosen.apronInk ?? t.apronInk ?? 'gold';
+  if (chosen.skirtInk) t.skirtInk = chosen.skirtInk;
+  if (chosen.bodiceInk) t.bodiceInk = chosen.bodiceInk;
+  if (chosen.hairInk) t.hairInk = chosen.hairInk;
+  if (chosen.hairFalls !== undefined) t.hairFalls = chosen.hairFalls;
+  if (chosen.sleeveFilled !== undefined) t.sleeveFilled = chosen.sleeveFilled;
+  if (chosen.openBodice !== undefined) t.openBodice = chosen.openBodice;
+  if (chosen.skinTone !== undefined) t.seededSkinTone = Math.max(0, Math.min(4, Math.round(chosen.skinTone)));
+  if (chosen.expression) t.restingExpression = chosen.expression;
+  if (chosen.pose && chosen.pose !== t.pose) {
+    t.pose = chosen.pose;
+    // An offering needs a flower; drawn from the person's own quirk seed, so it is stable.
+    t.flower = t.pose === 'offering' ? flowerHead((['tulip', 'blossom', 'star'] as const)[t.quirk.motifSeed % 3], (t.headR / 0.1275) * 0.085 /* the figure's height, from its head, times the usual flower size */, createSeededRng(t.quirk.motifSeed)) : null;
+    t.carriesComb = t.pose === 'raised' && t.quirk.motifSeed % 2 === 0;
+  }
 }
 
 export type FigureDetail = 'full' | 'bold';
@@ -625,14 +820,10 @@ export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
   const t = drawTraits(rng, options.height);
   t.bold = options.detail === 'bold';
   const kind = options.kind ?? 'human';
-  // A kind overrides some traits after they are drawn, so the seed's other choices stay put.
-  if (kind === 'samodiva') {
-    Object.assign(t, { hairFalls: true, longHair: true, headdress: 'wreath', sleeveFilled: false, skirtStyle: 'outlined', pattern: 'dots' });
-  } else if (kind === 'serpent') {
-    Object.assign(t, { headdress: 'crown', hairInk: 'accent' });
-  } else if (kind === 'kuker') {
-    Object.assign(t, { sleeveFilled: true, bodiceInk: 'gold', hairFalls: false });
-  }
+  // A kind overrides some traits after they are drawn, so the seed's other choices stay put;
+  // traits chosen by hand override both.
+  applyKind(t, kind);
+  applyChosen(t, options.traits);
   const build: FigureBuild = kind === 'kuker' ? 'trousered' : kind === 'human' ? options.build ?? 'skirted' : 'skirted';
   const view = options.view ?? 'front';
   const expression = options.expression ?? t.restingExpression;

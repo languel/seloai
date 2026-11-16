@@ -1,4 +1,5 @@
 import type { TileMeaningTable } from '../art/scene';
+import type { FigureTraits } from '../art/figures';
 import type { WorldScene } from '../world/worldScene';
 export type Direction = 'down' | 'left' | 'right' | 'up';
 
@@ -217,6 +218,10 @@ export interface VillagerConfig {
     build?: 'skirted' | 'trousered';
     /** What sort of being: a world pack sets this for its special cast (a lamia, a kuker). */
     kind?: 'human' | 'serpent' | 'kuker' | 'samodiva';
+    /** The seed the figure is drawn from; by default, one made from the character's id. */
+    seed?: number;
+    /** Traits chosen by hand in the character editor; they win over the seed. */
+    traits?: FigureTraits;
   };
   identity: string;
   plan: string;

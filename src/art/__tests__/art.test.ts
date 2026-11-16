@@ -404,3 +404,43 @@ describe('turning without spinning', () => {
     expect(view).toBe('back');
   });
 });
+
+describe('traits chosen by hand', () => {
+  it('a chosen headdress changes only the head; a chosen skirt colour only the skirt', async () => {
+    const { seededFigureTraits } = await import('../figures');
+    for (const seed of [3, 11, 99]) {
+      const plain = figureParts(createSeededRng(seed), { height: 30 });
+      const seeded = seededFigureTraits(createSeededRng(seed));
+      const other = seeded.headdress === 'veil' ? 'sokai' : 'veil';
+      const hatted = figureParts(createSeededRng(seed), { height: 30, traits: { headdress: other } });
+      expect(JSON.stringify(hatted.head)).not.toBe(JSON.stringify(plain.head));
+      for (const part of ['legLeft', 'legRight', 'skirt', 'torso', 'armLeft', 'armRight'] as const) {
+        expect(JSON.stringify(hatted[part])).toBe(JSON.stringify(plain[part]));
+      }
+      const ink = seeded.skirtInk === 'gold' ? 'dark' : 'gold';
+      const recoloured = figureParts(createSeededRng(seed), { height: 30, traits: { skirtInk: ink } });
+      expect(JSON.stringify(recoloured.head)).toBe(JSON.stringify(plain.head));
+      expect(JSON.stringify(recoloured.skirt)).not.toBe(JSON.stringify(plain.skirt));
+    }
+  });
+
+  it('reports what the seed chose, and a choice of the seeded value changes nothing', async () => {
+    const { seededFigureTraits } = await import('../figures');
+    const seeded = seededFigureTraits(createSeededRng(42));
+    const plain = figureParts(createSeededRng(42), { height: 30 });
+    const same = figureParts(createSeededRng(42), { height: 30, traits: { headdress: seeded.headdress, skirtInk: seeded.skirtInk, expression: seeded.expression } });
+    expect(JSON.stringify(same)).toBe(JSON.stringify(plain));
+    expect(plain.restingExpression).toBe(seeded.expression);
+  });
+
+  it('an offering pose brings a flower; men read the hat choice', async () => {
+    const { FIGURE_TRAIT_SPECS } = await import('../figures');
+    const resting = figureParts(createSeededRng(5), { height: 30, traits: { pose: 'resting' } });
+    const offering = figureParts(createSeededRng(5), { height: 30, traits: { pose: 'offering' } });
+    expect(offering.armRight.length).toBeGreaterThan(resting.armRight.length);
+    const capped = figureParts(createSeededRng(5), { height: 30, build: 'trousered', traits: { hat: 'kerchief' } });
+    const kalpak = figureParts(createSeededRng(5), { height: 30, build: 'trousered', traits: { hat: 'crown' } });
+    expect(JSON.stringify(capped.head)).not.toBe(JSON.stringify(kalpak.head));
+    expect(FIGURE_TRAIT_SPECS.find((s) => s.key === 'hat')!.builds).toEqual(['trousered']);
+  });
+});
