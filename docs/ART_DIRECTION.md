@@ -481,7 +481,36 @@ To generalise properly, in order:
 7. **Performance.** `renderWorldLayer` runs once per map and look. For big maps render in
    chunks. `figureCache` is cleared wholesale past 160 entries; make it an LRU.
 
-### 8.1 Wang tiles for rich, varied worlds (owner request, not started)
+### 8.1 Wang tiles for rich, varied worlds (owner request, first pass done)
+
+Done, in `src/art/wangWorld.ts` (lab: `/art-lab.html?only=wang`):
+
+- **Plan, then solve.** `planChunks(options)` first lays out the large shapes on a grid of
+  6×6-cell chunks: a river that meanders from `riverIn` at the top to `riverOut` at the
+  bottom (down when it can, sideways toward its exit when it must), a few hamlets away from
+  the river linked by roads that bend once (a road meeting the river crosses it by a
+  bridge), and soft blobs of forest. These become edge labels (`meadow`, `road`, `water`,
+  `forest`) between chunks. The engine's `solveEdgeColoredWangGrid` then picks a tile for
+  every chunk with those edges pinned, choosing among three variants per signature so equal
+  chunks still differ. Leaving the large shapes to solver weights alone gave broken rivers
+  and almost no roads, which is why the plan comes first.
+- **Fill each chunk from its edges.** Water runs two cells wide from each water edge to the
+  centre (a pond if only one edge carries it), roads one cell wide; a road over water
+  becomes a bridge. Hamlets get two or three houses in the corners the roads leave free and
+  gather round a well, hearth or dancing star; a lane with one road edge ends at a
+  homestead; groves lean toward forest edges; open meadow gets the odd tree, wheat or
+  flowers. Features keep clear of the cloth border and the title.
+- **Output** is an ordinary `SceneModel`, so `withAmbience` and `sceneShapes` draw it like
+  any world. Tests check that every shared edge agrees and that the river is connected
+  from entry to exit.
+
+Next: make a generated world playable. Add an optional `scene` to `VillageMap` that
+`renderWorldLayer` uses directly, derive `collisionGrid` from water and house footprints
+and `pointsOfInterest` from hamlet centres, and offer it as a "Generated village" world
+pack with an auto-generated cast. The classic tiles look would need tile ids from the
+scene, or should be hidden for such a world.
+
+The original brief, kept for its detail:
 
 The engine already has a Wang tile solver in `src/engine/wangTiling.ts`, used today only on
 tile images:

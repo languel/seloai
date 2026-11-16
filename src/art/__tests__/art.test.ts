@@ -225,3 +225,43 @@ describe('ambient density', () => {
     }
   });
 });
+
+describe('Wang worlds', () => {
+  it('assembles chunks whose shared edges agree, with a river that runs from entry to exit', async () => {
+    const { planChunks, generateWangScene, CHUNK } = await import('../wangWorld');
+    for (const seed of [3, 11, 27]) {
+      const options = { cols: 6, rows: 4, seed, riverIn: 1, riverOut: 4 };
+      const plan = planChunks(options);
+      for (let x = 0; x < options.cols; x++) {
+        for (let y = 0; y < options.rows; y++) {
+          const sig = plan.signatures[x][y];
+          if (x + 1 < options.cols) expect(sig.east, `seed ${seed} ${x},${y} east`).toBe(plan.signatures[x + 1][y].west);
+          if (y + 1 < options.rows) expect(sig.south, `seed ${seed} ${x},${y} south`).toBe(plan.signatures[x][y + 1].north);
+        }
+      }
+      expect(plan.signatures[1][0].north).toBe('water');
+      expect(plan.signatures[4][options.rows - 1].south).toBe('water');
+      // The river is connected: flood from the entry through water and bridges reaches the bottom.
+      const scene = generateWangScene(options);
+      const wet = (x: number, y: number) => scene.terrain[x]?.[y] === 'water' || scene.terrain[x]?.[y] === 'bridge';
+      const start: Array<[number, number]> = [];
+      for (let x = 0; x < scene.width; x++) if (wet(x, 0)) start.push([x, 0]);
+      expect(start.length).toBeGreaterThan(0);
+      const seen = new Set(start.map(([x, y]) => `${x},${y}`));
+      const queue = [...start];
+      while (queue.length) {
+        const [x, y] = queue.pop()!;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (wet(nx, ny) && !seen.has(`${nx},${ny}`)) {
+            seen.add(`${nx},${ny}`);
+            queue.push([nx, ny]);
+          }
+        }
+      }
+      expect([...seen].some((c) => Number(c.split(',')[1]) === options.rows * CHUNK - 1), `seed ${seed}`).toBe(true);
+      expect(scene.features.some((f) => f.kind === 'house')).toBe(true);
+    }
+  });
+});

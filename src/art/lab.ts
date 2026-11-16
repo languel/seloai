@@ -10,6 +10,9 @@ import { GLYPH_NAMES } from './glyphs';
 import { glyphDataUrl } from './glyphRender';
 import { figure, type FigureView } from './figures';
 import { cloth, treeOfLife } from './motifs';
+import { withAmbience } from './ambient';
+import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
+import { CHUNK, generateWangScene } from './wangWorld';
 import { place, type Shape } from './shapes';
 
 type LookName = 'line' | 'thread';
@@ -188,6 +191,20 @@ if (!only || only === 'motion') {
     return wrap;
   });
   row('Motion: a woman and a man, toward us, side-on and away, idle, talking, thinking', panels);
+}
+
+// Wang worlds: whole worlds assembled from edge-matched chunks of meaning.
+if (!only || only === 'wang') {
+  const worlds = [seed, seed + 1].map((s) =>
+    sceneShapes(withAmbience(generateWangScene({ cols: 6, rows: 4, seed: s, riverIn: 1 + (s % 3), riverOut: 2 + (s % 3), title: `Seed ${s}` }), s)),
+  );
+  row(
+    'Wang worlds: chunks whose edges always agree, then ambience',
+    [
+      panel('Festive, first seed', 760, 520, 'thread', 'festive', 760 / (6 * CHUNK * UNITS_PER_TILE), [0, 0], worlds[0]),
+      panel('Line art, next seed', 760, 520, 'line', 'ink', 760 / (6 * CHUNK * UNITS_PER_TILE), [0, 0], worlds[1]),
+    ],
+  );
 }
 
 // Kinds: the special cast a world pack can ask for, from the front, side-on and behind.
