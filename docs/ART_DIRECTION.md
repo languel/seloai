@@ -423,9 +423,14 @@ What is wrong and needs doing, in priority order:
    boots helped. Push further: uneven hems, hands of different sizes, heads off-centre,
    patterns that do not quite line up, bolder oversized motifs on aprons, occasional
    profile figures. Asymmetry is the point.
-7. **Legibility at game size.** Faces and garment patterns vanish in the thread looks at
-   normal zoom. Options: simplify detail by size (a level-of-detail switch in `figure`),
-   enlarge heads further at small sizes, or thicken face marks relative to thread width.
+7. **Legibility at game size**, faces done. `FigureOptions.detail` is `full` (unchanged)
+   or `bold`: the head grows 14% from the neck, eyes are larger knots, the mouth is twice as
+   heavy with its curve exaggerated, the nose goes, and brows stay only where they carry the
+   mood (grim, awed, sly). Nothing else in the figure changes, so the person is the same.
+   `figureDetailFor(heightPx, zoom)` picks bold below 84 pixels on screen, which at the
+   default zoom is every villager; zooming in to about 1.5x or more brings back the full
+   face. Portraits and the Characters tab preview stay full. Still to do: garment patterns
+   (skirt stripes and apron motifs could become fewer, larger marks in bold).
 8. ~~Men~~ done (trousered build). Children and elders still to do: scale and proportion
    from the seed or cast data (a shorter figure with a larger head; a stoop and a stick).
 9. **Side and back views, next.** The profile is a squeezed front; a true profile skirt
@@ -802,7 +807,7 @@ one has missed the point.
 7. ~~**World polish**~~, first pass done: cloth border, couched road edges, river banks.
 8. ~~**Tile meanings in packs**~~, done, with a Shevitsa table (section 8).
 9. ~~**Conversation threads**~~, first pass done (section 9).
-10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Next up.
+10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Bold faces done; the outsider folk-art push (item 6) is next up.
 11. **Scene-level world authoring** and procedural world generators (section 8, item 2);
     the Wang worlds are the generator to build on.
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.

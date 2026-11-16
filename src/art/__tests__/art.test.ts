@@ -202,6 +202,29 @@ describe('figure kinds', () => {
   });
 });
 
+describe('figures seen small', () => {
+  it('bold detail changes only the head, which grows from the neck', () => {
+    for (const seed of [3, 11, 99]) {
+      const full = figureParts(createSeededRng(seed), { height: 30, expression: 'grim' });
+      const bold = figureParts(createSeededRng(seed), { height: 30, expression: 'grim', detail: 'bold' });
+      for (const part of ['legLeft', 'legRight', 'skirt', 'torso', 'armLeft', 'armRight'] as const) {
+        expect(JSON.stringify(bold[part])).toBe(JSON.stringify(full[part]));
+      }
+      const a = bounds(full.head);
+      const b = bounds(bold.head);
+      expect(b.maxX - b.minX).toBeGreaterThan(a.maxX - a.minX);
+      // No nose stroke: fewer marks, and those left are heavier.
+      expect(bold.head.length).toBeLessThan(full.head.length);
+    }
+  });
+
+  it('picks bold below the on-screen height threshold', async () => {
+    const { figureDetailFor } = await import('../gameLook');
+    expect(figureDetailFor(56, 1.15)).toBe('bold');
+    expect(figureDetailFor(56, 2)).toBe('full');
+  });
+});
+
 describe('tile meanings in world packs', () => {
   it('reads Shevitsa from the table its map carries', () => {
     const shevitsa = findWorldPack('shevitsa')!.build().map;

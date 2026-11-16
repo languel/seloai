@@ -5,7 +5,7 @@
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
-import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureView } from './figures';
+import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { buildSceneModel, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
@@ -81,6 +81,16 @@ export interface FigureLooks {
   build?: FigureBuild;
   view?: FigureView;
   kind?: FigureKind;
+  /** `bold` for figures seen small; see `figureDetailFor`. */
+  detail?: FigureDetail;
+}
+
+/** Below this on-screen height a figure is drawn bold so its face still reads. */
+export const BOLD_BELOW_PX = 84;
+
+/** The detail level for a figure of this height in world pixels at this camera zoom. */
+export function figureDetailFor(heightPx: number, zoom: number): FigureDetail {
+  return heightPx * zoom < BOLD_BELOW_PX ? 'bold' : 'full';
 }
 
 /** How tall an art figure stands, in map cells, at character scale 1. */
@@ -118,18 +128,18 @@ export function getFigureRig(
   look: PaletteName,
   heightPx: number,
   expression?: Expression,
-  { build = 'skirted', view = 'front', kind = 'human' }: FigureLooks = {},
+  { build = 'skirted', view = 'front', kind = 'human', detail = 'full' }: FigureLooks = {},
 ): FigureRig {
   const size = Math.max(16, Math.round(heightPx));
   const seed = hashString(id);
-  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind });
+  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail });
   const mood = expression ?? resting.restingExpression;
-  const key = `${id}|${look}|${size}|${kind}|${build}|${view}|${mood}`;
+  const key = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|${mood}`;
   const cached = rigCache.get(key);
   if (cached) return cached;
 
   const unit = (size / FIGURE_UNITS) * DENSITY;
-  const bodyKey = `${id}|${look}|${size}|${kind}|${build}|${view}|body`;
+  const bodyKey = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|body`;
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
@@ -160,7 +170,7 @@ export function getFigureRig(
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail }).head, look, unit, seed),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
@@ -488,6 +498,6 @@ export function figureKindFor(cfg?: { figure?: { kind?: FigureKind } }): FigureK
 }
 
 /** Build and kind for a character, ready to pass to `getFigureRig`. */
-export function figureLooksFor(cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind } }): Required<Omit<FigureLooks, 'view'>> {
+export function figureLooksFor(cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind } }): Required<Omit<FigureLooks, 'view' | 'detail'>> {
   return { build: figureBuildFor(cfg), kind: figureKindFor(cfg) };
 }

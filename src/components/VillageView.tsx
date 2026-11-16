@@ -1,5 +1,6 @@
 import {
   FIGURE_HEIGHT_SCALE,
+  figureDetailFor,
   chooseFigureView,
   figureLooksFor,
   figurePortrait,
@@ -823,13 +824,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
               };
               const cfg = sim.configs.get(body.id);
               const looks = cfg ? figureLooksFor(cfg) : { build: playerFigureBuild(aestheticSettings.player.attire), kind: 'human' as const };
-              const rig = getFigureRig(
-                body.id,
-                worldLook,
-                body.tileDim * body.scale * FIGURE_HEIGHT_SCALE,
-                expressionFor(body.state, body.line),
-                { ...looks, view: chooseFigureView(motion, aestheticSettings.figureTurns) },
-              );
+              const heightPx = body.tileDim * body.scale * FIGURE_HEIGHT_SCALE;
+              const rig = getFigureRig(body.id, worldLook, heightPx, expressionFor(body.state, body.line), {
+                ...looks,
+                view: chooseFigureView(motion, aestheticSettings.figureTurns),
+                // The zoom being eased toward, so a figure does not flip detail mid-zoom twice.
+                detail: figureDetailFor(heightPx, cam.targetZoom),
+              });
               paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, motion);
             };
 

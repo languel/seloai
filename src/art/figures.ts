@@ -45,7 +45,15 @@ export interface FigureOptions {
   skinTone?: number;
   build?: FigureBuild;
   view?: FigureView;
+  /**
+   * `bold` is for figures seen small (about 60 pixels tall or less on screen): a slightly
+   * larger head, bigger eyes, a heavier mouth that carries the mood, and no nose, so the
+   * face still reads. The default `full` keeps every mark.
+   */
+  detail?: FigureDetail;
 }
+
+export type FigureDetail = 'full' | 'bold';
 
 /** A figure split into parts that can move independently, with the joints they turn about. */
 export interface FigureParts {
@@ -105,6 +113,8 @@ interface Traits {
   lean: number;
   /** Hair to the waist (a samodiva). Set by the kind, never drawn from the seed. */
   longHair?: boolean;
+  /** Draw for a small size. Set from the options, never drawn from the seed. */
+  bold?: boolean;
 }
 
 /** Every random choice about a person, always drawn in this order. */
@@ -195,21 +205,24 @@ function squeezeX(shapes: Shape[], k: number, dx = 0): Shape[] {
 }
 
 /** A barely-there face: eyes, brows, a nose stroke and a mouth that carries the mood. */
-function face(centre: Pt, r: number, expression: Expression): Shape[] {
+function face(centre: Pt, r: number, expression: Expression, bold = false): Shape[] {
   const [cx, cy] = centre;
   const eyeY = cy - r * 0.08;
   const eyeX = r * 0.4;
   const shapes: Shape[] = [];
-  const browTilt = { calm: 0, glad: -0.06, grim: 0.2, awed: -0.14, sly: 0.1 }[expression];
+  const browTilt = { calm: 0, glad: -0.06, grim: 0.2, awed: -0.14, sly: 0.1 }[expression] * (bold ? 1.6 : 1);
+  // Seen small, only the brows that change the mood are worth their thread.
+  const brows = !bold || expression === 'grim' || expression === 'awed' || expression === 'sly';
   for (const side of [-1, 1] as const) {
-    const wide = expression === 'awed' ? 0.15 : 0.11;
+    const wide = bold ? (expression === 'awed' ? 0.21 : 0.19) : expression === 'awed' ? 0.15 : 0.11;
     const lidded = expression === 'sly' && side === 1;
     if (lidded) {
-      shapes.push({ kind: 'line', points: [[cx + side * eyeX - r * 0.14, eyeY], [cx + side * eyeX + r * 0.14, eyeY]], ink: 'dark', weight: 0.3 });
+      shapes.push({ kind: 'line', points: [[cx + side * eyeX - r * 0.14, eyeY], [cx + side * eyeX + r * 0.14, eyeY]], ink: 'dark', weight: bold ? 0.6 : 0.3 });
     } else {
       shapes.push({ kind: 'knot', at: [cx + side * eyeX, eyeY], r: r * wide, ink: 'dark' });
     }
-    const browY = eyeY - r * (expression === 'awed' ? 0.42 : 0.3);
+    if (!brows) continue;
+    const browY = eyeY - r * (expression === 'awed' ? 0.42 : 0.3) - (bold ? r * 0.06 : 0);
     shapes.push({
       kind: 'line',
       points: [
@@ -217,30 +230,30 @@ function face(centre: Pt, r: number, expression: Expression): Shape[] {
         [cx + side * (eyeX + r * 0.2), browY - r * browTilt * (expression === 'grim' ? -1 : 1)],
       ],
       ink: 'dark',
-      weight: 0.28,
+      weight: bold ? 0.55 : 0.28,
     });
   }
-  shapes.push({ kind: 'line', points: [[cx, eyeY + r * 0.06], [cx - r * 0.07, cy + r * 0.3]], ink: 'dark', weight: 0.25 });
+  if (!bold) shapes.push({ kind: 'line', points: [[cx, eyeY + r * 0.06], [cx - r * 0.07, cy + r * 0.3]], ink: 'dark', weight: 0.25 });
 
-  const mouthY = cy + r * 0.56;
-  const mouthW = r * 0.34;
+  const mouthY = cy + r * (bold ? 0.5 : 0.56);
+  const mouthW = r * (bold ? 0.4 : 0.34);
   if (expression === 'awed') {
-    shapes.push({ kind: 'knot', at: [cx, mouthY], r: r * 0.12, ink: 'primary' });
+    shapes.push({ kind: 'knot', at: [cx, mouthY], r: r * (bold ? 0.2 : 0.12), ink: 'primary' });
   } else {
-    const bend = { calm: 0, glad: 0.16, grim: -0.14, sly: 0.1 }[expression];
-    const skew = expression === 'sly' ? r * 0.1 : 0;
+    const bend = { calm: 0, glad: 0.16, grim: -0.14, sly: 0.1 }[expression] * (bold ? 1.5 : 1);
+    const skew = expression === 'sly' ? r * (bold ? 0.16 : 0.1) : 0;
     shapes.push({
       kind: 'line',
       points: quadCurve([cx - mouthW, mouthY - skew * 0.4], [cx, mouthY + r * bend * 2], [cx + mouthW, mouthY - r * bend * 0.4 - skew], 6),
       ink: 'primary',
-      weight: 0.32,
+      weight: bold ? 0.65 : 0.32,
     });
   }
   return shapes;
 }
 
 /** The same face in profile, looking right: one eye, a nose that breaks the outline. */
-function profileFace(centre: Pt, r: number, expression: Expression, skinTone: number): Shape[] {
+function profileFace(centre: Pt, r: number, expression: Expression, skinTone: number, bold = false): Shape[] {
   const [cx, cy] = centre;
   const eyeY = cy - r * 0.08;
   const shapes: Shape[] = [];
@@ -252,23 +265,25 @@ function profileFace(centre: Pt, r: number, expression: Expression, skinTone: nu
     tone: skinTone,
   });
   if (expression === 'sly') {
-    shapes.push({ kind: 'line', points: [[cx + r * 0.32, eyeY], [cx + r * 0.58, eyeY]], ink: 'dark', weight: 0.3 });
+    shapes.push({ kind: 'line', points: [[cx + r * 0.32, eyeY], [cx + r * 0.58, eyeY]], ink: 'dark', weight: bold ? 0.6 : 0.3 });
   } else {
-    shapes.push({ kind: 'knot', at: [cx + r * 0.46, eyeY], r: r * (expression === 'awed' ? 0.15 : 0.11), ink: 'dark' });
+    shapes.push({ kind: 'knot', at: [cx + r * 0.46, eyeY], r: r * (expression === 'awed' ? 0.15 : 0.11) * (bold ? 1.7 : 1), ink: 'dark' });
   }
   const tilt = { calm: 0, glad: -0.05, grim: 0.18, awed: -0.14, sly: 0.08 }[expression];
   const browY = eyeY - r * (expression === 'awed' ? 0.42 : 0.3);
-  shapes.push({ kind: 'line', points: [[cx + r * 0.28, browY - r * tilt], [cx + r * 0.66, browY + r * tilt]], ink: 'dark', weight: 0.28 });
+  if (!bold || expression !== 'calm') {
+    shapes.push({ kind: 'line', points: [[cx + r * 0.28, browY - r * tilt], [cx + r * 0.66, browY + r * tilt]], ink: 'dark', weight: bold ? 0.55 : 0.28 });
+  }
   const mouthY = cy + r * 0.56;
   if (expression === 'awed') {
-    shapes.push({ kind: 'knot', at: [cx + r * 0.74, mouthY], r: r * 0.1, ink: 'primary' });
+    shapes.push({ kind: 'knot', at: [cx + r * 0.74, mouthY], r: r * (bold ? 0.17 : 0.1), ink: 'primary' });
   } else {
     const bend = { calm: 0, glad: 0.14, grim: -0.12, sly: 0.08 }[expression];
     shapes.push({
       kind: 'line',
       points: quadCurve([cx + r * 0.5, mouthY - r * bend], [cx + r * 0.66, mouthY + r * bend], [cx + r * 0.84, mouthY], 4),
       ink: 'primary',
-      weight: 0.32,
+      weight: bold ? 0.6 : 0.32,
     });
   }
   return shapes;
@@ -462,7 +477,7 @@ function headShapes(t: Traits, headY: number, view: FigureView, build: FigureBui
     cap.push([-r * 0.15, headY + r * 0.2], [r * 0.05, headY - r * 0.45]);
     shapes.push({ kind: 'area', points: cap, ink: t.hairInk, grain: UP });
     if (long) shapes.push(fall(-r * 0.95, -r * 0.35, t.longHair ? 4 : 1.8));
-    shapes.push(...profileFace([0, headY], r, expression, skinTone));
+    shapes.push(...profileFace([0, headY], r, expression, skinTone, t.bold));
     if (build === 'trousered' && t.hairFalls) {
       shapes.push({ kind: 'line', points: quadCurve([r * 0.95, headY + r * 0.38], [r * 0.82, headY + r * 0.5], [r * 0.6, headY + r * 0.58], 4), ink: t.hairInk, weight: 0.55 });
     }
@@ -488,7 +503,7 @@ function headShapes(t: Traits, headY: number, view: FigureView, build: FigureBui
         ]),
       );
     }
-    shapes.push(...face([0, headY], r, expression));
+    shapes.push(...face([0, headY], r, expression, t.bold));
     if (build === 'trousered' && t.hairFalls) {
       // A moustache, curled at the ends.
       shapes.push(
@@ -560,6 +575,7 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
  */
 export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
   const t = drawTraits(rng, options.height);
+  t.bold = options.detail === 'bold';
   const kind = options.kind ?? 'human';
   // A kind overrides some traits after they are drawn, so the seed's other choices stay put.
   if (kind === 'samodiva') {
@@ -576,9 +592,33 @@ export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
   const { height } = options;
   const parts =
     build === 'trousered' ? trouseredParts(t, height, view, expression, skinTone) : skirtedParts(t, height, view, expression, skinTone);
-  if (kind === 'serpent') return { ...parts, skirt: serpentTail(t, height, view), legLeft: [], legRight: [] };
-  if (kind === 'kuker') return kukerParts(parts, t, height, view);
-  return parts;
+  const shaped =
+    kind === 'serpent'
+      ? { ...parts, skirt: serpentTail(t, height, view), legLeft: [], legRight: [] }
+      : kind === 'kuker'
+        ? kukerParts(parts, t, height, view)
+        : parts;
+  // Seen small, a bigger head (grown from the neck) keeps the face and headdress readable.
+  return t.bold ? { ...shaped, head: scaleAbout(shaped.head, shaped.pivots.neck, BOLD_HEAD) } : shaped;
+}
+
+const BOLD_HEAD = 1.14;
+
+/** Scales shapes about a point: line weights and knot sizes grow with them. */
+function scaleAbout(shapes: Shape[], [ox, oy]: Pt, k: number): Shape[] {
+  const p = ([x, y]: Pt): Pt => [ox + (x - ox) * k, oy + (y - oy) * k];
+  return shapes.map((s): Shape => {
+    switch (s.kind) {
+      case 'area':
+        return { ...s, points: s.points.map(p) };
+      case 'line':
+        return { ...s, points: s.points.map(p), weight: s.weight * k };
+      case 'knot':
+        return { ...s, at: p(s.at), r: s.r * k };
+      case 'counted':
+        return s;
+    }
+  });
 }
 
 /**
