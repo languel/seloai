@@ -113,7 +113,12 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     const { W, H, x, y, ratio } = geom();
     const palette = PALETTES[look];
     const lineLook = look === 'ink' || look === 'night';
-    const ink = (i: number) => (lineLook ? palette.inks.dark : palette.inks[THREAD_INKS[i % THREAD_INKS.length]]);
+    // Each thread is the character's own colour (their dot), or a palette thread without one.
+    const ink = (i: number) => {
+      if (lineLook) return palette.inks.dark;
+      const id = layout.threads.find((th) => th.ink === i)?.id;
+      return (id && sim.configs.get(id)?.accentColor) || palette.inks[THREAD_INKS[i % THREAD_INKS.length]];
+    };
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     if (lineLook) {
       ctx.fillStyle = palette.ground;

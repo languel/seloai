@@ -1027,10 +1027,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
         const lineLook = look === 'ink' || look === 'night';
         const colourFor = (id: string): string => {
           const cfg = sim.configs.get(id);
+          // A character's words are sewn in their own colour, the one their dot shows.
+          if (cfg?.accentColor && !lineLook) return cfg.accentColor;
           const key = `${id}|${look}|${cfg?.figure?.seed ?? ''}|${JSON.stringify(cfg?.figure?.traits ?? {})}`;
           const hit = threadColourRef.current.get(key);
           if (hit) return hit;
-          // A character's words are sewn in the thread of their own bodice (or skirt).
+          // Without a colour of their own, the thread of their bodice (or skirt).
           const looks = cfg ? figureLooksFor(cfg) : undefined;
           const seeded = seededFigureTraits(createSeededRng(looks?.seed ?? hashString(id)), looks?.kind);
           const traits = { ...seeded, ...(looks?.traits ?? {}) };
