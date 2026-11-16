@@ -4,15 +4,18 @@
  */
 import { createSeededRng } from '../core/rng';
 import { ribbon } from './lettering';
-import { blossom, chevronLeaf, comb, star, treeOfLife, tulip } from './motifs';
+import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
 import { cellRng, type SceneFeature, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
+import { motifShape } from './patternGrammar';
+import type { PatternReference } from './patternReferences';
+import { seedOf, transposed, worldBand, worldMedallion, worldReferences } from './worldMotifs';
 
 export const UNITS_PER_TILE = 8;
 const U = UNITS_PER_TILE;
 const UP = -Math.PI / 2;
 
-function house(feature: SceneFeature): Shape[] {
+function house(feature: SceneFeature, refs: PatternReference[]): Shape[] {
   const rng = createSeededRng(feature.seed);
   const w = feature.w * U * 0.86;
   const h = feature.h * U * 0.92;
@@ -29,7 +32,10 @@ function house(feature: SceneFeature): Shape[] {
     const t = i / 3;
     shapes.push({ kind: 'line', points: [[-w * 0.6 * (1 - t), -wall - (h - wall) * t], [w * 0.6 * (1 - t), -wall - (h - wall) * t]], ink: 'gold', weight: 0.4 });
   }
-  shapes.push(...place(star(h * 0.07, ['gold', 'gold']), { dy: -wall - (h - wall) * 0.3 }));
+  // A small medallion from the world's patterns, carved in the gable.
+  const gable = worldMedallion(feature.seed, refs, 3);
+  const gableCell = ((h - wall) * 0.42) / Math.max(gable.w, gable.h);
+  shapes.push(...place([motifShape(gable, gableCell)], { dy: -wall - (h - wall) * 0.32 }));
   for (const side of [-1, 1]) {
     const cx = side * w * 0.29;
     const cy = -wall * 0.55;
@@ -37,10 +43,10 @@ function house(feature: SceneFeature): Shape[] {
     shapes.push({ kind: 'area', points: [[cx - s, cy - s], [cx + s, cy - s], [cx + s, cy + s], [cx - s, cy + s]], ink: wallInk, grain: 0 });
     shapes.push({ kind: 'line', points: [[cx - s, cy - s], [cx + s, cy - s], [cx + s, cy + s], [cx - s, cy + s]], ink: 'dark', weight: 0.35, closed: true });
   }
-  // A band of stitches under the eaves, as on a real facade.
-  for (let i = 0; i < 7; i++) {
-    shapes.push({ kind: 'knot', at: [-w * 0.42 + (i / 6) * w * 0.84, -wall * 0.92], r: 0.45, ink: i % 2 ? 'primary' : 'gold' });
-  }
+  // A band of the world's pattern under the eaves, as on a real facade.
+  const bandCell = 0.42;
+  const band = worldBand(feature.seed + 1, refs, (w * 0.84) / bandCell, 3);
+  shapes.push(...place([motifShape(band, bandCell)], { dy: -wall * 0.9 }));
   return shapes;
 }
 
@@ -83,14 +89,14 @@ function hearth(feature: SceneFeature): Shape[] {
   return place(shapes, { dy: -r * 0.2 });
 }
 
-function featureShapes(feature: SceneFeature): Shape[] {
+function featureShapes(feature: SceneFeature, refs: PatternReference[]): Shape[] {
   const footX = (feature.x + feature.w / 2) * U;
   const footY = (feature.y + feature.h) * U - U * 0.12;
   const centreY = (feature.y + feature.h / 2) * U;
   const rng = createSeededRng(feature.seed);
   switch (feature.kind) {
     case 'house':
-      return place(house(feature), { dx: footX, dy: footY });
+      return place(house(feature, refs), { dx: footX, dy: footY });
     case 'tree':
       return place(treeOfLife(rng, feature.h * U * 0.94), { dx: footX, dy: footY });
     case 'pine':
@@ -99,8 +105,12 @@ function featureShapes(feature: SceneFeature): Shape[] {
       return place(well(feature), { dx: footX, dy: centreY });
     case 'hearth':
       return place(hearth(feature), { dx: footX, dy: centreY });
-    case 'star':
-      return place(star(Math.min(feature.w, feature.h) * U * 0.42), { dx: footX, dy: centreY });
+    case 'star': {
+      // A dancing ground: a medallion grown from the world's patterns, filling the ground.
+      const motif = worldMedallion(feature.seed, refs);
+      const cell = (Math.min(feature.w, feature.h) * U * 0.9) / Math.max(motif.w, motif.h);
+      return place([motifShape(motif, cell)], { dx: footX, dy: centreY });
+    }
     case 'pool':
       return place(
         [
@@ -394,7 +404,7 @@ function edgeLines(model: SceneModel): Shape[] {
  * The cloth's own border: a double rule around the whole world with a running chevron of
  * the main thread between, and a knot rosette at each corner, like the edge of a towel.
  */
-function clothBorder(model: SceneModel): Shape[] {
+function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
   const w = model.width * U;
   const h = model.height * U;
   const outer = U * 0.3;
@@ -405,37 +415,29 @@ function clothBorder(model: SceneModel): Shape[] {
     { kind: 'line', points: rect(outer), ink: 'dark', weight: 0.6, closed: true },
     { kind: 'line', points: rect(inner), ink: 'dark', weight: 0.45, closed: true },
   ];
-  // A zigzag between the rules, one tooth per half cell, run side by side.
-  const tooth = U * 0.5;
-  const amp = (inner - outer) * 0.3;
-  const zig = (from: Pt, to: Pt, normal: Pt, ink: Ink) => {
-    const len = Math.hypot(to[0] - from[0], to[1] - from[1]);
-    const n = Math.max(2, Math.round(len / tooth));
-    const pts: Pt[] = [];
-    for (let i = 0; i <= n; i++) {
-      const t = i / n;
-      const off = i % 2 ? amp : -amp;
-      pts.push([from[0] + (to[0] - from[0]) * t + normal[0] * off, from[1] + (to[1] - from[1]) * t + normal[1] * off]);
-    }
-    shapes.push({ kind: 'line', points: pts, ink, weight: 0.5 });
-  };
-  zig([inner, mid], [w - inner, mid], [0, 1], 'primary');
-  zig([inner, h - mid], [w - inner, h - mid], [0, 1], 'primary');
-  zig([mid, inner], [mid, h - inner], [1, 0], 'primary');
-  zig([w - mid, inner], [w - mid, h - inner], [1, 0], 'primary');
+  // A band of the world's pattern between the rules, run round all four sides, with a
+  // medallion at each corner.
+  const seed = seedOf(model.title ?? 'cloth');
+  const bandH = 5;
+  const cell = ((inner - outer) * 0.86) / bandH;
+  const across = worldBand(seed, refs, (w - inner * 2) / cell, bandH);
+  const down = transposed(worldBand(seed, refs, (h - inner * 2) / cell, bandH));
+  shapes.push(...place([motifShape(across, cell)], { dx: w / 2, dy: mid }));
+  shapes.push(...place([motifShape(across, cell)], { dx: w / 2, dy: h - mid }));
+  shapes.push(...place([motifShape(down, cell)], { dx: mid, dy: h / 2 }));
+  shapes.push(...place([motifShape(down, cell)], { dx: w - mid, dy: h / 2 }));
+  const corner = worldMedallion(seed + 3, refs, 3);
+  const cornerCell = ((inner - outer) * 1.1) / Math.max(corner.w, corner.h);
   for (const [cx, cy] of [[mid, mid], [w - mid, mid], [w - mid, h - mid], [mid, h - mid]] as const) {
-    shapes.push({ kind: 'knot', at: [cx, cy], r: U * 0.13, ink: 'gold' });
-    for (let i = 0; i < 4; i++) {
-      const a = (i * Math.PI) / 2 + Math.PI / 4;
-      shapes.push({ kind: 'knot', at: [cx + Math.cos(a) * U * 0.22, cy + Math.sin(a) * U * 0.22], r: U * 0.07, ink: 'primary' });
-    }
+    shapes.push(...place([motifShape(corner, cornerCell)], { dx: cx, dy: cy }));
   }
   return shapes;
 }
 
 /** Everything that does not move, in drawing order. */
 export function sceneShapes(model: SceneModel): Shape[] {
-  const shapes = [...terrainShapes(model), ...model.features.flatMap(featureShapes), ...clothBorder(model)];
+  const refs = worldReferences(model.motifs);
+  const shapes = [...terrainShapes(model), ...model.features.flatMap((f) => featureShapes(f, refs)), ...clothBorder(model, refs)];
   if (model.title) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
     shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));

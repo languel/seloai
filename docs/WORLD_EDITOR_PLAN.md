@@ -252,8 +252,13 @@ sources, patterns should be generated procedurally, based on references.
    a hooked cross), `src/art/patternReferences.ts` (references as described styles with
    ranges; the eight Shevitsa regions), and the Pattern Studio tab: references, a page of
    eight motifs per reference with a dice, the chosen motif large with its settings, and
-   "copy the recipe". Lab: `/art-lab.html?only=patterns`. Next: the cell editor (touch-ups
-   as an edit layer), the library, and motifs on world features and garments.
+   "copy the recipe". Lab: `/art-lab.html?only=patterns`. Motifs in the world, done
+   (`src/art/worldMotifs.ts`): dancing grounds carry a medallion grown from the world's
+   references, houses a small one in the gable and a band under the eaves, the cloth a
+   border band round all four sides with medallions in the corners, and aprons a small
+   counted medallion (solid skirts keep their oversized flower). `SceneModel.motifs` names a
+   world's references (default: the Shevitsa set). Next: the cell editor (touch-ups as an
+   edit layer) and the library.
 7. Retire the old code, the tiles look and the old agent tools; update docs and tests.
 
 Each step lands on its own branch and is usable on its own.

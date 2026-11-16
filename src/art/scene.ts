@@ -102,6 +102,8 @@ export interface SceneModel {
   landmarks: PointOfInterest[];
   /** The place name to stitch onto the cloth, if any. */
   title?: string;
+  /** Ids of the pattern references the world's motifs are grown from (default: Shevitsa). */
+  motifs?: string[];
 }
 
 export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): SceneModel {

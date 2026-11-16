@@ -8,6 +8,8 @@
  */
 import { createSeededRng, type Rng } from '../core/rng';
 import { comb, flowerHead } from './motifs';
+import { motifShape } from './patternGrammar';
+import { worldMedallion, worldReferences } from './worldMotifs';
 import { circle, curl, mirrored, place, quadCurve, type Ink, type Pt, type Shape } from './shapes';
 
 const UP = -Math.PI / 2;
@@ -930,10 +932,19 @@ function folkQuirks(parts: FigureParts, t: Traits, height: number, view: FigureV
       const size = onApron ? t.skirtH * 0.44 : t.skirtH * 0.42;
       const x = onApron ? (q.motifDraw - 0.5) * t.waistW * 0.4 : (q.motifDraw < 0.2 ? -1 : 1) * t.skirtW * 0.16;
       const y = -t.skirtH * (onApron ? 0.36 : 0.34);
-      const motif = flowerHead(q.motifKind, size, createSeededRng(q.motifSeed)).map((s): Shape =>
-        s.kind !== 'counted' && s.ink === ground ? { ...s, ink: ground === 'gold' ? 'primary' : 'gold' } : s,
-      );
-      out.skirt = [...out.skirt, ...place(motif, { dx: x, dy: y + size * 0.8, rot: q.headTilt * 0.12 })];
+      if (onApron) {
+        // An apron carries a small counted medallion grown from the world's pattern
+        // references, its threads kept off the apron's own colour.
+        const grid = worldMedallion(q.motifSeed, worldReferences(), 3);
+        const recoloured = { ...grid, cells: grid.cells.map((row) => row.map((c) => (c === ground ? (ground === 'gold' ? 'primary' : 'gold') : c))) };
+        const cell = size / Math.max(grid.w, grid.h);
+        out.skirt = [...out.skirt, ...place([motifShape(recoloured, cell)], { dx: x, dy: y })];
+      } else {
+        const motif = flowerHead(q.motifKind, size, createSeededRng(q.motifSeed)).map((s): Shape =>
+          s.kind !== 'counted' && s.ink === ground ? { ...s, ink: ground === 'gold' ? 'primary' : 'gold' } : s,
+        );
+        out.skirt = [...out.skirt, ...place(motif, { dx: x, dy: y + size * 0.8, rot: q.headTilt * 0.12 })];
+      }
     }
   }
   return out;

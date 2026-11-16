@@ -53,3 +53,43 @@ describe('pattern references', () => {
     }
   });
 });
+
+describe('motifs in the world', () => {
+  it('bands repeat seamlessly to any length; medallions can be held to a size', async () => {
+    const { worldBand, worldMedallion, transposed, worldReferences } = await import('../worldMotifs');
+    const refs = worldReferences();
+    const band = worldBand(7, refs, 101, 5);
+    expect(band.w).toBe(101);
+    expect(band.h).toBe(5);
+    const up = transposed(band);
+    expect(up.w).toBe(5);
+    expect(up.h).toBe(101);
+    expect(up.cells[10][2]).toBe(band.cells[2][10]);
+    const small = worldMedallion(3, refs, 3);
+    // Held as small as its grammar allows: never larger than the same motif unheld.
+    expect(Math.max(small.w, small.h)).toBeLessThanOrEqual(Math.max(worldMedallion(3, refs).w, worldMedallion(3, refs).h));
+    expect(JSON.stringify(worldMedallion(3, refs, 3))).toBe(JSON.stringify(small));
+    // A world that names its references only wears those.
+    const elbetitsa = worldMedallion(1, worldReferences(['shopluk-elbetitsa']));
+    expect(elbetitsa.w).toBe(elbetitsa.h);
+  });
+
+  it('a dancing ground, houses and the border are stitched as counted work', async () => {
+    const { sceneShapes } = await import('../sceneArt');
+    const terrain = Array.from({ length: 20 }, () => Array(14).fill('ground'));
+    const model = {
+      width: 20,
+      height: 14,
+      terrain,
+      features: [
+        { id: 's', kind: 'star' as const, x: 4, y: 4, w: 2, h: 2, seed: 11 },
+        { id: 'h', kind: 'house' as const, x: 10, y: 5, w: 2, h: 2, seed: 12 },
+      ],
+      landmarks: [],
+      title: 'Test',
+    };
+    const counted = sceneShapes(model).filter((s) => s.kind === 'counted');
+    // The dancing ground, the gable, the eaves band, four border bands and four corners.
+    expect(counted.length).toBeGreaterThanOrEqual(11);
+  });
+});
