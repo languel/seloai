@@ -1,3 +1,4 @@
+import { isWorldLook, type WorldLook } from '../art/gameLook';
 import type { CSSProperties } from 'react';
 import type { VillageMap } from '../engine/types';
 
@@ -65,6 +66,8 @@ export interface AestheticSettings {
   showDecorations: boolean;
   characterScale: number;
   deoverlapLabels: boolean;
+  /** How the world and its characters are drawn. */
+  worldLook: WorldLook;
   player: PlayerAppearanceConfig;
 }
 
@@ -91,6 +94,7 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   showDecorations: true,
   characterScale: 1.15,
   deoverlapLabels: true,
+  worldLook: 'festive',
   player: { ...DEFAULT_PLAYER_APPEARANCE },
 };
 
@@ -373,6 +377,7 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
         ? raw.showDecorations
         : DEFAULT_AESTHETIC_SETTINGS.showDecorations,
     characterScale: clamp(raw?.characterScale, 0.85, 1.35, DEFAULT_AESTHETIC_SETTINGS.characterScale),
+    worldLook: isWorldLook(raw?.worldLook) ? raw!.worldLook : DEFAULT_AESTHETIC_SETTINGS.worldLook,
     deoverlapLabels:
       typeof raw?.deoverlapLabels === 'boolean'
         ? raw.deoverlapLabels

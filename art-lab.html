@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SeloAI art lab</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        background: #2a2826;
+        color: #e9e3d6;
+        font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+      }
+      h2 {
+        margin: 18px 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+      .strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+      figure {
+        margin: 0;
+      }
+      canvas {
+        display: block;
+        border-radius: 2px;
+      }
+      figcaption {
+        margin-top: 4px;
+        color: #a9a294;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="lab"></div>
+    <script type="module" src="/src/art/lab.ts"></script>
+  </body>
+</html>

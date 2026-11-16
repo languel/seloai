@@ -525,7 +525,14 @@ export interface VillagerRenderOptions {
   theme?: CanvasThemeConfig;
   collector?: CanvasOverlayCollector;
   deferredBodies?: DeferredCanvasDraw[];
+  /** When set, draws the character's body in place of its sprite sheet (used by art looks). */
+  bodyPainter?: BodyPainter;
 }
+
+export type BodyPainter = (
+  ctx: CanvasRenderingContext2D,
+  body: { id: string; tileX: number; tileY: number; tileDim: number; scale: number; facing: Direction; moving: boolean; animFrame: number },
+) => void;
 
 export function drawVillager(
   ctx: CanvasRenderingContext2D,
@@ -580,7 +587,18 @@ export function drawVillager(
       ctx.stroke();
     }
 
-    if (frame) {
+    if (options.bodyPainter) {
+      options.bodyPainter(ctx, {
+        id: cfg.id,
+        tileX: px,
+        tileY: py,
+        tileDim,
+        scale: charScale,
+        facing: rt.facing,
+        moving: isMoving,
+        animFrame: rt.animFrame,
+      });
+    } else if (frame) {
       const img = getCachedImage(frame.url);
       if (img) {
         drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
@@ -777,6 +795,7 @@ export function drawVillager(
 export interface PlayerRenderOptions {
   showLabels?: boolean;
   playerSprite?: CustomSpriteSheet | null;
+  bodyPainter?: BodyPainter;
   theme?: CanvasThemeConfig;
   collector?: CanvasOverlayCollector;
   deferredBodies?: DeferredCanvasDraw[];
@@ -814,7 +833,18 @@ export function drawPlayer(
     ctx.fill();
 
     const customSprite = opts.playerSprite;
-    if (customSprite) {
+    if (opts.bodyPainter) {
+      opts.bodyPainter(ctx, {
+        id: player.id,
+        tileX: px,
+        tileY: py,
+        tileDim,
+        scale: charScale,
+        facing: player.facing,
+        moving: isMoving,
+        animFrame: player.animFrame,
+      });
+    } else if (customSprite) {
       const frame = getCustomSpriteFrame(customSprite, player.facing, player.animFrame, isMoving);
       const img = getCachedImage(frame.url);
       if (img) {

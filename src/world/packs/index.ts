@@ -1,4 +1,6 @@
+import type { TileSemantics } from '../../art/scene';
 import type { VillageMap } from '../../engine/types';
+import { balkanTileSemantics } from './balkanSemantics';
 import { GENERIC_WORLD_CONTEXT, type WorldContext } from '../worldContext';
 import type { WorldPackDefinition } from '../worldPack';
 import { SHEVITSA_CONTEXT, shevitsaPack } from './shevitsa';
@@ -29,4 +31,9 @@ export function inferWorldContext(map: Pick<VillageMap, 'tileSetUrl'> | null | u
   if (url.includes('balkan-myth')) return structuredClone(ZMEYOVO_CONTEXT);
   if (url.includes('shevitsa')) return structuredClone(SHEVITSA_CONTEXT);
   return structuredClone(GENERIC_WORLD_CONTEXT);
+}
+
+/** The meaning of a map's tiles, when its tileset is one a bundled pack describes. */
+export function tileSemanticsForMap(map: Pick<VillageMap, 'tileSetUrl'> | null | undefined): TileSemantics | undefined {
+  return (map?.tileSetUrl ?? '').includes('balkan-myth') ? balkanTileSemantics : undefined;
 }

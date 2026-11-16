@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Dices, Monitor, Moon, RotateCcw, Sparkles, Sun, X } from 'lucide-react';
+import { WORLD_LOOK_OPTIONS } from '../art/gameLook';
 import type { CustomSpriteSheet, Direction } from '../engine/types';
 import {
   BUBBLE_STYLE_OPTIONS,
@@ -298,6 +299,26 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
                 >
                   {walkingPreview ? 'Walking' : 'Idle'}
                 </button>
+              </div>
+              <div>
+                <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
+                  World Look
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {WORLD_LOOK_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      title={option.hint}
+                      aria-pressed={settings.worldLook === option.id}
+                      onClick={() => onChange({ ...settings, worldLook: option.id })}
+                      className="rounded border px-1.5 py-1 text-[10px]"
+                      style={pillBtnStyle(settings.worldLook === option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <div className="mb-0.5 flex items-center justify-between text-[10px]">

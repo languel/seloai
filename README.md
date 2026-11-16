@@ -46,6 +46,10 @@ pnpm sim:headless --seed 7 --seconds 120            # default pack
 pnpm sim:headless --seed 3 --seconds 60 --world shevitsa --out run.json
 ```
 
+## Generative Art & World Looks
+
+The world and its characters are drawn by a generative art system (`src/art/`) inspired by Bulgarian shevitsa embroidery. Motif generators (tree of life, medallion, counted band, folk figures with faces and expressions) output look-independent shapes; interchangeable looks draw them as **line art** (`ink`, `night`) or **simulated embroidery** on woven linen (`blackwork`, `redBlack`, `festive`). Switch in **Style → World Look**; `Classic tiles` keeps the original tileset renderer. Nothing is a stored image, so changing look regenerates no assets. Judge motifs in isolation at `/art-lab.html?seed=7` while `pnpm dev` is running. The full brief and roadmap is [docs/ART_DIRECTION.md](docs/ART_DIRECTION.md).
+
 ## Local Models & Development
 
 Model weights are optional and gitignored under `public/models/` (remote Hugging Face download is used automatically if local files are absent):

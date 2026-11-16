@@ -1,3 +1,6 @@
+import { getFigureSprite, paintFigure, renderWorldLayer, type WorldLook } from '../art/gameLook';
+import type { BodyPainter } from '../engine/renderer';
+import { tileSemanticsForMap } from '../world/packs';
 import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -538,6 +541,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     let lastTime = performance.now();
     let lastMicUiAt = 0;
     let staticLayerCanvas: HTMLCanvasElement | null = null;
+    let artLayer: { map: typeof sim.map; look: WorldLook; canvas: HTMLCanvasElement } | null = null;
     let staticCacheKey: {
       mapRef: object;
       bgRef: unknown;
@@ -641,8 +645,17 @@ export const VillageView: React.FC<VillageViewProps> = ({
       const map = sim.map;
       const tilesetImg = getCachedImage(map.tileSetUrl);
       const tilesetCols = Math.max(1, Math.floor(map.tileSetDimX / map.tileDim));
+      const worldLook = aestheticSettings.worldLook;
 
-      if (tilesetImg) {
+      if (worldLook !== 'tiles') {
+        // Art looks draw the world from its meaning, not from tile images.
+        if (!artLayer || artLayer.map !== map || artLayer.look !== worldLook) {
+          artLayer = { map, look: worldLook, canvas: renderWorldLayer(map, worldLook, tileSemanticsForMap(map)) };
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(artLayer.canvas, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+      } else if (tilesetImg) {
         const needsRebuild =
           !staticLayerCanvas ||
           !staticCacheKey ||
@@ -758,6 +771,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
         );
       }
 
+      const bodyPainter: BodyPainter | undefined =
+        worldLook === 'tiles'
+          ? undefined
+          : (bodyCtx, body) => {
+              const sprite = getFigureSprite(body.id, worldLook, body.tileDim * body.scale * 1.75);
+              paintFigure(bodyCtx, sprite, body.tileX, body.tileY, body.tileDim, body.facing === 'left', body.moving, body.animFrame);
+            };
+
       // Collect deferred Y-sorted character sprites + measure labels and bubbles
       for (const rt of sim.runtimes.values()) {
         const cfg = sim.configs.get(rt.id);
@@ -769,6 +790,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
           theme: aestheticTokens.canvasTheme,
           collector: overlayCollector,
           deferredBodies,
+          bodyPainter,
         });
       }
       drawPlayer(ctx, sim.player, map.tileDim, {
@@ -777,6 +799,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         theme: aestheticTokens.canvasTheme,
         collector: overlayCollector,
         deferredBodies,
+        bodyPainter,
       });
 
       const overlayBatch = resolveOverlayBatch(
