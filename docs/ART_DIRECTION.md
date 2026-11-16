@@ -828,9 +828,10 @@ one has missed the point.
 ## 12.1 Woven text (owner request)
 
 Speech and thoughts can be embroidered onto the cloth instead of shown in bubbles, in the
-manner of concrete poetry: not always legible, part of the picture. Style panel, "Speech
-and thoughts": Bubbles or Woven text (the default), satin or counted letters, how long words
-stay and how long they take to fade. Lab: `/art-lab.html?only=woven` (add `&hand=counted`).
+manner of concrete poetry: not always legible, part of the picture (the owner: "this is
+beautiful"). Style panel, "Speech and thoughts": Bubbles or Woven text (the default), the
+letters, size, stitch and timing; the **Aa** button in the village toolbar cycles the
+letters (script is the default). Lab: `/art-lab.html?only=woven`, with live controls.
 
 - `src/art/wovenText.ts` lays each line letter by letter along a path that circles its
   speaker, bending gently, wandering a little and spiralling slowly outward, turning to
@@ -854,8 +855,9 @@ stay and how long they take to fade. Lab: `/art-lab.html?only=woven` (add `&hand
   it is spoken, with a couched rule above and a soft edgeless wash of the cloth colour
   behind it; a new line writes while the old one fades. It replaces the subtitle box in
   that style, and the director frames shots above it.
-- Each character's words are in the thread of their own bodice (or skirt). Thoughts are
-  italic and lighter. A dashed thread joins a speaker to the words they are sewing.
+- Each character's words are in their own colour, the one their roster dot shows (their
+  Loom thread matches); without one, the thread of their bodice. Thoughts are italic and
+  lighter. A dashed thread joins a speaker to the words they are sewing.
 
 ## 13. Related documents
 
