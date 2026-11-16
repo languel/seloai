@@ -201,7 +201,11 @@ export interface VillagerConfig {
   customSprite?: CustomSpriteSheet;
   appearance?: CharacterAppearance;
   /** How the art looks draw this character. Unset: decided from appearance or voice. */
-  figure?: { build?: 'skirted' | 'trousered' };
+  figure?: {
+    build?: 'skirted' | 'trousered';
+    /** What sort of being: a world pack sets this for its special cast (a lamia, a kuker). */
+    kind?: 'human' | 'serpent' | 'kuker' | 'samodiva';
+  };
   identity: string;
   plan: string;
   voiceStyle: string;

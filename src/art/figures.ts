@@ -28,9 +28,17 @@ export type FigureBuild = 'skirted' | 'trousered';
 /** Front faces us; side is in profile facing right (mirror it for left); back walks away. */
 export type FigureView = 'front' | 'side' | 'back';
 
+/**
+ * What sort of being the figure is. A world pack picks this per cast member; the figure code
+ * only knows how to draw each kind. `human` is the default villager.
+ */
+export type FigureKind = 'human' | 'serpent' | 'kuker' | 'samodiva';
+export const FIGURE_KINDS: readonly FigureKind[] = ['human', 'serpent', 'kuker', 'samodiva'];
+
 export interface FigureOptions {
   /** Overall height in units. */
   height: number;
+  kind?: FigureKind;
   /** Mood shown on the face. Chosen from the seed when omitted. */
   expression?: Expression;
   /** Index into the look's skin tones. Chosen from the seed when omitted. */
@@ -84,6 +92,8 @@ interface Traits {
   carriesComb: boolean;
   flower: Shape[] | null;
   lean: number;
+  /** Hair to the waist (a samodiva). Set by the kind, never drawn from the seed. */
+  longHair?: boolean;
 }
 
 /** Every random choice about a person, always drawn in this order. */
@@ -328,8 +338,9 @@ function headShapes(t: Traits, headY: number, view: FigureView, build: FigureBui
     const crown = circle([0, headY - r * 0.04], r * 1.07, 18);
     const nape = headY + r * (build === 'trousered' ? 0.3 : 1.1);
     shapes.push({ kind: 'area', points: crown.map(([x, y]): Pt => [x, Math.min(y, nape)]), ink: t.hairInk, grain: UP });
-    if (long) shapes.push(...mirrored([fall(r * 0.8, r * 0.45, 1.9)]));
-    if (long) shapes.push({ kind: 'line', points: [[0, headY + r * 0.6], [0, headY + r * 2.1]], ink: t.hairInk, weight: 0.9 });
+    const drop = t.longHair ? 4.2 : 1.9;
+    if (long) shapes.push(...mirrored([fall(r * 0.8, r * 0.45, drop)]));
+    if (long) shapes.push({ kind: 'line', points: [[0, headY + r * 0.6], [0, headY + r * (drop + 0.2)]], ink: t.hairInk, weight: 0.9 });
   } else if (view === 'side') {
     const cap: Pt[] = [];
     const sweep = build === 'trousered' ? 0.85 : 1.1;
@@ -339,7 +350,7 @@ function headShapes(t: Traits, headY: number, view: FigureView, build: FigureBui
     }
     cap.push([-r * 0.15, headY + r * 0.2], [r * 0.05, headY - r * 0.45]);
     shapes.push({ kind: 'area', points: cap, ink: t.hairInk, grain: UP });
-    if (long) shapes.push(fall(-r * 0.95, -r * 0.35, 1.8));
+    if (long) shapes.push(fall(-r * 0.95, -r * 0.35, t.longHair ? 4 : 1.8));
     shapes.push(...profileFace([0, headY], r, expression, skinTone));
     if (build === 'trousered' && t.hairFalls) {
       shapes.push({ kind: 'line', points: quadCurve([r * 0.95, headY + r * 0.38], [r * 0.82, headY + r * 0.5], [r * 0.6, headY + r * 0.58], 4), ink: t.hairInk, weight: 0.55 });
@@ -357,7 +368,12 @@ function headShapes(t: Traits, headY: number, view: FigureView, build: FigureBui
     if (long) {
       shapes.push(
         ...mirrored([
-          { kind: 'line', points: quadCurve([r * 1.02, hairline], [r * 1.35, headY + r * 0.7], [r * 0.95, headY + r * 1.7], 6), ink: t.hairInk, weight: 0.8 },
+          {
+            kind: 'line',
+            points: quadCurve([r * 1.02, hairline], [r * (t.longHair ? 1.6 : 1.35), headY + r * (t.longHair ? 1.6 : 0.7)], [r * (t.longHair ? 1.25 : 0.95), headY + r * (t.longHair ? 4 : 1.7)], t.longHair ? 8 : 6),
+            ink: t.hairInk,
+            weight: t.longHair ? 1 : 0.8,
+          },
         ]),
       );
     }
@@ -428,13 +444,160 @@ export function figure(rng: Rng, options: FigureOptions): Shape[] {
  */
 export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
   const t = drawTraits(rng, options.height);
-  const build = options.build ?? 'skirted';
+  const kind = options.kind ?? 'human';
+  // A kind overrides some traits after they are drawn, so the seed's other choices stay put.
+  if (kind === 'samodiva') {
+    Object.assign(t, { hairFalls: true, longHair: true, headdress: 'wreath', sleeveFilled: false, skirtStyle: 'outlined', pattern: 'dots' });
+  } else if (kind === 'serpent') {
+    Object.assign(t, { headdress: 'crown', hairInk: 'accent' });
+  } else if (kind === 'kuker') {
+    Object.assign(t, { sleeveFilled: true, bodiceInk: 'gold', hairFalls: false });
+  }
+  const build: FigureBuild = kind === 'kuker' ? 'trousered' : kind === 'human' ? options.build ?? 'skirted' : 'skirted';
   const view = options.view ?? 'front';
   const expression = options.expression ?? t.restingExpression;
   const skinTone = options.skinTone ?? t.seededSkinTone;
-  return build === 'trousered'
-    ? trouseredParts(t, options.height, view, expression, skinTone)
-    : skirtedParts(t, options.height, view, expression, skinTone);
+  const { height } = options;
+  const parts =
+    build === 'trousered' ? trouseredParts(t, height, view, expression, skinTone) : skirtedParts(t, height, view, expression, skinTone);
+  if (kind === 'serpent') return { ...parts, skirt: serpentTail(t, height, view), legLeft: [], legRight: [] };
+  if (kind === 'kuker') return kukerParts(parts, t, height, view);
+  return parts;
+}
+
+/**
+ * A lamia's coiled serpent body from the waist down: a tapering S of scales that loops on
+ * the ground and lifts its tip, worked in the hair ink with gold scale knots.
+ */
+function serpentTail(t: Traits, height: number, view: FigureView): Shape[] {
+  const flip = view === 'back' ? -1 : 1;
+  const waistY = -t.skirtH;
+  const spine: Pt[] = [
+    [0, waistY],
+    [height * 0.06 * flip, waistY * 0.7],
+    [-height * 0.07 * flip, waistY * 0.38],
+    [height * 0.02 * flip, -height * 0.05],
+    [height * 0.2 * flip, -height * 0.015],
+    [height * 0.33 * flip, -height * 0.05],
+    [height * 0.36 * flip, -height * 0.13],
+    [height * 0.3 * flip, -height * 0.18],
+  ];
+  // Smooth the spine with midpoint curves, then offset each side by a tapering width.
+  const smooth: Pt[] = [];
+  for (let i = 0; i < spine.length - 1; i++) {
+    const a = spine[i];
+    const b = spine[i + 1];
+    const c = spine[Math.min(spine.length - 1, i + 2)];
+    const m1: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const m2: Pt = [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2];
+    smooth.push(...quadCurve(i === 0 ? a : m1, b, m2, 6).slice(i === 0 ? 0 : 1));
+  }
+  const n = smooth.length;
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  const widthAt = (i: number) => t.waistW * 1.25 * (1 - i / n) + height * 0.012;
+  smooth.forEach((p, i) => {
+    const prev = smooth[Math.max(0, i - 1)];
+    const next = smooth[Math.min(n - 1, i + 1)];
+    const dx = next[0] - prev[0];
+    const dy = next[1] - prev[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const w = widthAt(i) / 2;
+    left.push([p[0] - (dy / len) * w, p[1] + (dx / len) * w]);
+    right.push([p[0] + (dy / len) * w, p[1] - (dx / len) * w]);
+  });
+  const ink: Ink = t.hairInk === 'accent' ? 'accent' : 'secondary';
+  const shapes: Shape[] = [{ kind: 'area', points: [...left, ...right.reverse()], ink, grain: 0 }];
+  shapes.push({ kind: 'line', points: smooth.slice(0, n - 2), ink: 'gold', weight: 0.35 });
+  for (let i = 2; i < n - 2; i += 3) {
+    shapes.push({ kind: 'knot', at: smooth[i], r: Math.max(0.18, widthAt(i) * 0.16), ink: i % 2 ? 'gold' : 'primary' });
+  }
+  // A girdle where the woman meets the serpent.
+  shapes.push({ kind: 'line', points: [[-t.waistW * 0.75, waistY], [t.waistW * 0.75, waistY]], ink: 'gold', weight: 1 });
+  return shapes;
+}
+
+/**
+ * A kuker mummer: a shaggy goatskin coat to the knee over the trousered figure, a belt of
+ * bronze bells, and a tall horned wooden mask with tassels in place of a face.
+ */
+function kukerParts(parts: FigureParts, t: Traits, height: number, view: FigureView): FigureParts {
+  const shoulderY = -height * 0.7;
+  const shoulderW = t.shoulderW * 1.25;
+  const waistW = t.waistW * 1.6;
+  const sashY = -height * 0.45;
+  const hemY = -height * 0.2;
+  const squeeze = view === 'side' ? 0.62 : 1;
+  const fur = (outline: Pt[], strands: number): Shape[] => {
+    // Undyed goatskin: the gold role reads as fleece in thread and as an outline in ink.
+    const shapes: Shape[] = [{ kind: 'area', points: outline.map(([x, y]): Pt => [x * squeeze, y]), ink: 'gold', grain: Math.PI / 2 }];
+    const minY = Math.min(...outline.map((p) => p[1]));
+    const maxY = Math.max(...outline.map((p) => p[1]));
+    for (let i = 0; i < strands; i++) {
+      const y = minY + ((i + 0.5) / strands) * (maxY - minY);
+      const halfW = Math.max(...outline.map((p) => Math.abs(p[0]))) * squeeze * 0.75;
+      const x = ((i * 0.618) % 1) * 2 * halfW - halfW;
+      shapes.push({ kind: 'line', points: [[x, y], [x + height * 0.012, y + height * 0.035]], ink: 'dark', weight: 0.3 });
+    }
+    return shapes;
+  };
+  const torso = fur(
+    [[-waistW / 2, sashY], [waistW / 2, sashY], [shoulderW / 2, shoulderY + height * 0.01], [0, shoulderY - height * 0.02], [-shoulderW / 2, shoulderY + height * 0.01]],
+    9,
+  );
+  torso.push({ kind: 'area', points: [[-waistW * 0.55, sashY + height * 0.025], [waistW * 0.55, sashY + height * 0.025], [waistW * 0.52, sashY - height * 0.03], [-waistW * 0.52, sashY - height * 0.03]].map(([x, y]): Pt => [x * squeeze, y]), ink: 'primary', grain: 0 });
+  // Bronze bells hanging from the belt.
+  const bells = view === 'side' ? [-0.15, 0.2] : [-0.38, -0.12, 0.12, 0.38];
+  for (const b of bells) {
+    const x = b * waistW * squeeze;
+    torso.push({ kind: 'knot', at: [x, sashY + height * 0.05], r: height * 0.026, ink: 'gold' });
+    torso.push({ kind: 'knot', at: [x, sashY + height * 0.072], r: height * 0.008, ink: 'dark' });
+  }
+  const skirtOutline: Pt[] = [[-waistW * 0.55, sashY], [waistW * 0.55, sashY], [waistW * 0.78, hemY], [-waistW * 0.78, hemY]];
+  const skirt = fur(skirtOutline, 7);
+  for (let i = 0; i < 9; i++) {
+    const x = (-waistW * 0.75 + (i / 8) * waistW * 1.5) * squeeze;
+    skirt.push({ kind: 'line', points: [[x, hemY - height * 0.01], [x + height * 0.006, hemY + height * 0.03]], ink: 'dark', weight: 0.45 });
+  }
+  return { ...parts, torso, skirt, head: kukerMask(t, height, view) };
+}
+
+function kukerMask(t: Traits, height: number, view: FigureView): Shape[] {
+  const r = t.headR * 1.1;
+  const headY = -height * 0.7 - t.headR * 1.12;
+  const out: Shape[] = [];
+  const w = view === 'side' ? r * 0.8 : r * 1.2;
+  const face: Pt[] =
+    view === 'side'
+      ? [[-w, headY - r * 1.5], [w * 0.6, headY - r * 1.5], [w * 0.9, headY - r * 0.2], [w * 1.5, headY + r * 0.4], [w * 0.7, headY + r * 1.1], [-w, headY + r * 1.1]]
+      : [[-w, headY - r * 1.5], [w, headY - r * 1.5], [w * 1.05, headY + r * 0.6], [w * 0.6, headY + r * 1.15], [-w * 0.6, headY + r * 1.15], [-w * 1.05, headY + r * 0.6]];
+  out.push({ kind: 'area', points: face, ink: view === 'back' ? 'gold' : 'accent2', grain: UP });
+  if (view !== 'back') {
+    const eyes = view === 'side' ? [w * 0.35] : [-w * 0.45, w * 0.45];
+    for (const x of eyes) {
+      out.push({ kind: 'knot', at: [x, headY - r * 0.35], r: r * 0.2, ink: 'gold' });
+      out.push({ kind: 'knot', at: [x, headY - r * 0.35], r: r * 0.09, ink: 'dark' });
+    }
+    // Bared teeth: a zigzag mouth.
+    const mouthL = view === 'side' ? w * 0.3 : -w * 0.55;
+    const mouthR = view === 'side' ? w * 1.2 : w * 0.55;
+    const zig: Pt[] = [];
+    for (let i = 0; i <= 6; i++) zig.push([mouthL + ((mouthR - mouthL) * i) / 6, headY + r * (0.5 + (i % 2 ? 0.18 : 0))]);
+    out.push({ kind: 'line', points: zig, ink: 'gold', weight: 0.55 });
+    // Small mirrors sewn across the brow.
+    for (const x of view === 'side' ? [0, w * 0.4] : [-w * 0.6, 0, w * 0.6]) out.push({ kind: 'knot', at: [x, headY - r * 1.05], r: r * 0.13, ink: 'gold' });
+  }
+  const horn: Shape = { kind: 'line', points: curl([w * 0.7, headY - r * 1.4], r * 0.95, 0.85, -1, Math.PI), ink: 'dark', weight: 0.9 };
+  out.push(...(view === 'side' ? [horn] : mirrored([horn])));
+  // Tassels hanging from the sides of the mask.
+  for (const side of view === 'side' ? [-1] : [-1, 1]) {
+    for (let k = 0; k < 3; k++) {
+      const x = side * (w + r * 0.12) - side * k * r * 0.18;
+      out.push({ kind: 'line', points: [[x, headY + r * 0.1], [x, headY + r * (0.9 + k * 0.25)]], ink: k % 2 ? 'gold' : 'accent2', weight: 0.5 });
+      out.push({ kind: 'knot', at: [x, headY + r * (0.95 + k * 0.25)], r: r * 0.12, ink: k % 2 ? 'gold' : 'primary' });
+    }
+  }
+  return out;
 }
 
 function skirtedParts(t: Traits, height: number, view: FigureView, expression: Expression, skinTone: number): FigureParts {

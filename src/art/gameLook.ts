@@ -5,7 +5,7 @@
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
-import { figureParts, type Expression, type FigureBuild, type FigureParts, type FigureView } from './figures';
+import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureView } from './figures';
 import { buildSceneModel, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { bounds, type Pt, type Shape } from './shapes';
@@ -79,6 +79,7 @@ export interface FigureRig {
 export interface FigureLooks {
   build?: FigureBuild;
   view?: FigureView;
+  kind?: FigureKind;
 }
 
 /** How tall an art figure stands, in map cells, at character scale 1. */
@@ -116,18 +117,18 @@ export function getFigureRig(
   look: PaletteName,
   heightPx: number,
   expression?: Expression,
-  { build = 'skirted', view = 'front' }: FigureLooks = {},
+  { build = 'skirted', view = 'front', kind = 'human' }: FigureLooks = {},
 ): FigureRig {
   const size = Math.max(16, Math.round(heightPx));
   const seed = hashString(id);
-  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view });
+  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind });
   const mood = expression ?? resting.restingExpression;
-  const key = `${id}|${look}|${size}|${build}|${view}|${mood}`;
+  const key = `${id}|${look}|${size}|${kind}|${build}|${view}|${mood}`;
   const cached = rigCache.get(key);
   if (cached) return cached;
 
   const unit = (size / FIGURE_UNITS) * DENSITY;
-  const bodyKey = `${id}|${look}|${size}|${build}|${view}|body`;
+  const bodyKey = `${id}|${look}|${size}|${kind}|${build}|${view}|body`;
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
@@ -158,7 +159,7 @@ export function getFigureRig(
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind }).head, look, unit, seed),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
@@ -423,7 +424,7 @@ export function clothOverlayColours(look: PaletteName) {
  * to go on, the original skirted figure.
  */
 export function figureBuildFor(cfg?: {
-  figure?: { build?: FigureBuild };
+  figure?: { build?: FigureBuild; kind?: FigureKind };
   appearance?: { gender?: string; bottomStyle?: string };
   voice?: { gender?: string };
 }): FigureBuild {
@@ -453,14 +454,15 @@ export function figurePortrait(
   build: FigureBuild,
   framing: 'bust' | 'full' = 'bust',
   pixelRatio = 2,
+  kind: FigureKind = 'human',
 ): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null;
   const px = Math.max(8, Math.round(sizePx * pixelRatio));
-  const key = `${id}|${look}|${px}|${build}|${framing}`;
+  const key = `${id}|${look}|${px}|${kind}|${build}|${framing}`;
   const hit = portraitCache.get(key);
   if (hit) return hit;
   const seed = hashString(id);
-  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build });
+  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, kind });
   const shapes = [...parts.legLeft, ...parts.legRight, ...parts.skirt, ...parts.torso, ...parts.head, ...parts.armLeft, ...parts.armRight];
   const box = bounds(shapes);
   const top = box.minY - 0.6;
@@ -477,4 +479,14 @@ export function figurePortrait(
   if (portraitCache.size > 120) portraitCache.clear();
   portraitCache.set(key, canvas);
   return canvas;
+}
+
+/** The figure kind the cast data asks for, or an ordinary villager. */
+export function figureKindFor(cfg?: { figure?: { kind?: FigureKind } }): FigureKind {
+  return cfg?.figure?.kind ?? 'human';
+}
+
+/** Build and kind for a character, ready to pass to `getFigureRig`. */
+export function figureLooksFor(cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind } }): Required<Omit<FigureLooks, 'view'>> {
+  return { build: figureBuildFor(cfg), kind: figureKindFor(cfg) };
 }

@@ -1,4 +1,4 @@
-import { DEFAULT_WORLD_PACK_ID, findWorldPack, inferWorldContext } from '../world/packs';
+import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext } from '../world/packs';
 import type { WorldContext } from '../world/worldContext';
 import {
   createBalkanMythMap,
@@ -110,6 +110,20 @@ async function idbSet<T>(key: string, value: T): Promise<void> {
   });
 }
 
+/**
+ * Gives a saved character the figure its world pack now declares (a lamia's serpent body,
+ * say) when the save predates it. Matched on id and name, so a renamed or new character is
+ * left alone, and a figure the user chose is never overwritten.
+ */
+let packFigures: VillagerConfig[] | null = null;
+
+function withPackFigure(villager: VillagerConfig): VillagerConfig {
+  if (villager.figure) return villager;
+  packFigures ??= WORLD_PACKS.flatMap((pack) => pack.build().cast ?? []).filter((c) => c.figure);
+  const match = packFigures.find((c) => c.id === villager.id && c.name === villager.name);
+  return match ? { ...villager, figure: structuredClone(match.figure) } : villager;
+}
+
 export async function loadPersistedState(): Promise<PersistedVillageState> {
   try {
     const stored = await idbGet<Partial<PersistedVillageState>>('village_v1');
@@ -131,7 +145,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
           : DEFAULT_MODEL_SETTINGS.proximityRadiusTiles;
       return {
         map: stored.map,
-        villagers: stored.villagers.map(ensureVillagerSprite),
+        villagers: stored.villagers.map(ensureVillagerSprite).map(withPackFigure),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
           ...rawSettings,

@@ -510,6 +510,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       accentColor: '#2e8b57',
       spritesheetId: 'custom',
       customSprite: spriteMap.lamia,
+      figure: { kind: 'serpent' },
       identity:
         'Ancient serpentine Lamia coiled around #LamiaWell in Zmeyovo. You locked the limestone springs until the village brings rightful sacrifice—golden wheat, raw honey, silver obols, or an oath kept true. Speak with icy pride and ancient hunger.',
       plan: 'Coiled beside #LamiaWell altar demanding tribute before releasing a single drop of water.',
@@ -552,6 +553,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       accentColor: '#d99226',
       spritesheetId: 'custom',
       customSprite: spriteMap['kuker-marin'],
+      figure: { kind: 'kuker' },
       identity:
         'Master Kuker mummer in horned wooden mask, goatskin coat, and heavy bronze chanove waist-bells. You swear loud bronze chimes scatter curses, though secretly you worry the Lamia may demand something closer to the heart than iron noise.',
       plan: 'Rally bravery around #KukeriHearth, parade the bronze bells across #KhoroStar, and face #LamiaWell.',
@@ -594,6 +596,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       accentColor: '#6b8fd6',
       spritesheetId: 'custom',
       customSprite: spriteMap['samodiva-raina'],
+      figure: { kind: 'samodiva' },
       identity:
         'Forest Samodiva crowned with wild poppies and bluebells at #SamodivaSpring. Only your birch-shaded basin remains sweet; you trade clear spring water solely to mortals who leave song or scarlet thread and never spill steel inside the glade.',
       plan: 'Dance along the Pirin rose ring at #SamodivaSpring and watch travelers crossing the northern bridge.',

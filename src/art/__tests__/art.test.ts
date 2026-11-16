@@ -171,3 +171,31 @@ describe('figures in builds and views', () => {
     expect(side.armRight.length).toBeGreaterThan(0);
   });
 });
+
+describe('figure kinds', () => {
+  it('draws a lamia on a serpent tail, a masked kuker and a long-haired samodiva', () => {
+    const lamia = figureParts(createSeededRng(4), { height: 30, kind: 'serpent' });
+    expect(lamia.legLeft).toHaveLength(0);
+    expect(lamia.legRight).toHaveLength(0);
+    expect(bounds(lamia.skirt).maxX).toBeGreaterThan(30 * 0.25);
+
+    const kuker = figureParts(createSeededRng(4), { height: 30, kind: 'kuker' });
+    expect(kuker.head.some((s) => s.kind === 'area' && s.ink === 'accent2')).toBe(true);
+    expect(kuker.legLeft.length).toBeGreaterThan(0);
+
+    const samodiva = figureParts(createSeededRng(4), { height: 30, kind: 'samodiva' });
+    const plain = figureParts(createSeededRng(4), { height: 30 });
+    expect(bounds(samodiva.head).maxY).toBeGreaterThan(bounds(plain.head).maxY);
+  });
+
+  it('keeps every kind and view inside a sensible box', () => {
+    for (const kind of ['human', 'serpent', 'kuker', 'samodiva'] as const) {
+      for (const view of ['front', 'side', 'back'] as const) {
+        const b = bounds(figure(createSeededRng(9), { height: 30, kind, view }));
+        expect(b.maxY, `${kind} ${view}`).toBeLessThan(3);
+        expect(b.minY, `${kind} ${view}`).toBeGreaterThan(-45);
+        expect(b.maxX - b.minX, `${kind} ${view}`).toBeLessThan(40);
+      }
+    }
+  });
+});

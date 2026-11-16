@@ -190,6 +190,23 @@ if (!only || only === 'motion') {
   row('Motion: a woman and a man, toward us, side-on and away, idle, talking, thinking', panels);
 }
 
+// Kinds: the special cast a world pack can ask for, from the front, side-on and behind.
+if (!only || only === 'kinds') {
+  const kindShapes: Shape[] = [];
+  const kinds = ['serpent', 'kuker', 'samodiva'] as const;
+  kinds.forEach((kind, k) => {
+    (['front', 'side', 'back'] as const).forEach((view, v) => {
+      kindShapes.push(...place(figure(createSeededRng(seed + k * 7), { height: 30, kind, view }), { dx: (k * 3 + v) * 22 }));
+    });
+  });
+  row(
+    'Kinds: lamia, kuker and samodiva, front, side and back',
+    (['ink', 'festive'] as const).map((palette) =>
+      panel(palette === 'ink' ? 'Line art' : 'Thread, festive', 860, 200, palette === 'ink' ? 'line' : 'thread', palette, 4, [44, 168], kindShapes),
+    ),
+  );
+}
+
 // A cast: every seed is a different person.
 if (!only || only === 'figures') {
   const castRng = createSeededRng(seed * 31 + 5);

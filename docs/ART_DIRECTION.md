@@ -399,10 +399,18 @@ What is wrong and needs doing, in priority order:
    offsets, head tilt) and regenerate, or split the figure into separately cached parts
    (skirt, torso, head, each arm) and transform those. The second is cheaper per frame and
    is the recommended route. Ease everything; nothing should move linearly.
-5. **Figures ignore who the character is.** Lamia Zmeitsa is a serpent but is drawn as a
-   villager. Add figure "kinds" selected by the world pack per cast member (human, serpent,
-   masked kuker, samodiva), and let `VillagerConfig` traits steer skirt, headdress and inks.
-   Put the mapping in the pack, not in `figure`.
+5. ~~**Figures ignore who the character is.**~~ Done: `FigureOptions.kind` is `human`,
+   `serpent` (a woman's upper body on a coiled, scaled tail that loops on the ground; no
+   legs, so the skirt swing becomes a slither), `kuker` (trousered, with a knee-length
+   goatskin coat in the gold role with dark strands, a belt of bronze bells, and a tall
+   horned mask in `accent2` with gold eyes, bared teeth, brow mirrors and tassels) or
+   `samodiva` (long hair to the waist, a flower wreath, chemise sleeves, a dotted skirt).
+   A kind only overrides traits after the seed has drawn them. The world pack chooses: the
+   Zmeyovo cast in `src/data/balkanMythMap.ts` sets `figure: { kind }` on Lamia, Kuker
+   Marin and Samodiva Raina, and `withPackFigure` in `src/storage/villageStore.ts` gives an
+   older saved cast the figure its pack now declares. The Characters tab has a Kind menu.
+   Lab: `/art-lab.html?only=kinds`. Next kinds worth adding: a dragon (zmey), a nestinar
+   (fire dancer), an elder with a stick, a child.
 6. **More outsider folk art.** The owner's note was "a bit less stick figure". Sleeves and
    boots helped. Push further: uneven hems, hands of different sizes, heads off-centre,
    patterns that do not quite line up, bolder oversized motifs on aprons, occasional

@@ -26,12 +26,14 @@ import {
   FIGURE_HEIGHT_SCALE,
   chooseFigureView,
   figureBuildFor,
+  figureLooksFor,
   figurePortrait,
   getFigureRig,
   paintRig,
   type WorldLook,
 } from '../art/gameLook';
 import { PALETTES, paintLinen, type PaletteName } from '../art/looks';
+import type { FigureKind } from '../art/figures';
 
 interface CharacterEditorViewProps {
   villagers: VillagerConfig[];
@@ -48,7 +50,10 @@ const PREVIEW_W = 296;
 /** Head and shoulders of the character, drawn from the same figure as in the village. */
 function RosterPortrait({ villager, look }: { villager: VillagerConfig; look: PaletteName }) {
   const src = React.useMemo(
-    () => figurePortrait(villager.id, look, 34, figureBuildFor(villager), 'bust')?.toDataURL() ?? '',
+    () => {
+      const { build, kind } = figureLooksFor(villager);
+      return figurePortrait(villager.id, look, 34, build, 'bust', 2, kind)?.toDataURL() ?? '';
+    },
     [villager, look],
   );
   return <img src={src} width={34} height={34} alt="" aria-hidden="true" className="shrink-0" />;
@@ -100,7 +105,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
           if (worldLook !== 'tiles') {
             // The art figure, walking toward us, to each side and away, as the village draws it.
             const palette = PALETTES[worldLook];
-            const build = figureBuildFor(current);
+            const looks = figureLooksFor(current);
             DIRECTIONS.forEach((dir, idx) => {
               const boxX = idx * 72 + 4;
               const boxY = 4;
@@ -127,7 +132,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                 time: now / 1000,
               };
               const rig = getFigureRig(current.id, worldLook, tile * FIGURE_HEIGHT_SCALE, undefined, {
-                build,
+                ...looks,
                 view: chooseFigureView(motion, figureTurns),
               });
               paintRig(ctx, rig, boxX + 32 - tile / 2, boxY + PREVIEW_H - 30 - tile, tile, motion);
@@ -498,14 +503,31 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                         type="button"
                         aria-pressed={on}
                         title={build ? `Draw as ${label.toLowerCase()}` : 'Decide from appearance or voice'}
-                        onClick={() => updateCurrent({ figure: build ? { build } : undefined })}
+                        onClick={() => updateCurrent({ figure: { ...current.figure, build: build ?? undefined } })}
                         className={`relative rounded px-2 py-0.5 glyph-button ${on ? 'glyph-on font-semibold' : ''}`}
                       >
                         {label}
-                        {!build && on ? ` (${figureBuildFor({ ...current, figure: undefined })})` : ''}
+                        {!build && on ? ` (${figureBuildFor({ ...current, figure: { kind: current.figure?.kind } })})` : ''}
                       </button>
                     );
                   })}
+                  <label className="ml-3 inline-flex items-center gap-1">
+                    <span className="text-muted">Kind</span>
+                    <select
+                      value={current.figure?.kind ?? 'human'}
+                      onChange={(e) =>
+                        updateCurrent({
+                          figure: { ...current.figure, kind: e.target.value === 'human' ? undefined : (e.target.value as FigureKind) },
+                        })
+                      }
+                      className="rounded border border-borderFolk bg-surface px-1 py-0.5 text-[11px]"
+                    >
+                      <option value="human">Villager</option>
+                      <option value="serpent">Serpent (lamia)</option>
+                      <option value="kuker">Kuker mummer</option>
+                      <option value="samodiva">Samodiva</option>
+                    </select>
+                  </label>
                 </div>
               )}
             </div>

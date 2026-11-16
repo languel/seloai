@@ -1,7 +1,7 @@
 import {
   FIGURE_HEIGHT_SCALE,
   chooseFigureView,
-  figureBuildFor,
+  figureLooksFor,
   figurePortrait,
   playerFigureBuild,
   clothOverlayColours,
@@ -226,7 +226,8 @@ function SubtitleBox({ stitched, ...rest }: React.HTMLAttributes<HTMLDivElement>
 const FigurePortraitThumb: React.FC<{ villager: VillagerConfig; look: PaletteName; size: number }> = ({ villager, look, size }) => {
   const src = React.useMemo(() => {
     const ratio = typeof window === 'undefined' ? 2 : Math.max(2, Math.ceil(window.devicePixelRatio || 1));
-    return figurePortrait(villager.id, look, size, figureBuildFor(villager), 'bust', ratio)?.toDataURL() ?? '';
+    const { build, kind } = figureLooksFor(villager);
+    return figurePortrait(villager.id, look, size, build, 'bust', ratio, kind)?.toDataURL() ?? '';
   }, [villager, look, size]);
   return <img src={src} width={size} height={size} alt="" aria-hidden="true" className="shrink-0" style={{ width: size, height: size }} />;
 };
@@ -820,13 +821,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 time: timeSec,
               };
               const cfg = sim.configs.get(body.id);
-              const build = cfg ? figureBuildFor(cfg) : playerFigureBuild(aestheticSettings.player.attire);
+              const looks = cfg ? figureLooksFor(cfg) : { build: playerFigureBuild(aestheticSettings.player.attire), kind: 'human' as const };
               const rig = getFigureRig(
                 body.id,
                 worldLook,
                 body.tileDim * body.scale * FIGURE_HEIGHT_SCALE,
                 expressionFor(body.state, body.line),
-                { build, view: chooseFigureView(motion, aestheticSettings.figureTurns) },
+                { ...looks, view: chooseFigureView(motion, aestheticSettings.figureTurns) },
               );
               paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, motion);
             };
