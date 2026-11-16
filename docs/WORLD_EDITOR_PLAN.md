@@ -200,8 +200,21 @@ sources, patterns should be generated procedurally, based on references.
    position, so an edit changes the decoration near it and nowhere else. Still to do:
    import and export of a world pack from the editor, rectangle and line painting, feature
    thumbnails in the place palette, and the editor's own small multiples of seeds.
-3. Director camera. Independent of the editors (it touches the village view and the
-   simulation, not the world document), so it can also run alongside steps 1 and 2.
+3. ~~Director camera.~~ First pass done. `src/engine/director.ts` is a pure shot planner
+   (same story, same cut; `Director.history` is the cut so far) with establishing,
+   two-shot, close, reaction and follow shots. Grammar: a subject is held 3 to 16 seconds
+   (close and reaction shots do not reset that clock), a wide shot of a quiet place is held
+   7 seconds before the next place, the camera cuts when the new subject is far or a very
+   different size and eases otherwise, it changes subject between lines, recently left
+   subjects are passed over for 9 seconds, and a line that turns strong as it is spoken (a
+   question, an exclamation, a long speech) gets one close shot, then sometimes the
+   listener's reaction. The village view drives the camera from it ("Story" viewfinder
+   button, on by default and remembered; the current shot is captioned beside it), frames
+   only the part of the view the floating toolbar leaves visible, and hands the camera to
+   the viewer on any drag, scroll, zoom, follow or keyboard move. Clicking a character in
+   story mode moves the Scribe's point of view to them and the director favours their
+   thread. Still to do: an optional return to story mode after the viewer has been idle,
+   the shot list in the headless runner and agent API, and lead room ahead of a walker.
 4. The Loom: first the cloth and its navigation from the records the simulation already
    keeps, then basting and deviations, then kept branches (a simulation change: rewinding
    forks instead of truncating). Also independent of the editors.

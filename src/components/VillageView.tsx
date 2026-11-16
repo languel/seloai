@@ -21,7 +21,8 @@ import { drawConversationThreads, type ThreadEnd } from '../art/threads';
 import type { PaletteName } from '../art/looks';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Director, type DirectorActor } from '../engine/director';
 import {
   ArrowDown,
   Captions,
@@ -457,6 +458,35 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [scriptCollapsed, setScriptCollapsed] = useState(false);
   const [followSelected, setFollowSelected] = useState(false);
+  // Story mode: the director camera follows the story until the viewer takes over.
+  const [storyMode, setStoryModeState] = useState(() => {
+    try {
+      return localStorage.getItem('seloai_story_mode') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const storyRef = useRef(storyMode);
+  /** The floating toolbar over the top of the view: the director frames only what it leaves visible. */
+  const hudRef = useRef<HTMLDivElement>(null);
+  const directorRef = useRef(new Director());
+  const [shotCaption, setShotCaption] = useState('');
+  const setStoryMode = useCallback((on: boolean) => {
+    storyRef.current = on;
+    setStoryModeState(on);
+    if (on) directorRef.current.reset();
+    try {
+      localStorage.setItem('seloai_story_mode', on ? 'on' : 'off');
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  }, []);
+  /** Any pan, zoom, follow or keyboard move hands the camera to the viewer. */
+  const takeOver = useCallback(() => {
+    if (storyRef.current) setStoryMode(false);
+  }, [setStoryMode]);
+  const takeOverRef = useRef(takeOver);
+  takeOverRef.current = takeOver;
   const [feedMode, setFeedMode] = useState<'hearing' | 'focused' | 'village'>('hearing');
   const [filterSpeech, setFilterSpeech] = useState(true);
   const [filterScribe, setFilterScribe] = useState(true);
@@ -557,6 +587,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || targetEl?.isContentEditable) return;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(e.key)) {
         keysRef.current.add(e.key.toLowerCase());
+        takeOverRef.current();
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -646,7 +677,58 @@ export const VillageView: React.FC<VillageViewProps> = ({
             }
           }
 
-          if (followSelected && selectedId) {
+          if (storyRef.current) {
+            // The director chooses the shot; the camera cuts to it or eases toward it.
+            const director = directorRef.current;
+            const names = new Map<string, string>();
+            const actors: DirectorActor[] = [];
+            for (const rt of sim.runtimes.values()) {
+              names.set(rt.id, sim.configs.get(rt.id)?.name ?? rt.id);
+              actors.push({
+                id: rt.id,
+                x: rt.x,
+                y: rt.y,
+                moving: rt.state === 'walking' || rt.path.length > 0,
+                // A bubble is shown only while its line is being said (it is cleared when it expires).
+                line: rt.currentBubble?.text,
+                lineId: rt.currentBubble ? String(rt.currentBubble.startedAt ?? rt.currentBubble.text) : undefined,
+                conversationId: rt.activeConversationId,
+              });
+            }
+            director.setNames(names);
+            director.favour(sim.focalWorldlineId && sim.focalWorldlineId !== 'traveler' ? sim.focalWorldlineId : null);
+            const before = director.current;
+            const hudBottom = hudRef.current?.getBoundingClientRect().bottom ?? rect.top;
+            const inset = Math.max(0, Math.min(rect.height * 0.6, hudBottom - rect.top));
+            const visibleH = Math.max(1, rect.height - inset);
+            const shot = director.update({
+              time: now / 1000,
+              actors,
+              landmarks: (sim.map.pointsOfInterest ?? []).map((p) => ({ id: p.id, label: p.label, x: p.x, y: p.y })),
+              mapW: sim.map.width,
+              mapH: sim.map.height,
+              aspect: rect.width / visibleH,
+            });
+            const td = sim.map.tileDim;
+            const tx = (shot.rect.x + shot.rect.w / 2) * td;
+            const zoom = Math.min(3.5, Math.max(0.45, Math.min(rect.width / (shot.rect.w * td), visibleH / (shot.rect.h * td))));
+            // The camera centre sits half the toolbar's height above the visible middle.
+            const ty = (shot.rect.y + shot.rect.h / 2) * td - inset / 2 / zoom;
+            cam.anchor = null;
+            const fresh = !before || before.startedAt !== shot.startedAt;
+            if (fresh && shot.cut) {
+              cam.x = tx;
+              cam.y = ty;
+              cam.zoom = zoom;
+              cam.targetZoom = zoom;
+            } else {
+              const k = 1 - Math.exp(-dt * 2.4);
+              cam.x += (tx - cam.x) * k;
+              cam.y += (ty - cam.y) * k;
+              cam.targetZoom += (zoom - cam.targetZoom) * k;
+            }
+            if (fresh) setShotCaption(`${shot.kind === 'two-shot' ? 'Two-shot' : shot.kind[0].toUpperCase() + shot.kind.slice(1)}: ${shot.caption}`);
+          } else if (followSelected && selectedId) {
             const rt = sim.runtimes.get(selectedId);
             if (rt) {
               const tx = (rt.x + 0.5) * sim.map.tileDim;
@@ -953,6 +1035,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     if (Math.hypot(dx, dy) > 4) {
       dragRef.current.moved = true;
       setFollowSelected(false);
+      takeOver();
     }
     cameraRef.current.anchor = null;
     cameraRef.current.x -= dx / cameraRef.current.zoom;
@@ -984,6 +1067,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
     if (clickedVillager) {
       setSelectedId(clickedVillager.id);
+      // In story mode, picking someone makes their thread the plotline the camera follows.
+      if (storyRef.current) {
+        sim.setFocalWorldline(clickedVillager.id);
+        setTick((t) => t + 1);
+      }
     } else {
       sim.movePlayerTo(Math.floor(tileX), Math.floor(tileY));
     }
@@ -991,6 +1079,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    takeOver();
     const rect = e.currentTarget.getBoundingClientRect();
     let dy = e.deltaY;
     if (e.deltaMode === 1) dy *= 16;
@@ -1418,7 +1507,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         />
 
         {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
-        <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
+        <div ref={hudRef} className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
           <StitchScope look={hudLook}>
           <div
             role="toolbar"
@@ -1572,6 +1661,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               glyph="zoomIn"
               label="Zoom in"
               onClick={() => {
+                takeOver();
                 cameraRef.current.anchor = null;
                 cameraRef.current.targetZoom = Math.min(3.5, cameraRef.current.targetZoom * 1.18);
               }}
@@ -1580,6 +1670,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               glyph="zoomOut"
               label="Zoom out"
               onClick={() => {
+                takeOver();
                 cameraRef.current.anchor = null;
                 cameraRef.current.targetZoom = Math.max(0.45, cameraRef.current.targetZoom / 1.18);
               }}
@@ -1590,11 +1681,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
             <GlyphButton glyph="thoughts" label="Show thought bubbles" pressed={showThoughtBubbles} dimOff onClick={() => setShowThoughtBubbles((t) => !t)} />
             <GlyphButton glyph="subtitles" label="Show the Scribe's subtitles" pressed={showScribeSubtitles} dimOff onClick={() => setShowScribeSubtitles((s) => !s)} />
             <GlyphButton
+              glyph="story"
+              label={storyMode ? 'Story mode is on: the camera follows the story. Pan or zoom to take over.' : 'Story mode: let the camera follow the story'}
+              pressed={storyMode}
+              dimOff
+              onClick={() => setStoryMode(!storyMode)}
+            />
+            {storyMode && shotCaption && (
+              <span className="stitch-muted max-w-[11rem] truncate text-[10px]" title={shotCaption}>
+                {shotCaption}
+              </span>
+            )}
+            <GlyphButton
               glyph="follow"
               label="Follow the selected character"
               pressed={followSelected}
               dimOff
               onClick={() => {
+                takeOver();
                 setFollowSelected((f) => !f);
                 centerOnSelected();
               }}

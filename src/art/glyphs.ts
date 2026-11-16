@@ -45,7 +45,8 @@ export type GlyphName =
   | 'landmark'
   | 'spawn'
   | 'dice'
-  | 'walkable';
+  | 'walkable'
+  | 'story';
 
 const W = 1.1; // the usual stroke weight
 const line = (points: Pt[], ink: Ink = 'dark', weight = W, closed = false): Shape => ({ kind: 'line', points, ink, weight, closed });
@@ -278,6 +279,16 @@ const GLYPHS: Record<GlyphName, () => Shape[]> = {
   ],
   // A die showing five.
   dice: () => [line(rect(-6, -6, 6, 6), 'dark', W, true), ...([[-3, -3], [3, -3], [0, 0], [-3, 3], [3, 3]] as Pt[]).map((p) => knot(p, 0.9, 'primary'))],
+  // A viewfinder: four corner brackets around a knot, the camera that follows the story.
+  story: () => [
+    line([[-7, -3], [-7, -6], [-4, -6]], 'dark', 1.1),
+    line([[4, -6], [7, -6], [7, -3]], 'dark', 1.1),
+    line([[7, 3], [7, 6], [4, 6]], 'dark', 1.1),
+    line([[-4, 6], [-7, 6], [-7, 3]], 'dark', 1.1),
+    knot([-1.5, 0], 1.3, 'primary'),
+    knot([2, 0.5], 1, 'accent'),
+    line(quadCurve([-1.5, 0], [0.2, -2], [2, 0.5], 5), 'secondary', 0.6),
+  ],
   // A grid with crossed-out cells: where one can and cannot walk.
   walkable: () => [
     line(rect(-6.5, -6.5, 6.5, 6.5), 'dark', 0.8, true),
