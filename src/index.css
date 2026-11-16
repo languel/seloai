@@ -191,3 +191,122 @@ dialog::backdrop {
   border-radius: 2px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Stitch primitives. A StitchScope (src/components/Stitch.tsx) sets the --stitch-* custom
+ * properties from the active look's stitch kit (src/art/uiChrome.ts): running-stitch frames,
+ * knot dividers, a stitched slider track and a knot thumb. Outside a scope these classes
+ * fall back to plain dashed outlines.
+ * ------------------------------------------------------------------------------------- */
+.stitch-scope {
+  display: contents;
+}
+.stitch-panel {
+  position: relative;
+  color: var(--stitch-ink, var(--text-ink));
+  background: var(--stitch-patch, color-mix(in srgb, var(--bg-card) 85%, transparent));
+  border-radius: 8px;
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+}
+.stitch-panel::before,
+.stitch-scope .glyph-tip::before,
+.stitch-scope .glyph-button.glyph-on::after,
+.stitch-scope .glyph-button:hover:not(:disabled)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 10px solid transparent;
+  border-image: var(--stitch-frame) 20 / 10px round;
+}
+.stitch-panel.stitch-panel-active::before {
+  border-image-source: var(--stitch-frame-active);
+}
+.stitch-muted {
+  color: var(--stitch-muted, var(--text-muted));
+}
+.stitch-thread {
+  color: var(--stitch-thread, var(--accent-crimson));
+}
+.stitch-divider-v {
+  flex: none;
+  width: 8px;
+  height: 18px;
+  background: var(--stitch-knot) center / 8px 6px repeat-y;
+  opacity: 0.75;
+}
+.stitch-divider-h {
+  height: 8px;
+  background: var(--stitch-knot) center / 6px 8px repeat-x;
+  opacity: 0.75;
+}
+
+/* Glyph buttons and tips inside a scope: stitched outlines instead of dashed borders. */
+.stitch-scope .glyph-button,
+.stitch-scope .glyph-button:hover:not(:disabled),
+.stitch-scope .glyph-button.glyph-on {
+  border-color: transparent;
+}
+.stitch-scope .glyph-button:hover:not(:disabled)::after {
+  border-width: 8px;
+  border-image-width: 8px;
+  opacity: 0.45;
+}
+.stitch-scope .glyph-button.glyph-on::after {
+  border-width: 8px;
+  border-image-width: 8px;
+  border-image-source: var(--stitch-frame-active);
+  opacity: 1;
+}
+.stitch-scope .glyph-button.glyph-on {
+  background: color-mix(in srgb, var(--stitch-thread) 7%, transparent);
+}
+.stitch-scope .glyph-tip {
+  color: var(--stitch-ink);
+  background: var(--stitch-patch-strong);
+  border: none;
+  border-radius: 6px;
+  padding: 4px 9px;
+  box-shadow: 0 1px 3px rgb(40 26 12 / 0.18);
+}
+.stitch-scope .glyph-tip::before {
+  border-width: 8px;
+  border-image-width: 8px;
+}
+
+/* A slider whose track is running stitch and whose thumb is a knot. */
+.stitch-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.stitch-range::-webkit-slider-runnable-track {
+  height: 8px;
+  background: var(--stitch-track, linear-gradient(currentColor, currentColor) center / 100% 1px no-repeat) left center / 7px 8px repeat-x;
+}
+.stitch-range::-moz-range-track {
+  height: 8px;
+  background: var(--stitch-track) left center / 7px 8px repeat-x;
+}
+.stitch-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -3.5px;
+  border: none;
+  background: var(--stitch-thumb) center / contain no-repeat;
+}
+.stitch-range::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: none;
+  background: var(--stitch-thumb) center / contain no-repeat;
+}
+.stitch-range:focus-visible {
+  outline: 1px dashed var(--stitch-thread, currentColor);
+  outline-offset: 2px;
+}

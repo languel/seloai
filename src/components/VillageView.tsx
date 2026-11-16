@@ -9,7 +9,9 @@ import {
 } from '../art/gameLook';
 import type { BodyPainter } from '../engine/renderer';
 import { tileSemanticsForMap } from '../world/packs';
-import { Glyph, GlyphButton, GlyphLookContext, GlyphTip } from './Glyph';
+import { Glyph, GlyphButton, GlyphTip } from './Glyph';
+import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
+import { stitchKit } from '../art/uiChrome';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useEffect, useRef, useState } from 'react';
@@ -204,6 +206,15 @@ function serializeComposerText(root: HTMLElement | null): string {
     out += serializeComposerNode(child);
   });
   return out;
+}
+
+/** A range input: stitched inside the art looks, the browser's own in the classic tiles. */
+function SpeedRange({ stitched, ...rest }: React.InputHTMLAttributes<HTMLInputElement> & { stitched: boolean }) {
+  return stitched ? <StitchSlider {...rest} /> : <input type="range" {...rest} />;
+}
+
+function SubtitleBox({ stitched, ...rest }: React.HTMLAttributes<HTMLDivElement> & { stitched: boolean }) {
+  return stitched ? <StitchPanel {...rest} /> : <div {...rest} />;
 }
 
 const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }> = ({
@@ -407,6 +418,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
     () => resolveAestheticTokens(aestheticSettings, worldTheme),
     [aestheticSettings, worldTheme],
   );
+  // The art looks draw the HUD as stitched cloth; the classic tiles keep their presets.
+  const stitchHud = aestheticSettings.worldLook !== 'tiles';
+  const hudLook = glyphLookFor(aestheticSettings.worldLook, isLightColour(aestheticTokens.hudTextColor));
+  const hudKit = React.useMemo(() => stitchKit(hudLook), [hudLook]);
   const playerCustomSprite = React.useMemo(
     () => generateProceduralPlayerCustomSprite(aestheticSettings.player, worldTheme),
     [aestheticSettings.player, worldTheme],
@@ -1358,16 +1373,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
         {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
         <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
-          <GlyphLookContext.Provider value={glyphLookFor(aestheticSettings.worldLook, isLightColour(aestheticTokens.hudTextColor))}>
+          <StitchScope look={hudLook}>
           <div
             role="toolbar"
             aria-label="Village simulation controls"
-            style={aestheticTokens.hudStyle}
-            className={`pointer-events-auto relative flex min-w-0 flex-wrap items-center gap-1 rounded-md px-2 py-1.5 ${
-              aestheticSettings.showDecorations ? 'pt-2' : ''
-            }`}
+            style={stitchHud ? { fontFamily: aestheticTokens.hudStyle.fontFamily } : aestheticTokens.hudStyle}
+            className={`pointer-events-auto relative flex min-w-0 flex-wrap items-center gap-1 rounded-md ${
+              stitchHud ? 'stitch-panel px-3 py-2' : 'px-2 py-1.5'
+            } ${aestheticSettings.showDecorations && !stitchHud ? 'pt-2' : ''}`}
           >
-            {aestheticSettings.showDecorations && (
+            {aestheticSettings.showDecorations && !stitchHud && (
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
@@ -1392,7 +1407,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               }}
             />
 
-            <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />
+            {stitchHud ? <KnotDivider /> : <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />}
 
             {/* Signed logarithmic time-pace & rewind slider (-10× .. 0 .. +10×) */}
             {(() => {
@@ -1412,7 +1427,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 }
                 setTick((t) => t + 1);
               };
-              const speedBadgeStyle: React.CSSProperties = isRewinding
+              const speedBadgeStyle: React.CSSProperties = stitchHud
+                ? {
+                    color: isRewinding || effectiveSpeed > 1 ? hudKit.thread : isStopped || effectiveSpeed < 1 ? hudKit.muted : hudKit.ink,
+                  }
+                : isRewinding
                 ? { backgroundColor: aestheticTokens.accentHex, color: '#ffffff' }
                 : isStopped
                   ? { backgroundColor: aestheticTokens.activeSubtitleBg, color: aestheticTokens.activeSubtitleText }
@@ -1428,7 +1447,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     onClick={() => applySpeed(1)}
                     title="Simulation speed multiplier (click to reset to 1×)"
                     style={speedBadgeStyle}
-                    className="min-w-[40px] rounded px-1.5 py-0.5 text-center font-mono text-[11px] font-semibold transition"
+                    className={`min-w-[40px] rounded px-1.5 py-0.5 text-center font-mono text-[11px] font-semibold transition ${stitchHud ? 'glyph-button' : ''}`}
                   >
                     {formatSpeedLabel(effectiveSpeed)}
                   </button>
@@ -1439,8 +1458,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         className="pointer-events-none absolute top-0.5 bottom-0.5 left-1/2 w-px -translate-x-1/2"
                         style={{ backgroundColor: aestheticTokens.hudBorderColor }}
                       />
-                      <input
-                        type="range"
+                      <SpeedRange
+                        stitched={stitchHud}
                         min={-SLIDER_MAX_POS}
                         max={SLIDER_MAX_POS}
                         step={1}
@@ -1448,7 +1467,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         aria-label="Simulation speed and rewind"
                         title="Drag left for negative speed to rewind events, center (0) to pause, right for 1/4× to 10×"
                         onChange={(e) => applySpeed(sliderPosToSpeed(Number(e.target.value)))}
-                        className="h-1.5 w-full cursor-pointer accent-amber-400"
+                        className={stitchHud ? 'w-full' : 'h-1.5 w-full cursor-pointer accent-amber-400'}
                       />
                     </div>
                     <div className="relative h-3 w-full select-none">
@@ -1458,8 +1477,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
                           mark.value === 0
                             ? isStopped
                             : Math.abs(effectiveSpeed - mark.value) < 0.02;
-                        const activeMarkColor =
-                          mark.value < 0
+                        const activeMarkColor = stitchHud
+                          ? hudKit.thread
+                          : mark.value < 0
                             ? aestheticTokens.accentHex
                             : mark.value === 0
                               ? aestheticTokens.poiHighlightHex
@@ -1471,7 +1491,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                             onClick={() => applySpeed(mark.value)}
                             style={{
                               left: `${pct}%`,
-                              color: active ? activeMarkColor : aestheticTokens.hudMutedColor,
+                              color: active ? activeMarkColor : stitchHud ? hudKit.muted : aestheticTokens.hudMutedColor,
                               fontWeight: active ? 700 : 500,
                             }}
                             title={`Set pace to ${mark.label}×`}
@@ -1486,10 +1506,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   {(isRewinding || rewindInfo.behindPresentSec >= 0.4) && (
                     <span
                       className="whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
-                      style={{
-                        backgroundColor: aestheticTokens.activeSpeechBg,
-                        color: aestheticTokens.activeSpeechText,
-                      }}
+                      style={
+                        stitchHud
+                          ? { color: hudKit.thread }
+                          : { backgroundColor: aestheticTokens.activeSpeechBg, color: aestheticTokens.activeSpeechText }
+                      }
                       title="Rewind offset behind present time"
                     >
                       ◀ -{rewindInfo.behindPresentSec.toFixed(1)}s
@@ -1499,7 +1520,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               );
             })()}
 
-            <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />
+            {stitchHud ? <KnotDivider /> : <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />}
 
             <GlyphButton
               glyph="zoomIn"
@@ -1549,11 +1570,15 @@ export const VillageView: React.FC<VillageViewProps> = ({
               aria-pressed={sim.focalWorldlineId !== 'traveler'}
               title="Hop Scribe & spatial audio POV to selected character (or click again to return to You)"
               style={
-                sim.focalWorldlineId !== 'traveler'
-                  ? { backgroundColor: aestheticTokens.accentHex, color: '#ffffff', fontWeight: 600 }
-                  : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor }
+                stitchHud
+                  ? { color: sim.focalWorldlineId !== 'traveler' ? hudKit.thread : hudKit.ink, fontWeight: 600 }
+                  : sim.focalWorldlineId !== 'traveler'
+                    ? { backgroundColor: aestheticTokens.accentHex, color: '#ffffff', fontWeight: 600 }
+                    : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor }
               }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:opacity-90"
+              className={`relative inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition ${
+                stitchHud ? `glyph-button ${sim.focalWorldlineId !== 'traveler' ? 'glyph-on' : ''}` : 'hover:opacity-90'
+              }`}
             >
               <span className="whitespace-nowrap">
                 POV:{' '}
@@ -1578,10 +1603,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
               aria-label="Eavesdrop distance"
               style={{
                 backgroundColor:
-                  settings.proximityRadiusTiles > 0
+                  settings.proximityRadiusTiles > 0 && !stitchHud
                     ? aestheticTokens.hudChipIdleBg
                     : 'transparent',
-                color: aestheticTokens.hudTextColor,
+                color: stitchHud ? hudKit.ink : aestheticTokens.hudTextColor,
               }}
               className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition"
             >
@@ -1591,9 +1616,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 </span>
                 <GlyphTip>Eavesdrop distance</GlyphTip>
               </label>
-              <input
+              <SpeedRange
+                stitched={stitchHud}
                 id="village-eavesdrop-radius"
-                type="range"
                 min={0}
                 max={EAVESDROP_SLIDER_MAX}
                 step={1}
@@ -1617,7 +1642,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   }
                   onUpdateSettings({ proximityRadiusTiles: nextRadius });
                 }}
-                className="w-20 cursor-pointer accent-emerald-400"
+                className={stitchHud ? 'w-20' : 'w-20 cursor-pointer accent-emerald-400'}
                 title="Eavesdrop hearing radius (0 = Off, right end = Whole Map)"
               />
               <span className="w-7 text-right font-mono text-[11px]">
@@ -1644,19 +1669,23 @@ export const VillageView: React.FC<VillageViewProps> = ({
               <GlyphButton glyph="flush" label="Flush queued speech audio" size={15} onClick={() => brainRouter.flushAudioQueue()} />
             </div>
           </div>
-          </GlyphLookContext.Provider>
+          </StitchScope>
         </div>
 
         {/* Bottom-Center Docked Scribe Subtitle Field */}
         {showScribeSubtitles && latestScribeSubtitle && (
-          <div
+          <StitchScope look={hudLook}>
+          <SubtitleBox
+            stitched={stitchHud}
             role="status"
             aria-live="polite"
             aria-label="Scribe subtitles"
-            style={aestheticTokens.subtitleStyle}
-            className="absolute bottom-3 left-1/2 z-10 w-[min(92%,42rem)] -translate-x-1/2 overflow-hidden rounded-md px-3.5 py-2"
+            style={stitchHud ? { fontFamily: aestheticTokens.hudStyle.fontFamily } : aestheticTokens.subtitleStyle}
+            className={`absolute bottom-3 left-1/2 z-10 w-[min(92%,42rem)] -translate-x-1/2 rounded-md ${
+              stitchHud ? 'px-4 py-2.5' : 'overflow-hidden px-3.5 py-2'
+            }`}
           >
-            {aestheticSettings.showDecorations && (
+            {aestheticSettings.showDecorations && !stitchHud && (
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
@@ -1665,22 +1694,33 @@ export const VillageView: React.FC<VillageViewProps> = ({
             )}
             <div
               className="mb-0.5 flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider"
-              style={{ color: aestheticTokens.poiHighlightHex }}
+              style={{ color: stitchHud ? hudKit.thread : aestheticTokens.poiHighlightHex }}
             >
               <span className="inline-flex items-center gap-1 font-semibold">
-                <Captions className="h-3 w-3" aria-hidden="true" />
+                {stitchHud ? <Glyph name="subtitles" size={13} /> : <Captions className="h-3 w-3" aria-hidden="true" />}
                 <span>{latestScribeSubtitle.senderName}</span>
               </span>
-              <button
-                type="button"
-                onClick={() => setShowScribeSubtitles(false)}
-                title="Hide Scribe subtitles"
-                aria-label="Hide Scribe subtitles"
-                className="rounded p-0.5 transition hover:bg-white/10"
-                style={{ color: aestheticTokens.hudMutedColor }}
-              >
-                <X className="h-3 w-3" aria-hidden="true" />
-              </button>
+              {stitchHud ? (
+                <GlyphButton
+                  glyph="close"
+                  label="Hide Scribe subtitles"
+                  size={12}
+                  tipSide="above"
+                  className="h-5 min-w-5"
+                  onClick={() => setShowScribeSubtitles(false)}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowScribeSubtitles(false)}
+                  title="Hide Scribe subtitles"
+                  aria-label="Hide Scribe subtitles"
+                  className="rounded p-0.5 transition hover:bg-white/10"
+                  style={{ color: aestheticTokens.hudMutedColor }}
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              )}
             </div>
             <div
               ref={subtitleBoxRef}
@@ -1688,7 +1728,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 fontSize: `${(SPEECH_BUBBLE_FONT_PX * aestheticSettings.fontScale).toFixed(1)}px`,
                 lineHeight: `${(SPEECH_BUBBLE_LINE_H_PX * aestheticSettings.fontScale).toFixed(1)}px`,
                 fontWeight: 500,
-                color: aestheticTokens.hudTextColor,
+                color: stitchHud ? hudKit.ink : aestheticTokens.hudTextColor,
               }}
               className="max-h-16 overflow-y-auto pr-1"
             >
@@ -1700,7 +1740,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 aestheticTokens.isLightSurface ? 'light' : 'dark',
               )}
             </div>
-          </div>
+          </SubtitleBox>
+          </StitchScope>
         )}
         {showPerfHud && (
           <LivePerfHudOverlay

@@ -4,7 +4,8 @@ import { WorldStore } from './world/worldStore';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext } from './world/packs';
 import { GENERIC_WORLD_CONTEXT } from './world/worldContext';
 import { createBrowserSimulation } from './app/browserSimulation';
-import { Glyph, GlyphButton, GlyphLookContext, GlyphTip } from './components/Glyph';
+import { Glyph, GlyphButton, GlyphTip } from './components/Glyph';
+import { StitchScope } from './components/Stitch';
 import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -775,7 +776,7 @@ export function App() {
         (aestheticSettings.worldLook === 'tiles' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches)));
 
   return (
-    <GlyphLookContext.Provider value={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
+    <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
     <div className="flex h-full flex-col bg-linen text-ink overflow-hidden">
       <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
         {/* Navigation Tabs (glyph-only with hover labels) */}
@@ -1267,7 +1268,7 @@ export function App() {
         </form>
       </dialog>
     </div>
-    </GlyphLookContext.Provider>
+    </StitchScope>
   );
 }
 
