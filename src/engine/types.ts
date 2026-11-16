@@ -1,3 +1,4 @@
+import type { TileMeaningTable } from '../art/scene';
 export type Direction = 'down' | 'left' | 'right' | 'up';
 
 /** Tile matrix indexed as [x][y] (column-major). -1 means empty. */
@@ -58,6 +59,11 @@ export interface VillageMap {
   spawnPoints: SpawnPoint[];
   pointsOfInterest?: PointOfInterest[];
   stamps?: TileMacroStamp[];
+  /**
+   * What the tiles mean (water, road, a house), so the art looks can redraw the place.
+   * Supplied by the world that made the map; without it a map is drawn from walkability.
+   */
+  tileMeanings?: TileMeaningTable;
 }
 
 export interface CustomSpriteSheet {

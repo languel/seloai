@@ -129,8 +129,8 @@ is one shape kind among four.
 | `src/art/gameLook.ts` | Glue for the running game: `WorldLook`, `WORLD_LOOK_OPTIONS`, `renderWorldLayer`, `getFigureSprite`, `paintFigure`. |
 | `src/art/lettering.ts` | Embroidered text: a 5 by 7 counted-stitch sampler alphabet (`lettering`, `ribbon`, `letteringWidth`). |
 | `src/art/lab.ts` + `art-lab.html` | The art lab page for judging motifs and looks by eye. |
-| `src/world/packs/balkanSemantics.ts` | What each tile of the Balkan tileset means. |
-| `src/world/packs/index.ts` | `tileSemanticsForMap(map)`. |
+| `src/data/balkanTileMeanings.ts`, `src/data/shevitsaTileMeanings.ts` | What each tile of the two bundled worlds means, as plain data (`TileMeaningTable`). |
+| `src/world/packs/index.ts` | `tileSemanticsForMap(map)` reads the table the map carries; `withBundledTileMeanings` fills it in for maps saved before tables existed. |
 | `src/engine/renderer.ts` | `BodyPainter` hook in `drawVillager` and `drawPlayer`. |
 | `src/components/VillageView.tsx` | Chooses the art layer or the tile layer per `aestheticSettings.worldLook`. |
 | `src/utils/aestheticThemes.ts` | `AestheticSettings.worldLook`, default `'festive'`. |
@@ -461,9 +461,14 @@ lines; meadow is a sparse tuft in about 8% of cells.
 
 To generalise properly, in order:
 
-1. **Move tile meanings into the world pack.** Add an optional `tileSemantics` (or a data
-   table that builds one) to `WorldPack`, and stop matching on the tileset URL in
-   `tileSemanticsForMap`. Write the table for Shevitsa.
+1. ~~**Move tile meanings into the world pack.**~~ Done. A map carries its own
+   `tileMeanings`: a list of `{ tiles, terrain?, blockedTerrain?, feature?, note? }`
+   entries, plain data so it travels in a pack, a saved world and an exported level, and is
+   checked by `validateWorldPack`. `blockedTerrain` lets one tile read differently where it
+   cannot be walked (Shevitsa's Balkan ridge is stone at the passes and a wall elsewhere).
+   Both bundled worlds have tables. The tileset URL is now only used once, on load, to give
+   maps saved before this change the bundled table. A map with no table is still drawn
+   from walkability and its named places.
 2. **Make the semantic scene the authored thing.** The long-term shape of a world is the
    `SceneModel`, with tile grids derived from it for the classic look, not the reverse.
    New world generators should emit terrain and features directly. Extend `WorldDocument`
@@ -795,9 +800,9 @@ one has missed the point.
 6. ~~**Wang chunks**~~, first pass done in the lab (section 8.1). Next: make a generated
    world playable.
 7. ~~**World polish**~~, first pass done: cloth border, couched road edges, river banks.
-8. **Tile meanings in packs** and a Shevitsa table (section 8). Next up.
+8. ~~**Tile meanings in packs**~~, done, with a Shevitsa table (section 8).
 9. ~~**Conversation threads**~~, first pass done (section 9).
-10. **Folk-art push and legibility at size** (section 7, items 6 and 7).
+10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Next up.
 11. **Scene-level world authoring** and procedural world generators (section 8, item 2);
     the Wang worlds are the generator to build on.
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.

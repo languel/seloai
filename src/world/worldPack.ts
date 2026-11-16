@@ -1,3 +1,4 @@
+import { validateTileMeanings } from '../art/scene';
 import type { VillageMap, VillagerConfig } from '../engine/types';
 import type { WorldContext } from './worldContext';
 
@@ -59,6 +60,7 @@ export function validateWorldPack(pack: unknown): string[] {
   } else {
     if (map.bgTiles[0]?.length !== map.width) problems.push('map.bgTiles does not match map.width.');
     if (map.collisionGrid?.length !== map.width) problems.push('map.collisionGrid does not match map.width.');
+    if (map.tileMeanings !== undefined) problems.push(...validateTileMeanings(map.tileMeanings).map((p) => `map.${p}`));
   }
   if (p.cast !== undefined) {
     if (!Array.isArray(p.cast)) problems.push('cast must be a list.');

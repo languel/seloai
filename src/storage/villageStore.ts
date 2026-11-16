@@ -1,4 +1,4 @@
-import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext } from '../world/packs';
+import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, withBundledTileMeanings } from '../world/packs';
 import type { WorldContext } from '../world/worldContext';
 import {
   createBalkanMythMap,
@@ -144,7 +144,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
             : rawSettings.proximityRadiusTiles
           : DEFAULT_MODEL_SETTINGS.proximityRadiusTiles;
       return {
-        map: stored.map,
+        map: withBundledTileMeanings(stored.map),
         villagers: stored.villagers.map(ensureVillagerSprite).map(withPackFigure),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
@@ -425,7 +425,7 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
   if (Array.isArray(data.bgTiles) && typeof data.width === 'number') {
     return {
       format: 'seloai-level-v1',
-      map: data as VillageMap,
+      map: withBundledTileMeanings(data as VillageMap),
     };
   }
 
@@ -434,7 +434,7 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
   };
 
   if (data.map && Array.isArray(data.map.bgTiles) && typeof data.map.width === 'number') {
-    result.map = data.map as VillageMap;
+    result.map = withBundledTileMeanings(data.map as VillageMap);
   }
   if (Array.isArray(data.villagers) && data.villagers.length > 0) {
     result.villagers = (data.villagers as VillagerConfig[]).map(ensureVillagerSprite);

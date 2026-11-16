@@ -1,3 +1,4 @@
+import { BALKAN_TILE_MEANINGS } from './balkanTileMeanings';
 import { BALKAN_CHARACTER_SPRITE_IDS, getBalkanCustomSpriteSpec } from '../engine/balkanSprites.ts';
 import {
   BALKAN_BROOK_VARIANTS,
@@ -494,6 +495,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
     ],
     pointsOfInterest,
     stamps: createBalkanStamps(),
+    tileMeanings: structuredClone(BALKAN_TILE_MEANINGS),
   };
 }
 

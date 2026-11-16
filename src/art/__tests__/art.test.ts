@@ -73,8 +73,8 @@ describe('Generative art', () => {
     expect(sceneShapes(model).length).toBeGreaterThan(500);
 
     const shevitsa = findWorldPack('shevitsa')!.build().map;
-    expect(tileSemanticsForMap(shevitsa)).toBeUndefined();
-    const plain = buildSceneModel(shevitsa);
+    const plain = buildSceneModel({ ...shevitsa, tileMeanings: undefined });
+    expect(tileSemanticsForMap({ ...shevitsa, tileMeanings: undefined })).toBeUndefined();
     expect(plain.features.length).toBe(shevitsa.pointsOfInterest?.length ?? 0);
     expect(plain.features.every((f) => f.kind === 'star')).toBe(true);
     expect(plain.terrain.flat().some((t) => t === 'wall')).toBe(true);
@@ -199,6 +199,50 @@ describe('figure kinds', () => {
         expect(b.maxX - b.minX, `${kind} ${view}`).toBeLessThan(40);
       }
     }
+  });
+});
+
+describe('tile meanings in world packs', () => {
+  it('reads Shevitsa from the table its map carries', () => {
+    const shevitsa = findWorldPack('shevitsa')!.build().map;
+    expect(shevitsa.tileMeanings?.length).toBeGreaterThan(0);
+    const model = buildSceneModel(shevitsa, tileSemanticsForMap(shevitsa));
+    const count = (t: string) => model.terrain.flat().filter((k) => k === t).length;
+    expect(count('water')).toBeGreaterThan(100);
+    expect(count('road')).toBeGreaterThan(100);
+    expect(count('bridge')).toBeGreaterThan(0);
+    const kinds = model.features.map((f) => f.kind);
+    expect(kinds.filter((k) => k === 'star').length).toBe(5);
+    expect(kinds).toContain('tree');
+    expect(kinds).toContain('well');
+    expect(kinds).toContain('hearth');
+    // The Balkan ridge is stone where it can be crossed and a wall where it cannot.
+    expect(model.terrain[15][18]).toBe('dry');
+    expect(model.terrain[16][18]).toBe('wall');
+  });
+
+  it('builds semantics from plain data, later entries adding to earlier ones', async () => {
+    const { semanticsFromTable, validateTileMeanings } = await import('../scene');
+    const s = semanticsFromTable([
+      { tiles: [1, 2], terrain: 'water' },
+      { tiles: [2], feature: { kind: 'duck', w: 1, h: 1 } },
+    ]);
+    expect(s(1)).toEqual({ terrain: 'water' });
+    expect(s(2)).toEqual({ terrain: 'water', feature: { kind: 'duck', w: 1, h: 1 } });
+    expect(s(3)).toBeUndefined();
+    expect(validateTileMeanings([{ tiles: [1], terrain: 'water' }])).toEqual([]);
+    expect(validateTileMeanings([{ tiles: ['x'], terrain: 'lava' }]).length).toBe(2);
+    expect(validateTileMeanings({})).toEqual(['tileMeanings must be a list.']);
+  });
+
+  it('gives maps saved before tables existed the bundled table for their tileset', async () => {
+    const { withBundledTileMeanings } = await import('../../world/packs');
+    const old = { ...findWorldPack('balkan-myth')!.build().map, tileMeanings: undefined };
+    expect(withBundledTileMeanings(old).tileMeanings?.length).toBeGreaterThan(0);
+    const custom = { ...old, tileSetUrl: '/assets/mine.png' };
+    expect(withBundledTileMeanings(custom).tileMeanings).toBeUndefined();
+    const own = { ...old, tileMeanings: [{ tiles: [0], terrain: 'water' as const }] };
+    expect(withBundledTileMeanings(own)).toBe(own);
   });
 });
 

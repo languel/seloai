@@ -1,3 +1,4 @@
+import { SHEVITSA_TILE_MEANINGS } from './shevitsaTileMeanings';
 import type { PointOfInterest, SpawnPoint, TileGrid, TileMacroStamp, VillageMap } from '../engine/types';
 
 export const SHEVITSA_TILESET_URL = '/assets/shevitsa-tileset.png';
@@ -386,6 +387,7 @@ export function createBulgarianShevitsaMap(width = 64, height = 48): VillageMap 
     spawnPoints,
     pointsOfInterest,
     stamps,
+    tileMeanings: structuredClone(SHEVITSA_TILE_MEANINGS),
   };
 }
 

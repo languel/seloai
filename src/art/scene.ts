@@ -33,12 +33,54 @@ export type FeatureKind =
 
 export interface TileMeaning {
   terrain?: Terrain;
+  /** Terrain to use instead where the cell cannot be walked (a ridge with open passes). */
+  blockedTerrain?: Terrain;
   /** A placed object whose top-left cell this tile is, with its footprint in cells. */
   feature?: { kind: FeatureKind; w: number; h: number };
 }
 
 /** What a tile id means in a given tileset. Supplied by the world pack. */
 export type TileSemantics = (tileId: number) => TileMeaning | undefined;
+
+/**
+ * Tile meanings as plain data, so they travel inside a world pack and a saved map. Each
+ * entry gives one meaning to a list of tile ids. Later entries add to earlier ones, so a
+ * tile can take its terrain from one entry and a feature from another.
+ */
+export interface TileMeaningEntry extends TileMeaning {
+  tiles: number[];
+  /** What the tiles are, for people reading the pack. Not used by the renderer. */
+  note?: string;
+}
+
+export type TileMeaningTable = TileMeaningEntry[];
+
+const TERRAINS: readonly Terrain[] = ['ground', 'water', 'road', 'dry', 'wall', 'bridge'];
+
+export function semanticsFromTable(table: TileMeaningTable): TileSemantics {
+  const meanings = new Map<number, TileMeaning>();
+  for (const { tiles, note: _note, ...meaning } of table) {
+    for (const id of tiles) meanings.set(id, { ...meanings.get(id), ...meaning });
+  }
+  return (tileId) => meanings.get(tileId);
+}
+
+/** Problems with a tile meaning table read from outside; an empty list means it is usable. */
+export function validateTileMeanings(table: unknown): string[] {
+  if (!Array.isArray(table)) return ['tileMeanings must be a list.'];
+  const problems: string[] = [];
+  table.forEach((entry, i) => {
+    const e = entry as Partial<TileMeaningEntry> | null;
+    if (!e || typeof e !== 'object') return void problems.push(`tileMeanings[${i}] is not an object.`);
+    if (!Array.isArray(e.tiles) || e.tiles.some((t) => !Number.isInteger(t))) problems.push(`tileMeanings[${i}].tiles must be a list of tile ids.`);
+    for (const field of ['terrain', 'blockedTerrain'] as const) {
+      if (e[field] !== undefined && !TERRAINS.includes(e[field] as Terrain)) problems.push(`tileMeanings[${i}].${field} "${e[field]}" is not a terrain.`);
+    }
+    const f = e.feature;
+    if (f !== undefined && (typeof f?.kind !== 'string' || !(f.w >= 1) || !(f.h >= 1))) problems.push(`tileMeanings[${i}].feature needs a kind and a size.`);
+  });
+  return problems;
+}
 
 export interface SceneFeature {
   kind: FeatureKind;
@@ -73,7 +115,9 @@ export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): Sce
           if (id < 0) continue;
           const meaning = semantics(id);
           if (!meaning) continue;
-          if (meaning.terrain && meaning.terrain !== 'ground') terrain[x][y] = meaning.terrain;
+          const blocked = map.collisionGrid[x]?.[y] === true;
+          const kind = (blocked && meaning.blockedTerrain) || meaning.terrain;
+          if (kind && kind !== 'ground') terrain[x][y] = kind;
           if (meaning.feature) {
             features.push({ ...meaning.feature, x, y, seed: hashString(`${meaning.feature.kind}:${x}:${y}`) });
           }
