@@ -83,6 +83,8 @@ export interface FigureLooks {
   kind?: FigureKind;
   /** `bold` for figures seen small; see `figureDetailFor`. */
   detail?: FigureDetail;
+  /** The maker's quirks (`FigureOptions.quirks`). On unless turned off in the Style panel. */
+  quirks?: boolean;
 }
 
 /** Below this on-screen height a figure is drawn bold so its face still reads. */
@@ -128,18 +130,18 @@ export function getFigureRig(
   look: PaletteName,
   heightPx: number,
   expression?: Expression,
-  { build = 'skirted', view = 'front', kind = 'human', detail = 'full' }: FigureLooks = {},
+  { build = 'skirted', view = 'front', kind = 'human', detail = 'full', quirks = true }: FigureLooks = {},
 ): FigureRig {
   const size = Math.max(16, Math.round(heightPx));
   const seed = hashString(id);
-  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail });
+  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks });
   const mood = expression ?? resting.restingExpression;
-  const key = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|${mood}`;
+  const key = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|${mood}`;
   const cached = rigCache.get(key);
   if (cached) return cached;
 
   const unit = (size / FIGURE_UNITS) * DENSITY;
-  const bodyKey = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|body`;
+  const bodyKey = `${id}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|body`;
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
@@ -170,7 +172,7 @@ export function getFigureRig(
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks }).head, look, unit, seed),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
@@ -473,7 +475,7 @@ export function figurePortrait(
   const hit = portraitCache.get(key);
   if (hit) return hit;
   const seed = hashString(id);
-  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, kind });
+  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, kind, quirks: true });
   const shapes = [...parts.legLeft, ...parts.legRight, ...parts.skirt, ...parts.torso, ...parts.head, ...parts.armLeft, ...parts.armRight];
   const box = bounds(shapes);
   const top = box.minY - 0.6;
@@ -498,6 +500,6 @@ export function figureKindFor(cfg?: { figure?: { kind?: FigureKind } }): FigureK
 }
 
 /** Build and kind for a character, ready to pass to `getFigureRig`. */
-export function figureLooksFor(cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind } }): Required<Omit<FigureLooks, 'view' | 'detail'>> {
+export function figureLooksFor(cfg: Parameters<typeof figureBuildFor>[0] & { figure?: { kind?: FigureKind } }): Required<Omit<FigureLooks, 'view' | 'detail' | 'quirks'>> {
   return { build: figureBuildFor(cfg), kind: figureKindFor(cfg) };
 }

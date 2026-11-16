@@ -236,6 +236,22 @@ if (!only || only === 'women') {
   );
 }
 
+// The maker's quirks: the same six people neat (top) and with the maker's hand (bottom).
+if (!only || only === 'quirks') {
+  const pairs: Shape[] = [];
+  for (let i = 0; i < 6; i++) {
+    const options = { height: 30, build: i % 3 === 2 ? ('trousered' as const) : ('skirted' as const) };
+    pairs.push(...place(figure(createSeededRng(seed * 100 + i), options), { dx: i * 24 }));
+    pairs.push(...place(figure(createSeededRng(seed * 100 + i), { ...options, quirks: true }), { dx: i * 24, dy: 44 }));
+  }
+  row(
+    "Maker's quirks: neat above, the maker's hand below",
+    (['ink', 'festive'] as const).map((palette) =>
+      panel(palette === 'ink' ? 'Line art' : 'Thread, festive', 760, 470, palette === 'ink' ? 'line' : 'thread', palette, 5.2, [70, 205], pairs),
+    ),
+  );
+}
+
 // A cast: every seed is a different person.
 if (!only || only === 'figures') {
   const castRng = createSeededRng(seed * 31 + 5);

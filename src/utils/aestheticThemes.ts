@@ -71,6 +71,8 @@ export interface AestheticSettings {
   worldLook: WorldLook;
   /** In the art looks, show walking figures side-on and from behind, not only from the front. */
   figureTurns: boolean;
+  /** In the art looks, draw figures with the maker's quirks: uneven hems, a tipped head, big motifs. */
+  figureQuirks: boolean;
   player: PlayerAppearanceConfig;
 }
 
@@ -99,6 +101,7 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   deoverlapLabels: true,
   worldLook: 'festive',
   figureTurns: true,
+  figureQuirks: true,
   player: { ...DEFAULT_PLAYER_APPEARANCE },
 };
 
@@ -390,6 +393,7 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
     characterScale: clamp(raw?.characterScale, 0.85, 1.35, DEFAULT_AESTHETIC_SETTINGS.characterScale),
     worldLook: isWorldLook(raw?.worldLook) ? raw!.worldLook : DEFAULT_AESTHETIC_SETTINGS.worldLook,
     figureTurns: typeof raw?.figureTurns === 'boolean' ? raw.figureTurns : DEFAULT_AESTHETIC_SETTINGS.figureTurns,
+    figureQuirks: typeof raw?.figureQuirks === 'boolean' ? raw.figureQuirks : DEFAULT_AESTHETIC_SETTINGS.figureQuirks,
     deoverlapLabels:
       typeof raw?.deoverlapLabels === 'boolean'
         ? raw.deoverlapLabels

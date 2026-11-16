@@ -43,6 +43,7 @@ interface CharacterEditorViewProps {
   /** The world look, so the preview shows the figure exactly as the village draws it. */
   worldLook?: WorldLook;
   figureTurns?: boolean;
+  figureQuirks?: boolean;
 }
 
 const PREVIEW_W = 296;
@@ -69,6 +70,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
   onApplyVillagers,
   worldLook = 'tiles',
   figureTurns = true,
+  figureQuirks = true,
 }) => {
   const [drafts, setDrafts] = useState<VillagerConfig[]>(() => structuredClone(villagers));
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? '');
@@ -134,6 +136,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
               const rig = getFigureRig(current.id, worldLook, tile * FIGURE_HEIGHT_SCALE, undefined, {
                 ...looks,
                 view: chooseFigureView(motion, figureTurns),
+                quirks: figureQuirks,
               });
               paintRig(ctx, rig, boxX + 32 - tile / 2, boxY + PREVIEW_H - 30 - tile, tile, motion);
               ctx.restore();
@@ -189,7 +192,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
     };
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, [current, worldLook, figureTurns]);
+  }, [current, worldLook, figureTurns, figureQuirks]);
 
   const updateCurrent = (patch: Partial<VillagerConfig>) => {
     if (!current) return;

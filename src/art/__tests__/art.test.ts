@@ -202,6 +202,23 @@ describe('figure kinds', () => {
   });
 });
 
+describe("the maker's quirks", () => {
+  it('leave the body and legs alone, are seeded, and change hem, head and hands', () => {
+    for (const seed of [3, 11, 99, 1234]) {
+      const neat = figureParts(createSeededRng(seed), { height: 30 });
+      const quirky = figureParts(createSeededRng(seed), { height: 30, quirks: true });
+      const again = figureParts(createSeededRng(seed), { height: 30, quirks: true });
+      expect(JSON.stringify(quirky)).toBe(JSON.stringify(again));
+      expect(JSON.stringify(quirky.torso)).toBe(JSON.stringify(neat.torso));
+      expect(JSON.stringify(quirky.legLeft)).toBe(JSON.stringify(neat.legLeft));
+      expect(JSON.stringify(quirky.head)).not.toBe(JSON.stringify(neat.head));
+      expect(JSON.stringify(quirky.skirt)).not.toBe(JSON.stringify(neat.skirt));
+      const arms = (p: typeof neat) => JSON.stringify([p.armLeft, p.armRight]);
+      expect(arms(quirky)).not.toBe(arms(neat));
+    }
+  });
+});
+
 describe('figures seen small', () => {
   it('bold detail changes only the head, which grows from the neck', () => {
     for (const seed of [3, 11, 99]) {

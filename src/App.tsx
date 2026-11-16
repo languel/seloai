@@ -995,6 +995,7 @@ export function App() {
             onApplyVillagers={handleApplyVillagers}
             worldLook={aestheticSettings.worldLook}
             figureTurns={aestheticSettings.figureTurns}
+            figureQuirks={aestheticSettings.figureQuirks}
           />
         )}
         {tab === 'monitor' && (

@@ -419,10 +419,16 @@ What is wrong and needs doing, in priority order:
    older saved cast the figure its pack now declares. The Characters tab has a Kind menu.
    Lab: `/art-lab.html?only=kinds`. Next kinds worth adding: a dragon (zmey), a nestinar
    (fire dancer), an elder with a stick, a child.
-6. **More outsider folk art.** The owner's note was "a bit less stick figure". Sleeves and
-   boots helped. Push further: uneven hems, hands of different sizes, heads off-centre,
-   patterns that do not quite line up, bolder oversized motifs on aprons, occasional
-   profile figures. Asymmetry is the point.
+6. **More outsider folk art**, first pass done as the maker's quirks
+   (`FigureOptions.quirks`, `folkQuirks` in `src/art/figures.ts`). Applied after the parts
+   are built, so the person is the same: the hem dips to one side with a slight wave, one
+   hand is 15 to 45% bigger, the head sits a little off the neck and tips, small pattern
+   marks wander and stitched lines lie a touch crooked, and every apron and about two in
+   five solid skirts carry one oversized flower, worked off-centre in a contrasting ink.
+   The quirk values are drawn after every other trait, so no existing person changes. The
+   game turns them on; the Style panel's "Figure drawing" switch (`figureQuirks`, Neat or
+   Maker's hand) turns them off. Lab: `/art-lab.html?only=quirks`. Still possible: arms of
+   different lengths, a hem that frays, motifs on men's vests.
 7. **Legibility at game size**, faces done. `FigureOptions.detail` is `full` (unchanged)
    or `bold`: the head grows 14% from the neck, eyes are larger knots, the mouth is twice as
    heavy with its curve exaggerated, the nose goes, and brows stay only where they carry the
@@ -807,8 +813,8 @@ one has missed the point.
 7. ~~**World polish**~~, first pass done: cloth border, couched road edges, river banks.
 8. ~~**Tile meanings in packs**~~, done, with a Shevitsa table (section 8).
 9. ~~**Conversation threads**~~, first pass done (section 9).
-10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Bold faces done; the outsider folk-art push (item 6) is next up.
-11. **Scene-level world authoring** and procedural world generators (section 8, item 2);
+10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Bold faces and the maker's quirks done (first passes).
+11. **Scene-level world authoring** (next up) and procedural world generators (section 8, item 2);
     the Wang worlds are the generator to build on.
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.
 

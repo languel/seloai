@@ -6,7 +6,7 @@
  * Every trait is drawn from the seed first, in a fixed order (`drawTraits`), and only then
  * turned into shapes. That keeps a person the same person in every view and every mood.
  */
-import type { Rng } from '../core/rng';
+import { createSeededRng, type Rng } from '../core/rng';
 import { comb, flowerHead } from './motifs';
 import { circle, curl, mirrored, place, quadCurve, type Ink, type Pt, type Shape } from './shapes';
 
@@ -51,6 +51,12 @@ export interface FigureOptions {
    * face still reads. The default `full` keeps every mark.
    */
   detail?: FigureDetail;
+  /**
+   * The maker's hand: an uneven hem, one hand bigger than the other, the head a little off
+   * true, patterns that do not quite line up, and a bold oversized motif on some aprons and
+   * skirts. All seeded, so a person's quirks never change. Off by default.
+   */
+  quirks?: boolean;
 }
 
 export type FigureDetail = 'full' | 'bold';
@@ -115,6 +121,21 @@ interface Traits {
   longHair?: boolean;
   /** Draw for a small size. Set from the options, never drawn from the seed. */
   bold?: boolean;
+  /** The maker's quirks, drawn last so that nothing drawn before them can shift. */
+  quirk: Quirks;
+}
+
+interface Quirks {
+  hemTilt: number;
+  hemPhase: number;
+  bigHand: -1 | 1;
+  handScale: number;
+  headShift: number;
+  headTilt: number;
+  jitterSeed: number;
+  motifDraw: number;
+  motifKind: 'star' | 'blossom' | 'tulip';
+  motifSeed: number;
 }
 
 /** Every random choice about a person, always drawn in this order. */
@@ -158,7 +179,21 @@ function drawTraits(rng: Rng, height: number): Traits {
   if (pose === 'raised') carriesComb = rng() < 0.6;
   else if (pose === 'offering') flower = flowerHead(pick(rng, ['tulip', 'blossom', 'star'] as const), height * 0.085, rng);
   const lean = (rng() - 0.5) * 0.09;
+  // New draws go only here, after everything else, so existing people keep their looks.
+  const quirk: Quirks = {
+    hemTilt: rng() * 2 - 1,
+    hemPhase: rng() * Math.PI * 2,
+    bigHand: rng() < 0.5 ? -1 : 1,
+    handScale: between(rng, 1.15, 1.45),
+    headShift: rng() * 2 - 1,
+    headTilt: rng() * 2 - 1,
+    jitterSeed: Math.floor(rng() * 1e9),
+    motifDraw: rng(),
+    motifKind: pick(rng, ['star', 'blossom', 'tulip'] as const),
+    motifSeed: Math.floor(rng() * 1e9),
+  };
   return {
+    quirk,
     skirtW,
     waistW,
     skirtH,
@@ -598,8 +633,106 @@ export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
       : kind === 'kuker'
         ? kukerParts(parts, t, height, view)
         : parts;
+  const quirky = options.quirks ? folkQuirks(shaped, t, height, view, build, kind) : shaped;
   // Seen small, a bigger head (grown from the neck) keeps the face and headdress readable.
-  return t.bold ? { ...shaped, head: scaleAbout(shaped.head, shaped.pivots.neck, BOLD_HEAD) } : shaped;
+  return t.bold ? { ...quirky, head: scaleAbout(quirky.head, quirky.pivots.neck, BOLD_HEAD) } : quirky;
+}
+
+/** Moves every point of some shapes; knots move by their centre. */
+function warp(shapes: Shape[], f: (p: Pt, i: number) => Pt): Shape[] {
+  return shapes.map((s, i): Shape => {
+    switch (s.kind) {
+      case 'area':
+        return { ...s, points: s.points.map((p) => f(p, i)) };
+      case 'line':
+        return { ...s, points: s.points.map((p) => f(p, i)) };
+      case 'knot':
+        return { ...s, at: f(s.at, i) };
+      case 'counted':
+        return s;
+    }
+  });
+}
+
+function centroid(points: Pt[]): Pt {
+  const n = points.length || 1;
+  return [points.reduce((a, p) => a + p[0], 0) / n, points.reduce((a, p) => a + p[1], 0) / n];
+}
+
+/** A stable small offset for shape i, so patterns drift off true the same way every time. */
+function jitter(seed: number, i: number, axis: number): number {
+  const v = Math.sin(seed * 0.0001 + i * 12.9898 + axis * 78.233) * 43758.5453;
+  return (v - Math.floor(v)) * 2 - 1;
+}
+
+/**
+ * Outsider folk art is lopsided on purpose: the hem dips to one side, one hand is bigger,
+ * the head sits a little off the neck, pattern marks wander, and some garments carry one
+ * motif far too big for them. Applied after the parts are built, so the person is the same.
+ */
+function folkQuirks(parts: FigureParts, t: Traits, height: number, view: FigureView, build: FigureBuild, kind: FigureKind): FigureParts {
+  const q = t.quirk;
+  const out = { ...parts };
+
+  // An uneven hem, dipping to one side with a slight wave, stronger toward the bottom.
+  if (kind !== 'serpent') {
+    const reach = height * 0.14;
+    const halfW = (build === 'skirted' ? t.skirtW : t.shoulderW) / 2;
+    out.skirt = warp(out.skirt, ([x, y]) => {
+      const w = Math.max(0, Math.min(1, (y + reach) / reach));
+      const dip = q.hemTilt * height * 0.04 * (x / halfW) + Math.sin(x * 1.1 + q.hemPhase) * height * 0.007;
+      return [x, y + dip * w];
+    });
+  }
+
+  // Pattern marks that do not quite line up: small knots and diamonds wander, straight
+  // stitched lines are laid a touch crooked.
+  const drift = height * 0.009;
+  out.skirt = out.skirt.map((s, i): Shape => {
+    if (s.kind === 'knot' && s.r < height * 0.02) {
+      return { ...s, at: [s.at[0] + jitter(q.jitterSeed, i, 0) * drift, s.at[1] + jitter(q.jitterSeed, i, 1) * drift] };
+    }
+    if (s.kind === 'area' && s.points.length === 4 && Math.abs(s.points[0][1] - s.points[2][1]) < height * 0.06) {
+      const dx = jitter(q.jitterSeed, i, 0) * drift;
+      const dy = jitter(q.jitterSeed, i, 1) * drift;
+      return { ...s, points: s.points.map(([x, y]): Pt => [x + dx, y + dy]) };
+    }
+    if (s.kind === 'line' && s.points.length === 2) {
+      return { ...s, points: s.points.map(([x, y], k): Pt => [x, y + jitter(q.jitterSeed, i * 2 + k, 2) * drift * 0.8]) };
+    }
+    return s;
+  });
+
+  // One hand bigger than the other.
+  const armKey = q.bigHand < 0 ? 'armLeft' : 'armRight';
+  const arm = out[armKey];
+  if (arm.length) {
+    out[armKey] = arm.map((s): Shape => {
+      if (s.kind !== 'area' || s.ink !== 'skin') return s;
+      const [cx, cy] = centroid(s.points);
+      return { ...s, points: s.points.map(([x, y]): Pt => [cx + (x - cx) * q.handScale, cy + (y - cy) * q.handScale]) };
+    });
+  }
+
+  // The head set a little off the neck and tipped.
+  const [nx, ny] = parts.pivots.neck;
+  out.head = place(place(out.head, { dx: -nx, dy: -ny }), { rot: q.headTilt * 0.07, dx: nx + q.headShift * t.headR * 0.14, dy: ny });
+
+  // A bold oversized motif: always on an apron, on some solid skirts, worked off-centre.
+  if (build === 'skirted' && kind === 'human' && view === 'front') {
+    const onApron = t.skirtStyle === 'apron';
+    if (onApron || (t.skirtStyle === 'filled' && q.motifDraw < 0.4)) {
+      const ground: Ink = onApron ? (t.apronInk === t.skirtInk ? 'gold' : t.apronInk ?? 'gold') : t.skirtInk;
+      const size = onApron ? t.skirtH * 0.44 : t.skirtH * 0.42;
+      const x = onApron ? (q.motifDraw - 0.5) * t.waistW * 0.4 : (q.motifDraw < 0.2 ? -1 : 1) * t.skirtW * 0.16;
+      const y = -t.skirtH * (onApron ? 0.36 : 0.34);
+      const motif = flowerHead(q.motifKind, size, createSeededRng(q.motifSeed)).map((s): Shape =>
+        s.kind !== 'counted' && s.ink === ground ? { ...s, ink: ground === 'gold' ? 'primary' : 'gold' } : s,
+      );
+      out.skirt = [...out.skirt, ...place(motif, { dx: x, dy: y + size * 0.8, rot: q.headTilt * 0.12 })];
+    }
+  }
+  return out;
 }
 
 const BOLD_HEAD = 1.14;

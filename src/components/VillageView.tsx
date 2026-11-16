@@ -828,6 +828,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               const rig = getFigureRig(body.id, worldLook, heightPx, expressionFor(body.state, body.line), {
                 ...looks,
                 view: chooseFigureView(motion, aestheticSettings.figureTurns),
+                quirks: aestheticSettings.figureQuirks,
                 // The zoom being eased toward, so a figure does not flip detail mid-zoom twice.
                 detail: figureDetailFor(heightPx, cam.targetZoom),
               });

@@ -346,6 +346,31 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
                 </div>
               </div>
               <div>
+                <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
+                  Figure drawing
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {(
+                    [
+                      [false, 'Neat', 'Even hems, heads set straight, small patterns'],
+                      [true, "Maker's hand", 'Hems that dip, a head a little off true, one big hand, an oversized motif on some skirts'],
+                    ] as const
+                  ).map(([value, label, hint]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      title={hint}
+                      aria-pressed={settings.figureQuirks === value}
+                      onClick={() => onChange({ ...settings, figureQuirks: value })}
+                      className="rounded border px-1.5 py-1 text-[10px]"
+                      style={pillBtnStyle(settings.figureQuirks === value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <div className="mb-0.5 flex items-center justify-between text-[10px]">
                   <span style={{ color: tokens.hudMutedColor }}>All Character Size</span>
                   <button
