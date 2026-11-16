@@ -2,18 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@font-face {
-  font-family: 'Upheaval Pro';
-  src: url('/assets/fonts/upheaval_pro.ttf') format('truetype');
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'VCR OSD Mono';
-  src: url('/assets/fonts/vcr_osd_mono.ttf') format('truetype');
-  font-display: swap;
-}
-
 :root {
   /* Light: neutral cool-gray surfaces, strategic desaturated accents */
   --linen-light: #f0f0f2;
@@ -117,6 +105,29 @@ body,
 .rushnyk-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-folk);
+}
+
+/* In the art looks, cards are cloth patches with a running-stitch edge. */
+.look-art .rushnyk-card {
+  position: relative;
+  border-color: transparent;
+  background-color: color-mix(in srgb, var(--bg-card) 82%, transparent);
+}
+.look-art .rushnyk-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 10px solid transparent;
+  border-image: var(--stitch-frame) 20 / 10px round;
+  opacity: 0.7;
+}
+.look-art header {
+  border-bottom-color: transparent !important;
+  background-image: var(--stitch-knot);
+  background-repeat: repeat-x;
+  background-position: left bottom;
+  background-size: 9px 6px;
 }
 
 .pixel-canvas {

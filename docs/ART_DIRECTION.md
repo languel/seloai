@@ -552,7 +552,7 @@ world in every look.
 
 ---
 
-## 10. The interface (started; glyph buttons and bubble chrome done)
+## 10. The interface (glyphs, bubbles, stitch kit and shell colours done)
 
 The owner's instruction: refine the UI "to match the now beautiful world and chars". The
 HUD, speech bubbles, name pills, sidebar and panels predate the art system and now clash
@@ -634,16 +634,28 @@ Direction:
    - Still text: the speed badge, the POV button (it names the character), the slider marks,
      the world picker, and every panel, dialog and editor. The other views (Control Room,
      editors, monitor) still use `lucide-react`; move them over as they are restyled.
-1. **One source of truth.** Derive interface colours from the active look's palette, so
-   switching World Look restyles the whole app. The line-art looks give a paper-and-ink UI;
-   the thread looks give linen panels with stitched borders.
-2. **Draw chrome with the art system.** Panel borders as a counted band or running stitch,
-   dividers as a row of knots, buttons as stitched outlines, a selected state as a filled
-   satin block. Render these to small cached canvases or CSS `border-image` sources.
+1. ~~**One source of truth.**~~ Done: `shellVars(look)` in `src/art/uiChrome.ts` maps the
+   palette onto the shell tokens Tailwind uses (`--bg-linen`, `--bg-card`, `--text-ink`,
+   `--border-folk`, the accents). App sets them on `:root` whenever the World Look is an
+   art look and adds `look-art` to the root, so every view becomes linen and thread, paper
+   and ink, or the night plate. The classic tiles keep the old light and dark themes.
+2. ~~**Draw chrome with the art system.**~~ Done as the **stitch kit** (`stitchKit(look)`
+   in `src/art/uiChrome.ts`): a running-stitch frame image (96 px, 20 px slices, edges in
+   whole 14 px stitch periods so `border-image: round` repeats seamlessly), the same frame in
+   the main thread for active things, a knot tile for dividers, a running-stitch slider
+   track and a knot thumb. `StitchScope` (`src/components/Stitch.tsx`) exposes them as
+   `--stitch-*` custom properties (`display: contents`, so it adds no box) and also sets the
+   glyph look. Classes in `index.css`: `.stitch-panel` (see-through patch with a stitched
+   frame drawn by `::before`, so it takes no layout), `.stitch-divider-v/-h` (knot rows),
+   `.stitch-range` (slider), and inside a scope pressed glyph buttons and hover tips get
+   stitched frames. Components: `StitchPanel`, `KnotDivider`, `StitchSlider`,
+   `useStitchKit`. Used by the village toolbar, the Scribe panel and the speed and
+   eavesdrop sliders; in the art looks `.rushnyk-card` cards get a stitched edge and the
+   header a knot rule.
 3. ~~**Bubbles and labels through the look.**~~ Done as described above.
-4. **Typography.** Choose a face that sits with hand-made work and reads at small sizes.
-   The two bundled pixel fonts (`upheaval_pro.ttf`, `vcr_osd_mono.ttf`) came from ai-town;
-   the owner wants a clean break, so replace them and delete the files.
+4. **Typography.** The two ai-town pixel fonts are deleted; `display` is now a system serif
+   (Georgia, Iowan Old Style, Palatino) and `mono` the system monospace. Still to choose: a
+   face that sits with hand-made work for headings (or the stroke alphabet of 6.1).
 5. **Quiet the HUD.** The world is now the picture. Reduce chrome, lower contrast of
    controls at rest, and let the cloth run to the edges.
 6. **Build shared primitives first** (button, panel, tab, slider, tooltip) before

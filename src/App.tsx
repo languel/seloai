@@ -6,6 +6,8 @@ import { GENERIC_WORLD_CONTEXT } from './world/worldContext';
 import { createBrowserSimulation } from './app/browserSimulation';
 import { Glyph, GlyphButton, GlyphTip } from './components/Glyph';
 import { StitchScope } from './components/Stitch';
+import { shellVars } from './art/uiChrome';
+import type { PaletteName } from './art/looks';
 import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -761,6 +763,17 @@ export function App() {
     [map, aestheticSettings.player, worldTheme],
   );
 
+  // In the art looks the whole shell takes its colours from the look's palette.
+  const artShell = aestheticSettings.worldLook !== 'tiles';
+  useEffect(() => {
+    const root = document.documentElement;
+    const vars = artShell ? shellVars(aestheticSettings.worldLook as PaletteName) : {};
+    for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
+    return () => {
+      for (const name of Object.keys(vars)) root.style.removeProperty(name);
+    };
+  }, [artShell, aestheticSettings.worldLook]);
+
   if (!ready || !map || !settings || !simRef.current || !playerCustomSprite) {
     return (
       <div className="flex h-full items-center justify-center bg-linen text-sm text-muted">
@@ -777,7 +790,7 @@ export function App() {
 
   return (
     <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
-    <div className="flex h-full flex-col bg-linen text-ink overflow-hidden">
+    <div className={`flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
       <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
         {/* Navigation Tabs (glyph-only with hover labels) */}
         <nav aria-label="Workspace Views" className="flex items-center gap-1">

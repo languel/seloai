@@ -5,8 +5,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ['"Upheaval Pro"', 'Georgia', 'serif'],
-        mono: ['"VCR OSD Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        display: ['Georgia', '"Iowan Old Style"', '"Palatino Linotype"', 'serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
         sans: ['"Inter"', 'system-ui', '-apple-system', 'sans-serif'],
       },
       colors: {

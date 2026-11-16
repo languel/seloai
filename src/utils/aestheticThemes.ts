@@ -151,9 +151,9 @@ export const FONT_PRESET_OPTIONS: ReadonlyArray<{
   },
   {
     id: 'pixel-mono',
-    label: 'Retro Mono',
-    cssFamily: '"VCR OSD Mono", ui-monospace, SFMono-Regular, monospace',
-    canvasFamily: '"VCR OSD Mono", ui-monospace, monospace',
+    label: 'Mono',
+    cssFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    canvasFamily: 'ui-monospace, Menlo, monospace',
   },
 ];
 

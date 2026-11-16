@@ -190,3 +190,28 @@ export function stitchVars(kit: StitchKit): Record<string, string> {
     '--stitch-thumb': url(kit.thumb),
   };
 }
+
+/**
+ * The app shell's colour tokens (the `--bg-*`, `--text-*`, `--border-folk` and `--accent-*`
+ * variables Tailwind maps) taken from a look's palette, so switching World Look restyles
+ * every view: linen and thread for the cloth looks, paper and ink, or the night plate.
+ */
+export function shellVars(look: PaletteName): Record<string, string> {
+  const palette = PALETTES[look];
+  const { ground } = palette;
+  const { dark, primary, secondary, gold, accent } = palette.inks;
+  const night = look === 'night';
+  const lift = night ? '#000000' : '#ffffff';
+  return {
+    '--bg-linen': ground,
+    '--bg-surface': mix(ground, night ? '#ffffff' : dark, night ? 0.05 : 0.045),
+    '--bg-card': mix(ground, lift, night ? 0.3 : 0.4),
+    '--text-ink': dark,
+    '--text-muted': mix(dark, ground, 0.42),
+    '--border-folk': mix(dark, ground, night ? 0.72 : 0.78),
+    '--accent-crimson': primary,
+    '--accent-indigo': secondary,
+    '--accent-ochre': gold,
+    '--accent-sage': accent,
+  };
+}
