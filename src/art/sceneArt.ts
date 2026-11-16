@@ -338,17 +338,107 @@ function terrainShapes(model: SceneModel): Shape[] {
       }
     }
   }
+  shapes.push(...edgeLines(model));
   if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / 4, U / 4], cell: U / 2, cells: roadCells });
   if (wallCells.length > 0) shapes.push({ kind: 'counted', origin: [U / 4, U / 4], cell: U / 2, cells: wallCells });
   return shapes;
 }
 
+/**
+ * Stitched edges where terrain changes: a road becomes a couched band with a dark line down
+ * each side, and water gets a bank line. Neighbouring segments are joined into runs so the
+ * stitches flow along an edge instead of restarting at every cell.
+ */
+function edgeLines(model: SceneModel): Shape[] {
+  const shapes: Shape[] = [];
+  const kindAt = (x: number, y: number) => model.terrain[x]?.[y];
+  const roadish = (t: Terrain | undefined) => t === 'road' || t === 'bridge';
+  const waterish = (t: Terrain | undefined) => t === 'water' || t === 'bridge';
+  const edges: Array<{ test: (t: Terrain | undefined) => boolean; ink: Ink; weight: number; inset: number }> = [
+    { test: roadish, ink: 'dark', weight: 0.45, inset: 0.06 },
+    { test: waterish, ink: 'secondary', weight: 0.55, inset: -0.04 },
+  ];
+  for (const edge of edges) {
+    // Horizontal runs (top and bottom edges of cells), then vertical runs.
+    for (const side of [-1, 1] as const) {
+      for (let y = 0; y < model.height; y++) {
+        let start = -1;
+        for (let x = 0; x <= model.width; x++) {
+          const on = x < model.width && edge.test(kindAt(x, y)) && !edge.test(kindAt(x, y + side));
+          if (on && start < 0) start = x;
+          if (!on && start >= 0) {
+            const ey = (side < 0 ? y : y + 1) * U - side * edge.inset * U;
+            shapes.push({ kind: 'line', points: [[start * U, ey], [x * U, ey]], ink: edge.ink, weight: edge.weight });
+            start = -1;
+          }
+        }
+      }
+      for (let x = 0; x < model.width; x++) {
+        let start = -1;
+        for (let y = 0; y <= model.height; y++) {
+          const on = y < model.height && edge.test(kindAt(x, y)) && !edge.test(kindAt(x + side, y));
+          if (on && start < 0) start = y;
+          if (!on && start >= 0) {
+            const ex = (side < 0 ? x : x + 1) * U - side * edge.inset * U;
+            shapes.push({ kind: 'line', points: [[ex, start * U], [ex, y * U]], ink: edge.ink, weight: edge.weight });
+            start = -1;
+          }
+        }
+      }
+    }
+  }
+  return shapes;
+}
+
+/**
+ * The cloth's own border: a double rule around the whole world with a running chevron of
+ * the main thread between, and a knot rosette at each corner, like the edge of a towel.
+ */
+function clothBorder(model: SceneModel): Shape[] {
+  const w = model.width * U;
+  const h = model.height * U;
+  const outer = U * 0.3;
+  const inner = U * 0.95;
+  const mid = (outer + inner) / 2;
+  const rect = (d: number): Pt[] => [[d, d], [w - d, d], [w - d, h - d], [d, h - d]];
+  const shapes: Shape[] = [
+    { kind: 'line', points: rect(outer), ink: 'dark', weight: 0.6, closed: true },
+    { kind: 'line', points: rect(inner), ink: 'dark', weight: 0.45, closed: true },
+  ];
+  // A zigzag between the rules, one tooth per half cell, run side by side.
+  const tooth = U * 0.5;
+  const amp = (inner - outer) * 0.3;
+  const zig = (from: Pt, to: Pt, normal: Pt, ink: Ink) => {
+    const len = Math.hypot(to[0] - from[0], to[1] - from[1]);
+    const n = Math.max(2, Math.round(len / tooth));
+    const pts: Pt[] = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const off = i % 2 ? amp : -amp;
+      pts.push([from[0] + (to[0] - from[0]) * t + normal[0] * off, from[1] + (to[1] - from[1]) * t + normal[1] * off]);
+    }
+    shapes.push({ kind: 'line', points: pts, ink, weight: 0.5 });
+  };
+  zig([inner, mid], [w - inner, mid], [0, 1], 'primary');
+  zig([inner, h - mid], [w - inner, h - mid], [0, 1], 'primary');
+  zig([mid, inner], [mid, h - inner], [1, 0], 'primary');
+  zig([w - mid, inner], [w - mid, h - inner], [1, 0], 'primary');
+  for (const [cx, cy] of [[mid, mid], [w - mid, mid], [w - mid, h - mid], [mid, h - mid]] as const) {
+    shapes.push({ kind: 'knot', at: [cx, cy], r: U * 0.13, ink: 'gold' });
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2 + Math.PI / 4;
+      shapes.push({ kind: 'knot', at: [cx + Math.cos(a) * U * 0.22, cy + Math.sin(a) * U * 0.22], r: U * 0.07, ink: 'primary' });
+    }
+  }
+  return shapes;
+}
+
 /** Everything that does not move, in drawing order. */
 export function sceneShapes(model: SceneModel): Shape[] {
-  const shapes = [...terrainShapes(model), ...model.features.flatMap(featureShapes)];
+  const shapes = [...terrainShapes(model), ...model.features.flatMap(featureShapes), ...clothBorder(model)];
   if (model.title) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
-    shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 0.9 }));
+    shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));
   }
   return shapes;
 }

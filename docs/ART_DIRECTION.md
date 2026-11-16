@@ -461,12 +461,16 @@ To generalise properly, in order:
    New world generators should emit terrain and features directly. Extend `WorldDocument`
    and the commands in `src/world/commands.ts` with scene-level edits (place a house, paint
    water) so editors and agents work in meaning.
-3. **Better terrain drawing.** Roads should read as a couched band with stitched edges and
+3. **Better terrain drawing.** First pass done: `edgeLines` in `sceneArt.ts` stitches a
+   dark line down both sides of every road run (a couched band) and a bank line where
+   water meets land, joined into runs so stitches flow along the edge. Still to do: roads should read as a couched band with stitched edges and
    turn corners; water needs banks and should thicken where it is wide; walls should be a
    real counted border pattern; the meadow could carry a faint all-over diaper pattern.
    Use neighbour lookups (already available as `is(x, y, kind)` in `terrainShapes`) for
    edges and corners.
-4. **A cloth border for the map.** Frame the whole world with a counted band, selvedge and
+4. **A cloth border for the map.** First pass done: `clothBorder` draws a double rule
+   round the world with a running chevron in the main thread between and a knot rosette at
+   each corner; the place-name ribbon now sits inside it. Still to do: frame the whole world with a counted band, selvedge and
    fringe so the map is visibly one embroidered cloth.
 5. **Depth.** Features are sorted by their bottom edge but are all baked into one static
    layer, so characters never pass behind a house or tree. Split tall features into a
