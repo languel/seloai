@@ -53,7 +53,7 @@ export function tileSemanticsForMap(map: Pick<VillageMap, 'tileMeanings'> | null
  * whose tileset it uses. Maps that already carry a table, or use another tileset, are
  * returned unchanged.
  */
-export function withBundledTileMeanings<T extends VillageMap>(map: T): T {
+export function withBundledTileMeanings(map: VillageMap): VillageMap {
   if (map.tileMeanings) return map;
   const url = map.tileSetUrl ?? '';
   const table = url.includes('balkan-myth') ? BALKAN_TILE_MEANINGS : url.includes('shevitsa') ? SHEVITSA_TILE_MEANINGS : undefined;
