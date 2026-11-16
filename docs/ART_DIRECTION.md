@@ -776,18 +776,22 @@ one has missed the point.
 1. ~~Animation charm, first pass~~ and ~~expressions from the simulation~~: done (section 7).
    Continue with the "more charm still" list there.
 2. ~~Glyph toolbar~~: done for the header and village toolbar (section 10, item 0).
-3. **Interface restyle** (section 10). The owner named it. Bubbles and labels are done;
-   next the shared primitives (panel, tab, slider, tooltip), then the HUD, then panels.
-4. **Cast-specific figures** (section 7, item 5), starting with Lamia. Men and side and back
-   views are done (section 7).
-5. **Ambient density**: groves, villages with yards, fields (section 8.2), with depth
-   sorting so characters walk among them. The owner named it.
-6. **Wang chunks** for coherent, varied, seeded worlds (section 8.1). The owner named it.
-7. **World polish**: map border, better roads and water (section 8).
-8. **Tile meanings in packs** and a Shevitsa table (section 8).
-9. **Conversation threads** as the first thread mechanic (section 9).
-10. **Folk-art push and legibility at size** (section 7, items 4 and 5).
-11. **Scene-level world authoring** and procedural world generators (section 8, item 2).
+3. ~~**Interface restyle**~~, first pass done (section 10): glyphs, stitched bubbles and
+   ribbons, the stitch kit (panels, knot dividers, sliders, tips), shell colours from the
+   look, stitched cards, no ai-town fonts. Still to do: the other views' lucide icons, the
+   editors' panels and dialogs, the HUD presets in `aestheticThemes.ts` (item 7).
+4. ~~**Cast-specific figures**~~, first pass done (section 7, item 5): men, side and back
+   views, portraits from the world figures, lamia, kuker and samodiva kinds.
+5. ~~**Ambient density**~~, first pass done (section 8.2). Depth sorting so characters walk
+   among groves is still to do.
+6. ~~**Wang chunks**~~, first pass done in the lab (section 8.1). Next: make a generated
+   world playable.
+7. ~~**World polish**~~, first pass done: cloth border, couched road edges, river banks.
+8. **Tile meanings in packs** and a Shevitsa table (section 8). Next up.
+9. ~~**Conversation threads**~~, first pass done (section 9).
+10. **Folk-art push and legibility at size** (section 7, items 6 and 7).
+11. **Scene-level world authoring** and procedural world generators (section 8, item 2);
+    the Wang worlds are the generator to build on.
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.
 
 ## 13. Related documents
