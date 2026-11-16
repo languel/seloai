@@ -200,6 +200,8 @@ export interface VillagerConfig {
   spritesheetId: string;
   customSprite?: CustomSpriteSheet;
   appearance?: CharacterAppearance;
+  /** How the art looks draw this character. Unset: decided from appearance or voice. */
+  figure?: { build?: 'skirted' | 'trousered' };
   identity: string;
   plan: string;
   voiceStyle: string;

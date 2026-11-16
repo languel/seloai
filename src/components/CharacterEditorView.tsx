@@ -22,13 +22,38 @@ import type {
   VoiceGender,
 } from '../engine/types';
 import { ModularCharacterCreator } from './ModularCharacterCreator';
+import {
+  FIGURE_HEIGHT_SCALE,
+  chooseFigureView,
+  figureBuildFor,
+  figurePortrait,
+  getFigureRig,
+  paintRig,
+  type WorldLook,
+} from '../art/gameLook';
+import { PALETTES, paintLinen, type PaletteName } from '../art/looks';
 
 interface CharacterEditorViewProps {
   villagers: VillagerConfig[];
   map: VillageMap;
   settings: ModelSettings;
   onApplyVillagers: (next: VillagerConfig[]) => void;
+  /** The world look, so the preview shows the figure exactly as the village draws it. */
+  worldLook?: WorldLook;
+  figureTurns?: boolean;
 }
+
+const PREVIEW_W = 296;
+
+/** Head and shoulders of the character, drawn from the same figure as in the village. */
+function RosterPortrait({ villager, look }: { villager: VillagerConfig; look: PaletteName }) {
+  const src = React.useMemo(
+    () => figurePortrait(villager.id, look, 34, figureBuildFor(villager), 'bust')?.toDataURL() ?? '',
+    [villager, look],
+  );
+  return <img src={src} width={34} height={34} alt="" aria-hidden="true" className="shrink-0" />;
+}
+const PREVIEW_H = 108;
 
 const DIRECTIONS: Direction[] = ['down', 'left', 'right', 'up'];
 
@@ -37,6 +62,8 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
   map,
   settings,
   onApplyVillagers,
+  worldLook = 'tiles',
+  figureTurns = true,
 }) => {
   const [drafts, setDrafts] = useState<VillagerConfig[]>(() => structuredClone(villagers));
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? '');
@@ -65,10 +92,54 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
       if (canvas) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
+          ctx.setTransform(2, 0, 0, 2, 0, 0);
           ctx.imageSmoothingEnabled = false;
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H);
 
           const animFrame = (now / 1000) * 5;
+          if (worldLook !== 'tiles') {
+            // The art figure, walking toward us, to each side and away, as the village draws it.
+            const palette = PALETTES[worldLook];
+            const build = figureBuildFor(current);
+            DIRECTIONS.forEach((dir, idx) => {
+              const boxX = idx * 72 + 4;
+              const boxY = 4;
+              ctx.save();
+              ctx.beginPath();
+              ctx.roundRect(boxX, boxY, 64, PREVIEW_H - 8, 8);
+              ctx.clip();
+              const options = { unit: 3, origin: [0, 0] as [number, number], palette, seed: 3 };
+              if (worldLook === 'ink' || worldLook === 'night') {
+                ctx.fillStyle = palette.ground;
+                ctx.fillRect(boxX, boxY, 64, PREVIEW_H - 8);
+              } else {
+                ctx.translate(boxX, boxY);
+                paintLinen(ctx, 64, PREVIEW_H - 8, options);
+                ctx.translate(-boxX, -boxY);
+              }
+              const tile = 40;
+              const motion = {
+                id: `editor-${current.id}-${dir}`,
+                facing: dir,
+                moving: true,
+                animFrame,
+                state: 'walking',
+                time: now / 1000,
+              };
+              const rig = getFigureRig(current.id, worldLook, tile * FIGURE_HEIGHT_SCALE, undefined, {
+                build,
+                view: chooseFigureView(motion, figureTurns),
+              });
+              paintRig(ctx, rig, boxX + 32 - tile / 2, boxY + PREVIEW_H - 30 - tile, tile, motion);
+              ctx.restore();
+              ctx.fillStyle = worldLook === 'night' ? '#cfc9bd' : '#5c534a';
+              ctx.font = '600 9px Inter, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillText(dir.toUpperCase(), boxX + 32, boxY + PREVIEW_H - 14);
+            });
+            raf = requestAnimationFrame(render);
+            return;
+          }
           DIRECTIONS.forEach((dir, idx) => {
             const boxX = idx * 72 + 4;
             const boxY = 8;
@@ -113,7 +184,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
     };
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, [current]);
+  }, [current, worldLook, figureTurns]);
 
   const updateCurrent = (patch: Partial<VillagerConfig>) => {
     if (!current) return;
@@ -307,10 +378,14 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                     : 'border-transparent hover:border-borderFolk hover:bg-card/60'
                 }`}
               >
-                <span
-                  className="h-3 w-3 shrink-0 rounded-sm border border-black/20"
-                  style={{ backgroundColor: v.accentColor }}
-                />
+                {worldLook !== 'tiles' ? (
+                  <RosterPortrait villager={v} look={worldLook} />
+                ) : (
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-sm border border-black/20"
+                    style={{ backgroundColor: v.accentColor }}
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="truncate text-xs font-semibold">{v.name}</span>
@@ -401,10 +476,38 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
               </div>
               <canvas
                 ref={previewCanvasRef}
-                width={296}
-                height={80}
-                className="pixel-canvas rounded border border-borderFolk bg-surface"
+                width={PREVIEW_W * 2}
+                height={(worldLook === 'tiles' ? 80 : PREVIEW_H) * 2}
+                style={{ width: PREVIEW_W, height: worldLook === 'tiles' ? 80 : PREVIEW_H }}
+                className={`rounded border border-borderFolk bg-surface ${worldLook === 'tiles' ? 'pixel-canvas' : ''}`}
               />
+              {worldLook !== 'tiles' && (
+                <div className="mt-2 flex items-center gap-2 text-[11px]" role="group" aria-label="Figure">
+                  <span className="text-muted">Figure</span>
+                  {(
+                    [
+                      [undefined, 'Auto'],
+                      ['skirted', 'Skirted'],
+                      ['trousered', 'Trousered'],
+                    ] as const
+                  ).map(([build, label]) => {
+                    const on = (current.figure?.build ?? undefined) === build;
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        aria-pressed={on}
+                        title={build ? `Draw as ${label.toLowerCase()}` : 'Decide from appearance or voice'}
+                        onClick={() => updateCurrent({ figure: build ? { build } : undefined })}
+                        className={`relative rounded px-2 py-0.5 glyph-button ${on ? 'glyph-on font-semibold' : ''}`}
+                      >
+                        {label}
+                        {!build && on ? ` (${figureBuildFor({ ...current, figure: undefined })})` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Identity & Prompt Fields */}

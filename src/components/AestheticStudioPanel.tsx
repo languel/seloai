@@ -321,6 +321,31 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
                 </div>
               </div>
               <div>
+                <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
+                  Walking figures
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {(
+                    [
+                      [false, 'Always face us', 'The original front-facing figures'],
+                      [true, 'Turn as they walk', 'Side-on walking left and right, from behind walking away'],
+                    ] as const
+                  ).map(([value, label, hint]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      title={hint}
+                      aria-pressed={settings.figureTurns === value}
+                      onClick={() => onChange({ ...settings, figureTurns: value })}
+                      className="rounded border px-1.5 py-1 text-[10px]"
+                      style={pillBtnStyle(settings.figureTurns === value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <div className="mb-0.5 flex items-center justify-between text-[10px]">
                   <span style={{ color: tokens.hudMutedColor }}>All Character Size</span>
                   <button

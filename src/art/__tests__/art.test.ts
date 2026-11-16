@@ -5,7 +5,8 @@ import { GLYPH_NAMES, glyphShapes } from '../glyphs';
 import { lettering, letteringWidth } from '../lettering';
 import { PALETTES } from '../looks';
 import { bubbleTail } from '../overlayChrome';
-import { EXPRESSIONS, cloth, figure, treeOfLife } from '../motifs';
+import { EXPRESSIONS, figure, figureParts } from '../figures';
+import { cloth, treeOfLife } from '../motifs';
 import { buildSceneModel } from '../scene';
 import { sceneShapes } from '../sceneArt';
 import { bounds, mirrored, place, type Shape } from '../shapes';
@@ -117,5 +118,56 @@ describe('bubble tails', () => {
       expect(y).toBeGreaterThanOrEqual(box.y);
       expect(y).toBeLessThanOrEqual(box.y + box.h);
     }
+  });
+});
+
+describe('figures in builds and views', () => {
+  it('draws the skirted front figure exactly as before the views were added', async () => {
+    const { createHash } = await import('node:crypto');
+    const expected: Record<number, string> = {
+      1: '66930031b79e8c30',
+      5: '3b6f576ae0aa8ed4',
+      7: '56f290af71ce5b1c',
+      11: '99beb35f3e49ddbe',
+      42: 'f7aa6037cd8f62e2',
+      99: '45881695e86b3e43',
+      1234: 'ad116a7a58650d5d',
+      98765: '497964fb04a2ea0b',
+    };
+    for (const [seed, hash] of Object.entries(expected)) {
+      const json = JSON.stringify(figure(createSeededRng(Number(seed)), { height: 30 }));
+      expect(createHash('sha1').update(json).digest('hex').slice(0, 16), `seed ${seed}`).toBe(hash);
+    }
+  });
+
+  it('keeps a person the same across views: same lean, resting mood and skin tone', () => {
+    for (const build of ['skirted', 'trousered'] as const) {
+      const front = figureParts(createSeededRng(21), { height: 30, build });
+      for (const view of ['side', 'back'] as const) {
+        const other = figureParts(createSeededRng(21), { height: 30, build, view });
+        expect(other.lean).toBe(front.lean);
+        expect(other.restingExpression).toBe(front.restingExpression);
+        const tones = (parts: typeof front) =>
+          new Set(parts.head.filter((s) => s.kind === 'area' && s.ink === 'skin').map((s) => (s.kind === 'area' ? s.tone : -1)));
+        expect([...tones(other)]).toEqual([...tones(front)]);
+      }
+    }
+  });
+
+  it('shows a face from the front and side, and none from the back', () => {
+    const eyes = (view: 'front' | 'side' | 'back') =>
+      figureParts(createSeededRng(3), { height: 30, view, expression: 'calm' }).head.filter((s) => s.kind === 'knot' && s.ink === 'dark').length;
+    expect(eyes('front')).toBe(2);
+    expect(eyes('side')).toBe(1);
+    expect(eyes('back')).toBe(0);
+  });
+
+  it('gives a trousered figure two long legs and hides the far arm side-on', () => {
+    const man = figureParts(createSeededRng(8), { height: 30, build: 'trousered' });
+    const legTop = Math.min(...man.legLeft.flatMap((s) => (s.kind === 'area' ? s.points.map((p) => p[1]) : [])));
+    expect(legTop).toBeLessThan(-30 * 0.3);
+    const side = figureParts(createSeededRng(8), { height: 30, build: 'trousered', view: 'side' });
+    expect(side.armLeft.length).toBe(0);
+    expect(side.armRight.length).toBeGreaterThan(0);
   });
 });

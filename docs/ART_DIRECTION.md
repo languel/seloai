@@ -348,8 +348,34 @@ Done since the first pass:
 - **Expressions from the simulation.** `expressionFor(state, line)` maps thinking to `sly`,
   listening and conversing to `calm`, and speaking to `grim`, `awed` or `glad` from a small
   word list and a trailing question mark. Otherwise the resting expression shows.
-- **Lab.** `/art-lab.html?seed=11&only=motion` animates walk, idle, two kinds of speech,
-  thinking and listening in line art and thread.
+- **Lab.** `/art-lab.html?seed=11&only=motion` animates a woman and a man walking toward
+  us, side-on and away, then idle, speaking and thinking, in line art and thread.
+- **Men as well as women** (owner request). The figure code moved to `src/art/figures.ts`.
+  `FigureOptions.build` is `skirted` (the original bell skirt and bodice) or `trousered`:
+  an undyed shirt with folds, a vest in the bodice ink (or outlined with buttons), a red
+  sash with a gold line, a shirt tail or short tunic below it, trousers (dark, blue, or
+  undyed with a braided seam), leg wraps tied with cords, and boots. Men's headwear comes
+  from the same seeded choice: a fur kalpak, a flat cap with a gold band, horns, or bare
+  with a flower at the ear; long hair becomes a curled moustache. `figureBuildFor(cfg)`
+  picks the build: `VillagerConfig.figure.build` if set (the Characters tab has an Auto /
+  Skirted / Trousered switch), else `appearance.bottomStyle`, else `appearance.gender`,
+  else `voice.gender`, else skirted. The player follows their attire.
+- **Side and back views** (owner request, an alternative that keeps the front style).
+  `FigureOptions.view` is `front`, `side` (profile facing right, mirrored for left) or
+  `back`. Side-on: the skirt and torso are squeezed, one eye and a nose break the outline,
+  hair sweeps back, the far arm is hidden and the near arm hangs forward. From behind: hair
+  covers the crown (cropped at the nape for men), no face, no apron or placket. All traits
+  are drawn first in a fixed order (`drawTraits`), so a person is identical in every view
+  and mood, and a regression test pins the skirted front figure to its earlier output.
+  `chooseFigureView(motion, turning)` shows the side view walking left or right and the
+  back walking up; standing, talking and listening figures turn back to face us 0.6 s after
+  stopping. A view change squashes the figure through its edge. Each leg is now its own part
+  swinging from the hip (a full stride side-on, a shuffle under a skirt). The Style panel's
+  "Walking figures" switch (`AestheticSettings.figureTurns`) turns this off.
+- **Portraits match the world.** `figurePortrait(id, look, size, build, framing)` draws the
+  same figure, head and shoulders or whole, on a transparent ground. The village roster and
+  the Characters tab roster use it in the art looks, and the Characters tab's four-direction
+  walk preview animates the real rig on linen or paper instead of the old sprite sheet.
 
 What is wrong and needs doing, in priority order:
 
@@ -384,7 +410,11 @@ What is wrong and needs doing, in priority order:
 7. **Legibility at game size.** Faces and garment patterns vanish in the thread looks at
    normal zoom. Options: simplify detail by size (a level-of-detail switch in `figure`),
    enlarge heads further at small sizes, or thicken face marks relative to thread width.
-8. Men, children and elders. Every figure is currently a skirted adult.
+8. ~~Men~~ done (trousered build). Children and elders still to do: scale and proportion
+   from the seed or cast data (a shorter figure with a larger head; a stoop and a stick).
+9. **Side and back views, next.** The profile is a squeezed front; a true profile skirt
+   (hem flaring behind) and a profile apron would read better. Turning also wants a
+   three-quarter step between front and side.
 
 ---
 
@@ -669,7 +699,8 @@ one has missed the point.
 2. ~~Glyph toolbar~~: done for the header and village toolbar (section 10, item 0).
 3. **Interface restyle** (section 10). The owner named it. Bubbles and labels are done;
    next the shared primitives (panel, tab, slider, tooltip), then the HUD, then panels.
-4. **Cast-specific figures** (section 7, item 3), starting with Lamia.
+4. **Cast-specific figures** (section 7, item 5), starting with Lamia. Men and side and back
+   views are done (section 7).
 5. **Ambient density**: groves, villages with yards, fields (section 8.2), with depth
    sorting so characters walk among them. The owner named it.
 6. **Wang chunks** for coherent, varied, seeded worlds (section 8.1). The owner named it.

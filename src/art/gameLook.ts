@@ -5,7 +5,7 @@
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
-import { figureParts, type Expression, type FigureParts } from './motifs';
+import { figureParts, type Expression, type FigureBuild, type FigureParts, type FigureView } from './figures';
 import { buildSceneModel, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { bounds, type Pt, type Shape } from './shapes';
@@ -54,8 +54,8 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
   return canvas;
 }
 
-type PartName = 'legs' | 'skirt' | 'torso' | 'head' | 'armLeft' | 'armRight';
-const PART_ORDER: readonly PartName[] = ['legs', 'skirt', 'torso', 'head', 'armLeft', 'armRight'];
+type PartName = 'legLeft' | 'legRight' | 'skirt' | 'torso' | 'head' | 'armLeft' | 'armRight';
+const PART_ORDER: readonly PartName[] = ['legLeft', 'legRight', 'skirt', 'torso', 'head', 'armLeft', 'armRight'];
 
 interface PartSprite {
   canvas: HTMLCanvasElement;
@@ -72,6 +72,13 @@ export interface FigureRig {
   height: number;
   /** Canvas pixels per screen pixel. */
   density: number;
+  build: FigureBuild;
+  view: FigureView;
+}
+
+export interface FigureLooks {
+  build?: FigureBuild;
+  view?: FigureView;
 }
 
 /** How tall an art figure stands, in map cells, at character scale 1. */
@@ -104,17 +111,23 @@ function renderPart(shapes: Shape[], look: PaletteName, unit: number, seed: numb
  * A character's rig in a look, generated from their id. The body is cached once per look
  * and size; only the head is redrawn for each expression.
  */
-export function getFigureRig(id: string, look: PaletteName, heightPx: number, expression?: Expression): FigureRig {
+export function getFigureRig(
+  id: string,
+  look: PaletteName,
+  heightPx: number,
+  expression?: Expression,
+  { build = 'skirted', view = 'front' }: FigureLooks = {},
+): FigureRig {
   const size = Math.max(16, Math.round(heightPx));
   const seed = hashString(id);
-  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS });
+  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view });
   const mood = expression ?? resting.restingExpression;
-  const key = `${id}|${look}|${size}|${mood}`;
+  const key = `${id}|${look}|${size}|${build}|${view}|${mood}`;
   const cached = rigCache.get(key);
   if (cached) return cached;
 
   const unit = (size / FIGURE_UNITS) * DENSITY;
-  const bodyKey = `${id}|${look}|${size}|body`;
+  const bodyKey = `${id}|${look}|${size}|${build}|${view}|body`;
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
@@ -127,10 +140,14 @@ export function getFigureRig(id: string, look: PaletteName, heightPx: number, ex
         neck: toPx(resting.pivots.neck),
         shoulderLeft: toPx(resting.pivots.shoulderLeft),
         shoulderRight: toPx(resting.pivots.shoulderRight),
+        hipLeft: toPx(resting.pivots.hipLeft),
+        hipRight: toPx(resting.pivots.hipRight),
       },
       lean: resting.lean,
       height: size,
       density: DENSITY,
+      build,
+      view,
     };
     rigCache.set(bodyKey, body);
   }
@@ -141,7 +158,7 @@ export function getFigureRig(id: string, look: PaletteName, heightPx: number, ex
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view }).head, look, unit, seed),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
@@ -182,6 +199,34 @@ interface MotionMemory {
   talk: number;
   think: number;
   time: number;
+  view: FigureView;
+  /** When the view last changed, for the quick squash that sells the turn. */
+  viewChangedAt: number;
+  /** When the figure last moved, so it turns back to face us a moment after stopping. */
+  lastMovedAt: number;
+}
+
+/** How long a figure keeps its walking view after stopping before turning to face us. */
+const FACE_FRONT_AFTER = 0.6;
+
+/**
+ * Which way a figure is drawn this frame. With turning on, walking left or right shows the
+ * profile and walking up shows the back; standing, talking or listening faces us, which is
+ * the charming front view the cast was designed in.
+ */
+export function chooseFigureView(motion: Pick<FigureMotion, 'id' | 'facing' | 'moving' | 'time'>, turning: boolean): FigureView {
+  if (!turning) return 'front';
+  const memory = motionMemory.get(motion.id);
+  const wanted: FigureView = motion.moving
+    ? motion.facing === 'left' || motion.facing === 'right'
+      ? 'side'
+      : motion.facing === 'up'
+        ? 'back'
+        : 'front'
+    : memory && motion.time - memory.lastMovedAt < FACE_FRONT_AFTER
+      ? memory.view
+      : 'front';
+  return wanted;
 }
 
 const motionMemory = new Map<string, MotionMemory>();
@@ -216,9 +261,17 @@ export function paintRig(
   tileDim: number,
   motion: FigureMotion,
 ) {
-  const memory = motionMemory.get(motion.id) ?? { move: 0, flip: 1, talk: 0, think: 0, time: motion.time };
+  const memory =
+    motionMemory.get(motion.id) ??
+    { move: 0, flip: 1, talk: 0, think: 0, time: motion.time, view: rig.view, viewChangedAt: -10, lastMovedAt: -10 };
   const dt = Math.max(0, Math.min(0.1, motion.time - memory.time));
   memory.time = motion.time;
+  if (motion.moving) memory.lastMovedAt = motion.time;
+  if (memory.view !== rig.view) {
+    memory.view = rig.view;
+    memory.viewChangedAt = motion.time;
+  }
+  const turnIn = Math.min(1, (motion.time - memory.viewChangedAt) * 7);
   memory.move = approach(memory.move, motion.moving ? 1 : 0, 5, dt);
   const flipTarget = motion.facing === 'left' ? -1 : motion.facing === 'right' ? 1 : memory.flip >= 0 ? 1 : -1;
   memory.flip = approach(memory.flip, flipTarget, 9, dt);
@@ -242,7 +295,8 @@ export function paintRig(
   const squashY = 1 - move * 0.06 * contact + still * 0.01 * breath;
   const squashX = 1 + move * 0.05 * contact - still * 0.006 * breath;
   const facingSign = memory.flip >= 0 ? 1 : -1;
-  const turnScale = Math.sign(memory.flip || 1) * Math.max(0.12, Math.abs(memory.flip));
+  // Changing view squashes the figure through its edge for a moment, like turning round.
+  const turnScale = Math.sign(memory.flip || 1) * Math.max(0.12, Math.abs(memory.flip)) * (0.35 + 0.65 * turnIn);
   const bodyRotate = rig.lean + move * 0.07 * facingSign + still * Math.sin(t * 0.6 + phase) * 0.012;
 
   ctx.save();
@@ -251,12 +305,23 @@ export function paintRig(
   ctx.rotate(bodyRotate);
   ctx.scale(turnScale * squashX, squashY);
 
-  const { waist, neck, shoulderLeft, shoulderRight } = rig.pivots;
+  const { waist, neck, shoulderLeft, shoulderRight, hipLeft, hipRight } = rig.pivots;
   const density = rig.density;
+  const side = rig.view === 'side';
 
+  // Legs swing from the hip in opposite phase: a real stride side-on, a small shuffle under
+  // a skirt from the front or back.
+  const legSwing = move * step * (side ? 0.5 : rig.build === 'trousered' ? 0.16 : 0.1);
+  const legShift = side ? 0 : move * step * h * 0.012;
   ctx.save();
-  ctx.translate(move * step * h * 0.018, 0);
-  drawPart(ctx, rig.parts.legs, density);
+  ctx.translate(legShift, 0);
+  aboutPivot(ctx, hipLeft, legSwing);
+  drawPart(ctx, rig.parts.legLeft, density);
+  ctx.restore();
+  ctx.save();
+  ctx.translate(-legShift, 0);
+  aboutPivot(ctx, hipRight, -legSwing);
+  drawPart(ctx, rig.parts.legRight, density);
   ctx.restore();
 
   ctx.save();
@@ -284,7 +349,8 @@ export function paintRig(
   drawPart(ctx, rig.parts.head, density);
   ctx.restore();
 
-  const swing = move * step * 0.38;
+  // Side-on, the near arm swings against the near (right) leg.
+  const swing = move * step * (side ? 0.55 : 0.38);
   const drift = still * Math.sin(t * 1.1 + phase) * 0.045;
   ctx.save();
   ctx.translate(0, neckRise);
@@ -349,4 +415,66 @@ export function clothOverlayColours(look: PaletteName) {
     poiText: lineLook ? dark : mix(primary, dark, 0.35),
     poiGemFill: primary,
   };
+}
+
+/**
+ * Whether a character is drawn skirted or trousered, from what the cast data says: an
+ * explicit figure build first, then a bottom style, then the character's gender, then their voice. With nothing
+ * to go on, the original skirted figure.
+ */
+export function figureBuildFor(cfg?: {
+  figure?: { build?: FigureBuild };
+  appearance?: { gender?: string; bottomStyle?: string };
+  voice?: { gender?: string };
+}): FigureBuild {
+  if (cfg?.figure?.build) return cfg.figure.build;
+  const bottom = cfg?.appearance?.bottomStyle;
+  if (bottom === 'skirt') return 'skirted';
+  if (bottom === 'trousers' || bottom === 'breeches') return 'trousered';
+  const gender = cfg?.appearance?.gender ?? cfg?.voice?.gender;
+  return gender === 'male' ? 'trousered' : 'skirted';
+}
+
+/** The player's build from their chosen attire: the hero and the kuker wear trousers. */
+export function playerFigureBuild(attire: string): FigureBuild {
+  return attire === 'balkan-yunak' || attire === 'kuker-wanderer' || attire === 'classic-traveler' ? 'trousered' : 'skirted';
+}
+
+const portraitCache = new Map<string, HTMLCanvasElement>();
+
+/**
+ * A character's portrait in a look, drawn from the same figure as in the world: head and
+ * shoulders (`bust`) for lists, or the whole figure. Transparent ground; `sizePx` square.
+ */
+export function figurePortrait(
+  id: string,
+  look: PaletteName,
+  sizePx: number,
+  build: FigureBuild,
+  framing: 'bust' | 'full' = 'bust',
+  pixelRatio = 2,
+): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const px = Math.max(8, Math.round(sizePx * pixelRatio));
+  const key = `${id}|${look}|${px}|${build}|${framing}`;
+  const hit = portraitCache.get(key);
+  if (hit) return hit;
+  const seed = hashString(id);
+  const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build });
+  const shapes = [...parts.legLeft, ...parts.legRight, ...parts.skirt, ...parts.torso, ...parts.head, ...parts.armLeft, ...parts.armRight];
+  const box = bounds(shapes);
+  const top = box.minY - 0.6;
+  const bottom = framing === 'bust' ? parts.pivots.waist[1] + FIGURE_UNITS * 0.06 : box.maxY + 0.6;
+  const span = bottom - top;
+  const unit = px / span;
+  const canvas = document.createElement('canvas');
+  canvas.width = px;
+  canvas.height = px;
+  const ctx = canvas.getContext('2d')!;
+  const options: LookOptions = { unit, origin: [px / 2, -top * unit], palette: PALETTES[look], seed };
+  if (isThread(look)) renderEmbroidery(ctx, shapes, options);
+  else renderLineArt(ctx, shapes, options);
+  if (portraitCache.size > 120) portraitCache.clear();
+  portraitCache.set(key, canvas);
+  return canvas;
 }

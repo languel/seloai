@@ -980,6 +980,8 @@ export function App() {
             map={map}
             settings={settings}
             onApplyVillagers={handleApplyVillagers}
+            worldLook={aestheticSettings.worldLook}
+            figureTurns={aestheticSettings.figureTurns}
           />
         )}
         {tab === 'monitor' && (

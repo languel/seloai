@@ -69,6 +69,8 @@ export interface AestheticSettings {
   deoverlapLabels: boolean;
   /** How the world and its characters are drawn. */
   worldLook: WorldLook;
+  /** In the art looks, show walking figures side-on and from behind, not only from the front. */
+  figureTurns: boolean;
   player: PlayerAppearanceConfig;
 }
 
@@ -96,6 +98,7 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   characterScale: 1.15,
   deoverlapLabels: true,
   worldLook: 'festive',
+  figureTurns: true,
   player: { ...DEFAULT_PLAYER_APPEARANCE },
 };
 
@@ -386,6 +389,7 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
         : DEFAULT_AESTHETIC_SETTINGS.showDecorations,
     characterScale: clamp(raw?.characterScale, 0.85, 1.35, DEFAULT_AESTHETIC_SETTINGS.characterScale),
     worldLook: isWorldLook(raw?.worldLook) ? raw!.worldLook : DEFAULT_AESTHETIC_SETTINGS.worldLook,
+    figureTurns: typeof raw?.figureTurns === 'boolean' ? raw.figureTurns : DEFAULT_AESTHETIC_SETTINGS.figureTurns,
     deoverlapLabels:
       typeof raw?.deoverlapLabels === 'boolean'
         ? raw.deoverlapLabels

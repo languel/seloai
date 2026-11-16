@@ -1,5 +1,9 @@
 import {
   FIGURE_HEIGHT_SCALE,
+  chooseFigureView,
+  figureBuildFor,
+  figurePortrait,
+  playerFigureBuild,
   clothOverlayColours,
   expressionFor,
   getFigureRig,
@@ -12,6 +16,7 @@ import { tileSemanticsForMap } from '../world/packs';
 import { Glyph, GlyphButton, GlyphTip } from './Glyph';
 import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
+import type { PaletteName } from '../art/looks';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useEffect, useRef, useState } from 'react';
@@ -217,10 +222,25 @@ function SubtitleBox({ stitched, ...rest }: React.HTMLAttributes<HTMLDivElement>
   return stitched ? <StitchPanel {...rest} /> : <div {...rest} />;
 }
 
-const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number }> = ({
+/** The character's head and shoulders, drawn from the same figure as in the world. */
+const FigurePortraitThumb: React.FC<{ villager: VillagerConfig; look: PaletteName; size: number }> = ({ villager, look, size }) => {
+  const src = React.useMemo(() => {
+    const ratio = typeof window === 'undefined' ? 2 : Math.max(2, Math.ceil(window.devicePixelRatio || 1));
+    return figurePortrait(villager.id, look, size, figureBuildFor(villager), 'bust', ratio)?.toDataURL() ?? '';
+  }, [villager, look, size]);
+  return <img src={src} width={size} height={size} alt="" aria-hidden="true" className="shrink-0" style={{ width: size, height: size }} />;
+};
+
+const VillagerAvatarThumb: React.FC<{ villager: VillagerConfig; size?: number; look?: PaletteName }> = ({
   villager,
   size = 28,
+  look,
 }) => {
+  if (look) return <FigurePortraitThumb villager={villager} look={look} size={size} />;
+  return <SpriteAvatarThumb villager={villager} size={size} />;
+};
+
+const SpriteAvatarThumb: React.FC<{ villager: VillagerConfig; size: number }> = ({ villager, size }) => {
   const thumbRef = useRef<HTMLCanvasElement | null>(null);
   const frame = villager.customSprite
     ? getCustomSpriteFrame(villager.customSprite, 'down', 0, false)
@@ -791,20 +811,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
         worldLook === 'tiles'
           ? undefined
           : (bodyCtx, body) => {
-              const rig = getFigureRig(
-                body.id,
-                worldLook,
-                body.tileDim * body.scale * FIGURE_HEIGHT_SCALE,
-                expressionFor(body.state, body.line),
-              );
-              paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, {
+              const motion = {
                 id: body.id,
                 facing: body.facing,
                 moving: body.moving,
                 animFrame: body.animFrame,
                 state: body.state,
                 time: timeSec,
-              });
+              };
+              const cfg = sim.configs.get(body.id);
+              const build = cfg ? figureBuildFor(cfg) : playerFigureBuild(aestheticSettings.player.attire);
+              const rig = getFigureRig(
+                body.id,
+                worldLook,
+                body.tileDim * body.scale * FIGURE_HEIGHT_SCALE,
+                expressionFor(body.state, body.line),
+                { build, view: chooseFigureView(motion, aestheticSettings.figureTurns) },
+              );
+              paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, motion);
             };
 
       // Collect deferred Y-sorted character sprites + measure labels and bubbles
@@ -1828,7 +1852,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         : 'border-borderFolk bg-surface hover:border-ink/30'
                     }`}
                   >
-                    <VillagerAvatarThumb villager={v} size={46} />
+                    <VillagerAvatarThumb villager={v} size={46} look={aestheticSettings.worldLook === 'tiles' ? undefined : aestheticSettings.worldLook} />
                     <div className="min-w-0 flex-1 py-0.5">
                       <div className="flex items-center gap-1.5">
                         <span

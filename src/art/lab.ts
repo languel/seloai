@@ -8,7 +8,8 @@ import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type PaletteName
 import { lettering, ribbon } from './lettering';
 import { GLYPH_NAMES } from './glyphs';
 import { glyphDataUrl } from './glyphRender';
-import { cloth, figure, treeOfLife } from './motifs';
+import { figure, type FigureView } from './figures';
+import { cloth, treeOfLife } from './motifs';
 import { place, type Shape } from './shapes';
 
 type LookName = 'line' | 'thread';
@@ -121,21 +122,23 @@ if (!only || only === 'lettering') {
   );
 }
 
-// Motion: the rig walking, idling, talking and thinking, in two looks, animated live.
+// Motion: women and men walking toward us, side-on and away, then idling, talking and
+// thinking, animated live in two looks.
 if (!only || only === 'motion') {
-  const states = [
-    { label: 'walking', state: 'walking', moving: true },
-    { label: 'idle', state: 'idle', moving: false },
-    { label: 'speaking', state: 'speaking', moving: false, line: 'Welcome, friend, the rain is coming!' },
-    { label: 'speaking, grim', state: 'speaking', moving: false, line: 'Never cross the well after dark.' },
-    { label: 'thinking', state: 'thinking', moving: false },
-    { label: 'listening', state: 'listening', moving: false },
+  type Cell = { label: string; state: string; facing: 'down' | 'left' | 'right' | 'up'; moving: boolean; line?: string; view: FigureView };
+  const cells: Cell[] = [
+    { label: 'walk toward', state: 'walking', facing: 'down', moving: true, view: 'front' },
+    { label: 'walk side-on', state: 'walking', facing: 'right', moving: true, view: 'side' },
+    { label: 'walk away', state: 'walking', facing: 'up', moving: true, view: 'back' },
+    { label: 'idle', state: 'idle', facing: 'down', moving: false, view: 'front' },
+    { label: 'speaking', state: 'speaking', facing: 'down', moving: false, line: 'Welcome, friend, the rain is coming!', view: 'front' },
+    { label: 'thinking', state: 'thinking', facing: 'down', moving: false, view: 'front' },
   ];
   const panels = (['ink', 'festive'] as const).map((look) => {
     const wrap = document.createElement('figure');
     const canvas = document.createElement('canvas');
     const width = 760;
-    const height = 200;
+    const height = 380;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = width * dpr;
     canvas.height = height * dpr;
@@ -143,8 +146,6 @@ if (!only || only === 'motion') {
     canvas.style.height = `${height}px`;
     const ctx = canvas.getContext('2d')!;
     const tile = 64;
-    let walkX = 0;
-    let walkDir = 1;
     let stride = 0;
     let last = performance.now();
     const tick = (nowMs: number) => {
@@ -157,25 +158,26 @@ if (!only || only === 'motion') {
         ctx.fillStyle = PALETTES[look].ground;
         ctx.fillRect(0, 0, width, height);
       }
-      walkX += walkDir * dt * 40;
       stride += dt * 6;
-      if (walkX > 50 || walkX < -50) walkDir *= -1;
-      states.forEach((entry, i) => {
-        const id = `lab-${seed}-${i}`;
-        const rig = getFigureRig(id, look, tile * 1.75, expressionFor(entry.state, entry.line));
-        const x = 50 + i * 120 + (entry.moving ? walkX : 0);
-        paintRig(ctx, rig, x, 92, tile, {
-          id: `${id}-${look}`,
-          facing: entry.moving ? (walkDir > 0 ? 'right' : 'left') : 'down',
-          moving: entry.moving,
-          animFrame: entry.moving ? stride : 0,
-          state: entry.state,
-          time: nowMs / 1000,
+      (['skirted', 'trousered'] as const).forEach((build, row) => {
+        cells.forEach((cell, i) => {
+          const id = `lab-${seed}-${build}-${i}`;
+          const rig = getFigureRig(`lab-${seed + row * 3}`, look, tile * 1.75, expressionFor(cell.state, cell.line), { build, view: cell.view });
+          const x = 50 + i * 120;
+          const y = 92 + row * 180;
+          paintRig(ctx, rig, x, y, tile, {
+            id: `${id}-${look}`,
+            facing: cell.facing,
+            moving: cell.moving,
+            animFrame: cell.moving ? stride : 0,
+            state: cell.state,
+            time: nowMs / 1000,
+          });
+          ctx.fillStyle = look === 'festive' ? '#3a2e24' : '#6b655c';
+          ctx.font = '11px ui-sans-serif, system-ui';
+          ctx.textAlign = 'center';
+          ctx.fillText(cell.label, x + tile / 2, y + 96);
         });
-        ctx.fillStyle = look === 'festive' ? '#3a2e24' : '#6b655c';
-        ctx.font = '11px ui-sans-serif, system-ui';
-        ctx.textAlign = 'center';
-        ctx.fillText(entry.label, 50 + i * 120 + tile / 2, 188);
       });
       requestAnimationFrame(tick);
     };
@@ -185,14 +187,14 @@ if (!only || only === 'motion') {
     wrap.append(canvas, caption);
     return wrap;
   });
-  row('Motion: walk, idle, talk and think', panels);
+  row('Motion: a woman and a man, toward us, side-on and away, idle, talking, thinking', panels);
 }
 
 // A cast: every seed is a different person.
 if (!only || only === 'figures') {
   const castRng = createSeededRng(seed * 31 + 5);
   const cast: Shape[] = [];
-  for (let i = 0; i < 7; i++) cast.push(...place(figure(castRng, { height: 30 }), { dx: i * 26 }));
+  for (let i = 0; i < 7; i++) cast.push(...place(figure(castRng, { height: 30, build: i % 2 ? 'trousered' : 'skirted' }), { dx: i * 26 }));
   row(
     'Figures: a generated cast',
     (['ink', 'redBlack', 'festive'] as const).map((palette) =>
