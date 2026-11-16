@@ -331,8 +331,10 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
           const sx = ax + ux * d;
           const sy = ay + uy * d;
           const slant = 0.2;
-          const ex = sx + (ux * Math.cos(slant) - uy * Math.sin(slant)) * stitch;
-          const ey = sy + (ux * Math.sin(slant) + uy * Math.cos(slant)) * stitch;
+          // A stitch never runs past the end of its segment, so corners stay clean.
+          const reach = Math.min(stitch, Math.max(stitch * 0.35, length - d));
+          const ex = sx + (ux * Math.cos(slant) - uy * Math.sin(slant)) * reach;
+          const ey = sy + (ux * Math.sin(slant) + uy * Math.cos(slant)) * reach;
           ctx.strokeStyle = 'rgba(40, 26, 12, 0.2)';
           ctx.lineWidth = width;
           ctx.beginPath();

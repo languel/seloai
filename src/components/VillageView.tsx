@@ -9,38 +9,27 @@ import {
 } from '../art/gameLook';
 import type { BodyPainter } from '../engine/renderer';
 import { tileSemanticsForMap } from '../world/packs';
+import { Glyph, GlyphButton, GlyphLookContext, GlyphTip } from './Glyph';
+import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
-  Bug,
   Captions,
   ChevronDown,
   ChevronRight,
-  Cloud,
-  Compass,
-  Headphones,
   LayoutList,
-  MessageSquare,
   Mic,
   MicOff,
-  Pause,
-  Play,
-  RotateCcw,
   Send,
-  Shuffle,
-  Tag,
   Volume2,
   VolumeX,
   X,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 import { useAutoScrollToBottom } from '../hooks/useAutoScrollToBottom';
 import { resolvePublicUrl } from '../utils/assetUrl';
-import { Gauge as PerfGaugeIcon } from 'lucide-react';
 import { perfMemoryTracker, type PerfMemorySnapshot } from '../engine/perfMemoryTracker';
 import {
   generateProceduralPlayerCustomSprite,
@@ -1367,11 +1356,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
         {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
         <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
+          <GlyphLookContext.Provider value={glyphLookFor(aestheticSettings.worldLook, isLightColour(aestheticTokens.hudTextColor))}>
           <div
             role="toolbar"
             aria-label="Village simulation controls"
             style={aestheticTokens.hudStyle}
-            className={`pointer-events-auto relative flex min-w-0 flex-wrap items-center gap-1 overflow-hidden rounded-md px-2 py-1.5 ${
+            className={`pointer-events-auto relative flex min-w-0 flex-wrap items-center gap-1 rounded-md px-2 py-1.5 ${
               aestheticSettings.showDecorations ? 'pt-2' : ''
             }`}
           >
@@ -1383,8 +1373,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
               />
             )}
 
-            <button
-              type="button"
+            <GlyphButton
+              glyph={sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? 'play' : 'pause'}
+              label={sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? 'Resume simulation' : 'Pause simulation'}
+              size={17}
               onClick={() => {
                 if (sim.paused) {
                   if (Math.abs(sim.speedMultiplier) < 0.001) {
@@ -1396,17 +1388,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 }
                 setTick((t) => t + 1);
               }}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition hover:bg-white/10"
-              style={{ color: aestheticTokens.hudTextColor }}
-              aria-label={sim.paused ? 'Resume simulation' : 'Pause simulation'}
-            >
-              {sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? (
-                <Play className="h-3.5 w-3.5 text-emerald-400" />
-              ) : (
-                <Pause className="h-3.5 w-3.5" style={{ color: aestheticTokens.accentHex }} />
-              )}
-              <span>{sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? 'Resume' : 'Pause'}</span>
-            </button>
+            />
 
             <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />
 
@@ -1517,136 +1499,38 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
             <div className="h-4 w-px" style={{ backgroundColor: aestheticTokens.hudBorderColor }} />
 
-            <button
-              type="button"
+            <GlyphButton
+              glyph="zoomIn"
+              label="Zoom in"
               onClick={() => {
                 cameraRef.current.anchor = null;
                 cameraRef.current.targetZoom = Math.min(3.5, cameraRef.current.targetZoom * 1.18);
               }}
-              className="rounded p-1 transition hover:bg-white/10"
-              style={{ color: aestheticTokens.hudTextColor }}
-              aria-label="Zoom in"
-            >
-              <ZoomIn className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
+            />
+            <GlyphButton
+              glyph="zoomOut"
+              label="Zoom out"
               onClick={() => {
                 cameraRef.current.anchor = null;
                 cameraRef.current.targetZoom = Math.max(0.45, cameraRef.current.targetZoom / 1.18);
               }}
-              className="rounded p-1 transition hover:bg-white/10"
-              style={{ color: aestheticTokens.hudTextColor }}
-              aria-label="Zoom out"
-            >
-              <ZoomOut className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowPaths((p) => !p)}
-              aria-pressed={showPaths}
-              style={
-                showPaths
-                  ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <Bug className="h-3.5 w-3.5" />
-              <span>Paths</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowLabels((l) => !l)}
-              aria-pressed={showLabels}
-              title="Toggle character and POI labels on map"
-              style={
-                showLabels
-                  ? { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Labels</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSpeechBubbles((s) => !s)}
-              aria-pressed={showSpeechBubbles}
-              title="Toggle speech bubbles over villagers"
-              style={
-                showSpeechBubbles
-                  ? { backgroundColor: aestheticTokens.activeSpeechBg, color: aestheticTokens.activeSpeechText, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Speech</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowThoughtBubbles((t) => !t)}
-              aria-pressed={showThoughtBubbles}
-              title="Toggle dashed thought bubbles over villagers"
-              style={
-                showThoughtBubbles
-                  ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Thoughts</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowScribeSubtitles((s) => !s)}
-              aria-pressed={showScribeSubtitles}
-              title="Toggle docked Scribe subtitle narration bar"
-              style={
-                showScribeSubtitles
-                  ? { backgroundColor: aestheticTokens.activeSubtitleBg, color: aestheticTokens.activeSubtitleText, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <Captions className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Subtitles</span>
-            </button>
-            <button
-              type="button"
+            />
+            <GlyphButton glyph="paths" label="Show walking paths" pressed={showPaths} dimOff onClick={() => setShowPaths((p) => !p)} />
+            <GlyphButton glyph="labels" label="Show character and place labels" pressed={showLabels} dimOff onClick={() => setShowLabels((l) => !l)} />
+            <GlyphButton glyph="speech" label="Show speech bubbles" pressed={showSpeechBubbles} dimOff onClick={() => setShowSpeechBubbles((s) => !s)} />
+            <GlyphButton glyph="thoughts" label="Show thought bubbles" pressed={showThoughtBubbles} dimOff onClick={() => setShowThoughtBubbles((t) => !t)} />
+            <GlyphButton glyph="subtitles" label="Show the Scribe's subtitles" pressed={showScribeSubtitles} dimOff onClick={() => setShowScribeSubtitles((s) => !s)} />
+            <GlyphButton
+              glyph="follow"
+              label="Follow the selected character"
+              pressed={followSelected}
+              dimOff
               onClick={() => {
                 setFollowSelected((f) => !f);
                 centerOnSelected();
               }}
-              aria-pressed={followSelected}
-              style={
-                followSelected
-                  ? { backgroundColor: aestheticTokens.activeSubtitleBg, color: aestheticTokens.activeSubtitleText, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <Compass className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Follow</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowPerfHud((p) => !p)}
-              aria-pressed={showPerfHud}
-              title="Toggle live FPS, Heap & WebGPU memory HUD"
-              style={
-                showPerfHud
-                  ? { backgroundColor: aestheticTokens.activeThoughtBg, color: aestheticTokens.activeThoughtText, fontWeight: 600 }
-                  : { color: aestheticTokens.hudMutedColor }
-              }
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <PerfGaugeIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Perf</span>
-            </button>
+            />
+            <GlyphButton glyph="perf" label="Show frame rate and memory" pressed={showPerfHud} dimOff onClick={() => setShowPerfHud((p) => !p)} />
             <button
               type="button"
               onClick={() => {
@@ -1679,19 +1563,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     )}
               </span>
             </button>
-            <button
-              type="button"
+            <GlyphButton
+              glyph="scatter"
+              label="Scatter villagers around the map"
               onClick={() => {
                 sim.scatterVillagers();
                 setTick((t) => t + 1);
               }}
-              title="Unstick and scatter villagers around the map"
-              style={{ color: aestheticTokens.hudTextColor }}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-white/10"
-            >
-              <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Scatter</span>
-            </button>
+            />
             <div
               role="group"
               aria-label="Eavesdrop distance"
@@ -1704,18 +1583,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
               }}
               className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition"
             >
-              <Headphones
-                className="h-3.5 w-3.5 shrink-0"
-                style={{
-                  color:
-                    settings.proximityRadiusTiles > 0
-                      ? aestheticTokens.poiHighlightHex
-                      : aestheticTokens.hudMutedColor,
-                }}
-                aria-hidden="true"
-              />
-              <label htmlFor="village-eavesdrop-radius" className="whitespace-nowrap font-medium">
-                Eavesdrop
+              <label htmlFor="village-eavesdrop-radius" className="group relative inline-flex cursor-pointer items-center" aria-label="Eavesdrop distance">
+                <span className={settings.proximityRadiusTiles > 0 ? '' : 'opacity-45'}>
+                  <Glyph name="eavesdrop" size={16} />
+                </span>
+                <GlyphTip>Eavesdrop distance</GlyphTip>
               </label>
               <input
                 id="village-eavesdrop-radius"
@@ -1753,8 +1625,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     ? 'All'
                     : `${settings.proximityRadiusTiles}t`}
               </span>
-              <button
-                type="button"
+              <GlyphButton
+                glyph="wholeMap"
+                label="Listen across the whole map"
+                pressed={isWholeMapEavesdrop(settings.proximityRadiusTiles)}
+                dimOff
+                size={15}
                 onClick={() =>
                   onUpdateSettings({
                     proximityRadiusTiles: isWholeMapEavesdrop(settings.proximityRadiusTiles)
@@ -1762,33 +1638,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       : EAVESDROP_WHOLE_MAP_RADIUS,
                   })
                 }
-                aria-pressed={isWholeMapEavesdrop(settings.proximityRadiusTiles)}
-                title="Listen across the whole map"
-                style={
-                  isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                    ? { backgroundColor: '#2c7a52', color: '#ffffff' }
-                    : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudMutedColor }
-                }
-                className="rounded px-1.5 py-0.5 text-[10px] font-semibold transition hover:opacity-90"
-              >
-                Map
-              </button>
-              <button
-                type="button"
-                onClick={() => brainRouter.flushAudioQueue()}
-                title="Flush & reset queued browser/Omni audio"
-                aria-label="Flush audio queue"
-                style={{
-                  backgroundColor: aestheticTokens.hudChipIdleBg,
-                  color: aestheticTokens.hudMutedColor,
-                }}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition hover:opacity-90"
-              >
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
-                <span>Flush</span>
-              </button>
+              />
+              <GlyphButton glyph="flush" label="Flush queued speech audio" size={15} onClick={() => brainRouter.flushAudioQueue()} />
             </div>
           </div>
+          </GlyphLookContext.Provider>
         </div>
 
         {/* Bottom-Center Docked Scribe Subtitle Field */}

@@ -522,7 +522,7 @@ world in every look.
 
 ---
 
-## 10. The interface (started)
+## 10. The interface (started; glyph buttons done)
 
 The owner's instruction: refine the UI "to match the now beautiful world and chars". The
 HUD, speech bubbles, name pills, sidebar and panels predate the art system and now clash
@@ -565,11 +565,26 @@ be covered, and a bubble must stay visibly attached to its speaker.
 
 Direction:
 
-0. **Glyph buttons** (owner request). Prefer an icon to a text label wherever the meaning
-   is clear, with a hover tip. The toolbar still spells out Pause, Paths, Labels, Speech,
-   Thoughts, Subtitles, Follow, Scatter and Eavesdrop. Draw the glyphs with the art system
-   (a small `Shape[]` per icon rendered through the active look) so they match the cloth,
-   rather than using the `lucide-react` set.
+0. **Glyph buttons** (owner request): done for the header and the village toolbar.
+   - `src/art/glyphs.ts` holds one small `Shape[]` per icon (`GlyphName`), in a 16-unit box
+     centred on the origin, ink roles only. Add a glyph there and it appears in the lab
+     (`/art-lab.html?only=glyphs`), drawn in every look at button size and enlarged.
+   - `src/art/glyphRender.ts` draws a glyph through a look into a cached PNG data URL with a
+     transparent ground. `glyphLookFor(worldLook, darkSurface)` picks the look: the night
+     plate on any dark surface, ink for the classic tiles and the night look on a light one,
+     otherwise the world look itself. `isLightColour` reads a surface's text colour.
+   - `src/components/Glyph.tsx`: `Glyph` (an image), `GlyphTip` (a stitched patch tip, no
+     dark slab), `GlyphButton` (icon-only, `label` is both the accessible name and the tip,
+     `pressed` draws a dashed stitched outline, `dimOff` fades the glyph of a show/hide
+     toggle while it is off). `GlyphLookContext` supplies the look: App sets it from the
+     world look and theme, VillageView overrides it for the HUD from `hudTextColor`.
+   - Styles live at the end of `src/index.css` (`.glyph-button`, `.glyph-on`, `.glyph-off`,
+     `.glyph-tip`).
+   - Stem stitches now stop at the end of each segment, which keeps glyph corners (and world
+     corners) free of spurs.
+   - Still text: the speed badge, the POV button (it names the character), the slider marks,
+     the world picker, and every panel, dialog and editor. The other views (Control Room,
+     editors, monitor) still use `lucide-react`; move them over as they are restyled.
 1. **One source of truth.** Derive interface colours from the active look's palette, so
    switching World Look restyles the whole app. The line-art looks give a paper-and-ink UI;
    the thread looks give linen panels with stitched borders.
@@ -634,7 +649,7 @@ one has missed the point.
 
 1. ~~Animation charm, first pass~~ and ~~expressions from the simulation~~: done (section 7).
    Continue with the "more charm still" list there.
-2. **Glyph toolbar** (section 10, item 0). Small and the owner asked for it.
+2. ~~Glyph toolbar~~: done for the header and village toolbar (section 10, item 0).
 3. **Interface restyle** (section 10). The owner named it. Primitives first, then bubbles
    and labels, then the HUD, then panels.
 4. **Cast-specific figures** (section 7, item 3), starting with Lamia.

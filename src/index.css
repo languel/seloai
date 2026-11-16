@@ -165,3 +165,29 @@ dialog::backdrop {
   scrollbar-width: thin;
   scrollbar-color: var(--border-folk) transparent;
 }
+
+/* Glyph buttons: stitched icons with patch-style hover tips (see src/components/Glyph.tsx). */
+.glyph-button {
+  border: 1px dashed transparent;
+}
+.glyph-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+.glyph-button.glyph-on {
+  border-color: color-mix(in srgb, var(--text-ink) 55%, transparent);
+  background: color-mix(in srgb, var(--text-ink) 7%, transparent);
+}
+.glyph-button.glyph-off img {
+  opacity: 0.42;
+  filter: saturate(0.4);
+}
+.glyph-button.glyph-off:hover img {
+  opacity: 0.75;
+}
+.glyph-tip {
+  color: var(--text-ink);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--text-ink) 45%, transparent);
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}

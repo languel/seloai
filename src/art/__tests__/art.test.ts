@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createSeededRng } from '../../core/rng';
 import { findWorldPack, tileSemanticsForMap } from '../../world/packs';
+import { GLYPH_NAMES, glyphShapes } from '../glyphs';
 import { lettering, letteringWidth } from '../lettering';
 import { PALETTES } from '../looks';
 import { EXPRESSIONS, cloth, figure, treeOfLife } from '../motifs';
@@ -75,5 +76,17 @@ describe('Generative art', () => {
     expect(plain.features.length).toBe(shevitsa.pointsOfInterest?.length ?? 0);
     expect(plain.features.every((f) => f.kind === 'star')).toBe(true);
     expect(plain.terrain.flat().some((t) => t === 'wall')).toBe(true);
+  });
+});
+
+describe('interface glyphs', () => {
+  it('draws every glyph inside its 16-unit box', () => {
+    expect(GLYPH_NAMES.length).toBeGreaterThan(20);
+    for (const name of GLYPH_NAMES) {
+      const shapes = glyphShapes(name);
+      expect(shapes.length, name).toBeGreaterThan(0);
+      const b = bounds(shapes);
+      expect(Math.max(-b.minX, -b.minY, b.maxX, b.maxY), name).toBeLessThanOrEqual(9);
+    }
   });
 });

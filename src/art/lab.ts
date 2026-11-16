@@ -6,6 +6,8 @@ import { createSeededRng } from '../core/rng';
 import { expressionFor, getFigureRig, paintRig } from './gameLook';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type PaletteName } from './looks';
 import { lettering, ribbon } from './lettering';
+import { GLYPH_NAMES } from './glyphs';
+import { glyphDataUrl } from './glyphRender';
 import { cloth, figure, treeOfLife } from './motifs';
 import { place, type Shape } from './shapes';
 
@@ -69,6 +71,31 @@ const LOOKS: Array<[string, LookName, PaletteName]> = [
 ];
 
 const only = params.get('only');
+
+// Interface glyphs: each look's ground, every glyph at button size and enlarged.
+if (!only || only === 'glyphs') {
+  const panels = (['ink', 'night', 'blackwork', 'redBlack', 'festive'] as const).map((palette) => {
+    const wrap = document.createElement('figure');
+    const sheet = document.createElement('div');
+    sheet.style.cssText = `background:${PALETTES[palette].ground};padding:8px;display:grid;grid-template-columns:repeat(8, 52px);gap:6px;width:${8 * 58}px`;
+    for (const name of GLYPH_NAMES) {
+      const cell = document.createElement('div');
+      cell.title = name;
+      cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px';
+      const big = new Image(36, 36);
+      big.src = glyphDataUrl(name, palette, 36);
+      const small = new Image(16, 16);
+      small.src = glyphDataUrl(name, palette, 16);
+      cell.append(big, small);
+      sheet.append(cell);
+    }
+    const caption = document.createElement('figcaption');
+    caption.textContent = palette;
+    wrap.append(sheet, caption);
+    return wrap;
+  });
+  row('Glyphs: interface icons through each look', panels);
+}
 
 // One cloth, drawn once, shown in every look.
 if (!only || only === 'cloth') {

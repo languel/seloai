@@ -4,29 +4,16 @@ import { WorldStore } from './world/worldStore';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext } from './world/packs';
 import { GENERIC_WORLD_CONTEXT } from './world/worldContext';
 import { createBrowserSimulation } from './app/browserSimulation';
+import { Glyph, GlyphButton, GlyphLookContext, GlyphTip } from './components/Glyph';
+import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Activity,
-  BookOpen,
   ChevronDown,
-  Database,
-  Download,
   FolderOpen,
-  Map as MapIcon,
-  Network,
-  Palette,
-  PanelRightClose,
-  PanelRightOpen,
-  RotateCcw,
   Save,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
   Upload,
-  Users,
-  Trees,
-  Redo2,
-  Undo2,
 } from 'lucide-react';
 import { bonsaiEngine } from './ai/bonsaiEngine';
 import { brainRouter } from './ai/brainRouter';
@@ -781,40 +768,42 @@ export function App() {
     );
   }
 
+  const darkUi =
+    theme === 'dark' ||
+    (theme === 'system' &&
+      (aestheticSettings.worldLook === 'night' ||
+        (aestheticSettings.worldLook === 'tiles' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches)));
+
   return (
+    <GlyphLookContext.Provider value={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
     <div className="flex h-full flex-col bg-linen text-ink overflow-hidden">
       <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
         {/* Navigation Tabs (glyph-only with hover labels) */}
         <nav aria-label="Workspace Views" className="flex items-center gap-1">
           {(
             [
-              ['village', 'Village', Trees],
-              ['observatory', 'Control Room', Network],
-              ['level', 'Level Editor', MapIcon],
-              ['tapestry', 'Tapestry Studio', Palette],
-              ['characters', 'Characters', Users],
-              ['monitor', 'AI & Voice Monitor', Activity],
-              ['guides', 'Guides & Templates', BookOpen],
+              ['village', 'Village', 'village'],
+              ['observatory', 'Control Room', 'observatory'],
+              ['level', 'Level Editor', 'level'],
+              ['tapestry', 'Tapestry Studio', 'tapestry'],
+              ['characters', 'Characters', 'characters'],
+              ['monitor', 'AI & Voice Monitor', 'monitor'],
+              ['guides', 'Guides & Templates', 'guides'],
             ] as const
-          ).map(([id, label, Icon]) => {
+          ).map(([id, label, glyph]) => {
             const active = tab === id;
             const tabBtn = (
-              <button
+              <GlyphButton
                 key={id}
-                type="button"
+                glyph={glyph}
+                label={label}
                 onClick={() => setTab(id)}
-                title={label}
-                aria-label={label}
                 aria-current={active ? 'page' : undefined}
-                className={`group relative inline-flex h-7 items-center justify-center gap-1 rounded-sm px-2 text-xs transition ${
-                  active
-                    ? 'border border-ink/40 bg-surface text-ink font-semibold'
-                    : 'border border-transparent text-muted hover:bg-surface hover:text-ink'
-                }`}
+                className={active ? 'glyph-on' : ''}
+                size={17}
               >
-                <Icon className="h-3.5 w-3.5" />
                 {id === 'monitor' && (
-                  <span className="flex items-center gap-0.5" aria-hidden="true">
+                  <span className="flex flex-col items-center gap-0.5" aria-hidden="true">
                     <span
                       className={`h-1.5 w-1.5 rounded-full ${
                         textStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
@@ -827,32 +816,19 @@ export function App() {
                     />
                   </span>
                 )}
-                <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-                  {label}
-                </span>
-              </button>
+              </GlyphButton>
             );
 
             if (id === 'guides') {
               return (
                 <React.Fragment key={id}>
-                  <button
-                    type="button"
+                  <GlyphButton
+                    glyph="style"
+                    label="Style, theme and player appearance"
                     onClick={() => setStylePanelOpen((o) => !o)}
-                    aria-pressed={stylePanelOpen}
-                    title="Style, Theme & Player Appearance"
-                    aria-label="Style, Theme & Player Appearance"
-                    className={`group relative inline-flex h-7 items-center justify-center gap-1 rounded-sm px-2 text-xs transition ${
-                      stylePanelOpen
-                        ? 'border border-ink/40 bg-surface text-ink font-semibold'
-                        : 'border border-transparent text-muted hover:bg-surface hover:text-ink'
-                    }`}
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                    <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-                      Style &amp; Theme
-                    </span>
-                  </button>
+                    pressed={stylePanelOpen}
+                    size={17}
+                  />
                   {tabBtn}
                 </React.Fragment>
               );
@@ -914,109 +890,37 @@ export function App() {
             </select>
           </div>
 
-          <button
-            type="button"
+          <GlyphButton
+            glyph="data"
+            label="New world or story, export and database"
+            tipSide="below-left"
             onClick={() => {
               setDataNotice(null);
               dataDialogRef.current?.showModal();
             }}
-            title="New World / Story, Export & Database"
-            aria-label="New World / Story, Export & Database"
-            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink"
-          >
-            <Database className="h-3.5 w-3.5" />
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              World &amp; Data
-            </span>
-          </button>
+          />
 
-          <button
-            type="button"
-            onClick={handleUndoWorld}
-            disabled={!storeRef.current.canUndo}
-            title="Undo world edit"
-            aria-label="Undo world edit"
-            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Undo2 className="h-3.5 w-3.5" />
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              Undo world edit
-            </span>
-          </button>
+          <GlyphButton glyph="undo" label="Undo world edit" tipSide="below-left" onClick={handleUndoWorld} disabled={!storeRef.current.canUndo} />
 
-          <button
-            type="button"
-            onClick={handleRedoWorld}
-            disabled={!storeRef.current.canRedo}
-            title="Redo world edit"
-            aria-label="Redo world edit"
-            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Redo2 className="h-3.5 w-3.5" />
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              Redo world edit
-            </span>
-          </button>
+          <GlyphButton glyph="redo" label="Redo world edit" tipSide="below-left" onClick={handleRedoWorld} disabled={!storeRef.current.canRedo} />
 
-          <button
-            type="button"
-            onClick={handleExportBundle}
-            title="Export whole project JSON"
-            aria-label="Export whole project JSON"
-            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              Export Project
-            </span>
-          </button>
+          <GlyphButton glyph="exportFile" label="Export the whole project as JSON" tipSide="below-left" onClick={handleExportBundle} />
 
-          <label
-            title="Import village JSON"
-            aria-label="Import village JSON"
-            className="group relative inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-ink"
-          >
-            <Upload className="h-3.5 w-3.5" />
+          <label aria-label="Import a village from JSON" className="glyph-button group relative inline-flex h-7 min-w-7 cursor-pointer items-center justify-center rounded-sm px-1">
+            <Glyph name="importFile" size={16} />
             <input type="file" accept="application/json" className="sr-only" onChange={handleImportBundle} />
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              Import JSON
-            </span>
+            <GlyphTip side="below-left">Import a village from JSON</GlyphTip>
           </label>
 
-          <button
-            type="button"
-            onClick={() => resetDialogRef.current?.showModal()}
-            title="Reset village to defaults"
-            aria-label="Reset village to defaults"
-            className="group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border border-borderFolk bg-surface text-muted hover:bg-card hover:text-crimson"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              Reset Defaults
-            </span>
-          </button>
+          <GlyphButton glyph="reset" label="Reset the village to defaults" tipSide="below-left" onClick={() => resetDialogRef.current?.showModal()} />
 
-          <button
-            type="button"
+          <GlyphButton
+            glyph="panel"
+            label={sidebarOpen ? 'Hide the inspector panel' : 'Show the inspector panel'}
+            tipSide="below-left"
             onClick={toggleSidebarOpen}
-            aria-pressed={!sidebarOpen}
-            title={sidebarOpen ? 'Hide Inspector Panel' : 'Show Inspector Panel'}
-            aria-label={sidebarOpen ? 'Hide Inspector Panel' : 'Show Inspector Panel'}
-            className={`group relative inline-flex h-7 w-7 items-center justify-center rounded-sm border bg-surface transition hover:bg-card hover:text-ink ${
-              sidebarOpen
-                ? 'border-borderFolk text-muted'
-                : 'border-ink/40 text-ink font-semibold'
-            }`}
-          >
-            {sidebarOpen ? (
-              <PanelRightClose className="h-3.5 w-3.5" />
-            ) : (
-              <PanelRightOpen className="h-3.5 w-3.5" />
-            )}
-            <span className="pointer-events-none absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-sm border border-borderFolk bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink opacity-0 transition-opacity group-hover:opacity-100">
-              {sidebarOpen ? 'Hide Panel' : 'Show Panel'}
-            </span>
-          </button>
+            pressed={sidebarOpen}
+          />
         </div>
       </header>
 
@@ -1363,6 +1267,7 @@ export function App() {
         </form>
       </dialog>
     </div>
+    </GlyphLookContext.Provider>
   );
 }
 
