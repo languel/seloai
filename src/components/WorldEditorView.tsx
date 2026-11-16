@@ -106,6 +106,8 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const [pendingPlace, setPendingPlace] = useState<{ kind: 'landmark' | 'spawn'; x: number; y: number } | null>(null);
   const [pendingLabel, setPendingLabel] = useState('');
   const [newGenerator, setNewGenerator] = useState(SCENE_GENERATORS[0].id);
+  // Inline confirmations (pop-up dialogs can be blocked inside the app's browser).
+  const [confirming, setConfirming] = useState<'new' | 'clear' | null>(null);
   const [titleDraft, setTitleDraft] = useState(map.name);
   useEffect(() => setTitleDraft(map.name), [map.name]);
 
@@ -244,7 +246,13 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const onPointerDown = (event: React.PointerEvent) => {
     canvasRef.current!.setPointerCapture(event.pointerId);
     const cell = cellAt(event);
-    const panning = event.button === 1 || event.button === 2 || event.altKey || !scene;
+    const panning = event.button === 1 || event.button === 2 || event.altKey;
+    // A tile map becomes a place on the first edit, as one undo step of its own.
+    if (!panning && !scene && tool !== 'select') {
+      if (!run({ type: 'scene.fromTiles' }, 'Edit as a place')) return;
+      setNotice('This world is now a place you can edit. Do that again to make your first change.');
+      return;
+    }
     if (panning) {
       drag.current = { mode: 'pan', sx: event.clientX, sy: event.clientY, vx: view.current.x, vy: view.current.y };
       return;
@@ -451,21 +459,46 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
         <button
           type="button"
           className="stitch-panel px-2 py-1 text-left"
-          onClick={() => {
-            if (window.confirm('Replace this world with a new one? The cast stays; you can undo.')) {
-              run({ type: 'scene.create', generator: newGenerator, seed: 1 + Math.floor(Math.random() * 9999) }, 'New world');
-            }
-          }}
+          onClick={() => setConfirming(confirming === 'new' ? null : 'new')}
         >
           Make a new world
         </button>
+        {confirming === 'new' && (
+          <div className="flex flex-col gap-1 leading-snug">
+            <span>Replace this world with a new one? The cast stays, and you can undo.</span>
+            <span className="flex gap-1">
+              <button
+                type="button"
+                className="glyph-button glyph-on rounded-sm px-2 py-0.5"
+                onClick={() => {
+                  setConfirming(null);
+                  run({ type: 'scene.create', generator: newGenerator, seed: 1 + Math.floor(Math.random() * 9999) }, 'New world');
+                }}
+              >
+                Yes, make it
+              </button>
+              <button type="button" className="glyph-button rounded-sm px-2 py-0.5" onClick={() => setConfirming(null)}>
+                Cancel
+              </button>
+            </span>
+          </div>
+        )}
       </StitchPanel>
 
       {/* Middle: tools and the cloth */}
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <StitchPanel className="flex flex-wrap items-center gap-1 px-2 py-1 text-xs">
           {TOOLS.map(([id, glyph, label]) => (
-            <GlyphButton key={id} glyph={glyph} label={label} pressed={tool === id} disabled={!scene} onClick={() => setTool(id)} />
+            <GlyphButton
+              key={id}
+              glyph={glyph}
+              label={scene || id === 'select' ? label : `${label} (this tile map becomes an editable place)`}
+              pressed={tool === id}
+              onClick={() => {
+                setTool(id);
+                if (!scene && id !== 'select') run({ type: 'scene.fromTiles' }, 'Edit as a place');
+              }}
+            />
           ))}
           <KnotDivider className="mx-1 h-5" />
           {tool === 'paint' && (
@@ -570,12 +603,30 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
             <button
               type="button"
               className="glyph-button rounded-sm px-1.5 py-0.5"
-              onClick={() => window.confirm('Remove every hand edit and go back to the generated world? You can undo.') && run({ type: 'scene.clearEdits' }, 'Clear edits')}
+              onClick={() => setConfirming(confirming === 'clear' ? null : 'clear')}
             >
               Clear all
             </button>
           )}
         </div>
+        {confirming === 'clear' && (
+          <div className="flex items-center gap-1 text-[10px]">
+            <span>Remove every hand edit? You can undo.</span>
+            <button
+              type="button"
+              className="glyph-button glyph-on rounded-sm px-1.5 py-0.5"
+              onClick={() => {
+                setConfirming(null);
+                run({ type: 'scene.clearEdits' }, 'Clear edits');
+              }}
+            >
+              Yes
+            </button>
+            <button type="button" className="glyph-button rounded-sm px-1.5 py-0.5" onClick={() => setConfirming(null)}>
+              No
+            </button>
+          </div>
+        )}
         <span className="stitch-muted text-[10px] leading-snug">Kept on top of the generated world, so a new seed or setting keeps them.</span>
         <ol className="min-h-0 flex-1 space-y-1 overflow-y-auto">
           {(scene?.edits ?? [])
