@@ -46,13 +46,14 @@
             "village",
             "observatory",
             "world",
+            "patterns",
             "level",
             "tapestry",
             "characters",
             "monitor",
             "guides"
           ],
-          "description": "Workspace tab. \"level\" and \"tapestry\" are older names for the World editor."
+          "description": "Workspace tab. \"level\" is an older name for the World editor, \"tapestry\" for the Pattern Studio."
         }
       }
     }

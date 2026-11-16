@@ -47,8 +47,8 @@ import {
   parseImportedVillageJson,
 } from '../storage/villageStore';
 
-/** `level` and `tapestry` are older names for the World editor, still accepted. */
-export type WorkspaceTabId = 'village' | 'observatory' | 'world' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
+/** `level` is an older name for the World editor and `tapestry` for the Pattern Studio, still accepted. */
+export type WorkspaceTabId = 'village' | 'observatory' | 'world' | 'patterns' | 'level' | 'tapestry' | 'characters' | 'monitor' | 'guides';
 
 export interface SeloHostHooks {
   getSimulation: () => VillageSimulation;

@@ -855,6 +855,11 @@ letters (script is the default). Lab: `/art-lab.html?only=woven`, with live cont
   it is spoken, with a couched rule above and a soft edgeless wash of the cloth colour
   behind it; a new line writes while the old one fades. It replaces the subtitle box in
   that style, and the director frames shots above it.
+- The thread from a speaker to their words is a small rope simulation
+  (`src/art/threadRope.ts`): a chain of points under gravity and a light breeze, with
+  links of fixed length, pinned at the speaker and at their newest letter. It sags, swings
+  as they walk and whips a little as each letter pulls its end along; its running stitch
+  flows while a line is being written, and it fades a few seconds after.
 - Each character's words are in their own colour, the one their roster dot shows (their
   Loom thread matches); without one, the thread of their bodice. Thoughts are italic and
   lighter. A dashed thread joins a speaker to the words they are sewing.

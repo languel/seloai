@@ -245,8 +245,15 @@ sources, patterns should be generated procedurally, based on references.
    rig, the village and every portrait follow the seed and choices. Still to do: children
    and elders (scale and proportion), more kinds, and listing the trait schema in the
    agent API.
-6. Pattern studio: the motif grammar and the first references (Shevitsa regions), then the
-   cell editor and library, then motifs in features and garments.
+6. Pattern studio. First pass done: `src/art/patternGrammar.ts` (seven grammars with typed
+   parameters and a seed: eight-pointed star, stepped lozenge, tree of life, solar rosette,
+   stepped labyrinth, wave meander band, chevron frieze band; ink roles only; rosettes keep
+   at least eight rays and turn only gently unless there are many, so no sun ever reads as
+   a hooked cross), `src/art/patternReferences.ts` (references as described styles with
+   ranges; the eight Shevitsa regions), and the Pattern Studio tab: references, a page of
+   eight motifs per reference with a dice, the chosen motif large with its settings, and
+   "copy the recipe". Lab: `/art-lab.html?only=patterns`. Next: the cell editor (touch-ups
+   as an edit layer), the library, and motifs on world features and garments.
 7. Retire the old code, the tiles look and the old agent tools; update docs and tests.
 
 Each step lands on its own branch and is usable on its own.

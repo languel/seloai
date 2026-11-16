@@ -17,12 +17,13 @@ import { tileSemanticsForMap } from '../world/packs';
 import { Glyph, GlyphButton, GlyphTip } from './Glyph';
 import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
-import { drawConversationThreads, threadPoint, type ThreadEnd } from '../art/threads';
+import { drawConversationThreads, type ThreadEnd } from '../art/threads';
 import { WovenText, type WovenObstacle, type WovenSpeaker } from '../art/wovenText';
 import { DUCTUS_X_HEIGHT, drawWovenLetter, type WovenStyle } from '../art/wovenGlyphs';
 import { ductusAdvance } from '../art/ductus';
 import { advanceOf } from '../art/wovenText';
 import { ScribeBand, type ScribeLine } from '../art/scribeBand';
+import { ThreadRope, drawThread } from '../art/threadRope';
 import { seededFigureTraits } from '../art/figures';
 import { createSeededRng, hashString } from '../core/rng';
 import { PALETTES, type PaletteName } from '../art/looks';
@@ -494,6 +495,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const scribeBandRef = useRef(new ScribeBand());
   const scribeLineRef = useRef<ScribeLine | null>(null);
   const threadColourRef = useRef(new Map<string, string>());
+  /** The loose thread from each speaker to the words they are sewing, with a little physics. */
+  const ropesRef = useRef(new Map<string, ThreadRope>());
   /** The floating toolbar over the top of the view: the director frames only what it leaves visible. */
   const hudRef = useRef<HTMLDivElement>(null);
   const directorRef = useRef(new Director());
@@ -1077,32 +1080,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
           const a = WovenText.alpha(l, timeSec, options);
           if (a > 0.01) drawWovenLetter(ctx, l, timeSec, a, style, scale, lineLook);
         }
-        // A thread from each speaker to the words they are sewing.
-        ctx.save();
-        ctx.lineCap = 'round';
-        for (const [id, tail] of woven.tails(timeSec, 5)) {
+        // A loose thread from each speaker to the words they are sewing: it sags, swings as
+        // they walk, and whips a little as each new letter pulls its end along.
+        const ropes = ropesRef.current;
+        const tails = woven.tails(timeSec, 6);
+        for (const id of [...ropes.keys()]) if (!tails.has(id)) ropes.delete(id);
+        for (const [id, tail] of tails) {
           const rt = sim.runtimes.get(id);
           if (!rt) continue;
           const [hx, hy] = headOf(rt.x, rt.y);
-          const from = { x: hx, y: hy + bodyH * 0.25 };
-          const fade = Math.max(0, 1 - Math.max(0, timeSec - tail.born - 2) / 3);
-          const sag = Math.min(30, Math.hypot(tail.x - from.x, tail.y - from.y) * 0.18);
-          ctx.globalAlpha = 0.75 * fade;
-          ctx.strokeStyle = tail.colour;
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash(tail.kind === 'thought' ? [2, 3] : [5, 3]);
-          ctx.beginPath();
-          ctx.moveTo(from.x, from.y);
-          ctx.quadraticCurveTo((from.x + tail.x) / 2, (from.y + tail.y) / 2 + sag, tail.x, tail.y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          const [kx, ky] = threadPoint(from, tail, 1);
-          ctx.fillStyle = tail.colour;
-          ctx.beginPath();
-          ctx.arc(kx, ky, 1.8, 0, Math.PI * 2);
-          ctx.fill();
+          let rope = ropes.get(id);
+          if (!rope) {
+            rope = new ThreadRope();
+            ropes.set(id, rope);
+          }
+          rope.step(timeSec, hx, hy + bodyH * 0.25, tail.x, tail.y, hashString(id) % 100);
+          const fade = Math.max(0, 1 - Math.max(0, timeSec - tail.born - 2.5) / 3.5);
+          drawThread(ctx, rope, tail.colour, fade, timeSec, { dashed: tail.kind, flowing: timeSec - tail.born < 0.6, lineLook });
         }
-        ctx.restore();
       } else if (wovenRef.current.letters.length) {
         wovenRef.current.clear();
       }

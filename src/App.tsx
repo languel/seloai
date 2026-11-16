@@ -39,6 +39,7 @@ import { CharacterEditorView } from './components/CharacterEditorView';
 import { MonitorView } from './components/MonitorView';
 import { ObservatoryView } from './components/ObservatoryView';
 import WorldEditorView from './components/WorldEditorView';
+import PatternStudioView from './components/PatternStudioView';
 import { WorldCommandError } from './world/commands';
 import { VillageView } from './components/VillageView';
 import {
@@ -76,7 +77,7 @@ const DEMO_WORLDS: Array<{ id: DemoWorldId; label: string; description: string }
   (pack) => ({ id: pack.id, label: pack.name, description: pack.description }),
 );
 
-type TabId = 'village' | 'observatory' | 'world' | 'characters' | 'monitor' | 'guides';
+type TabId = 'village' | 'observatory' | 'world' | 'patterns' | 'characters' | 'monitor' | 'guides';
 
 export function App() {
   const [tab, setTab] = useState<TabId>('village');
@@ -308,7 +309,7 @@ export function App() {
       getTab: () => latestRef.current.tab,
       setTab: (requested) => {
         // The Level Editor and Tapestry Studio are now the World editor.
-        const nextTab: TabId = requested === 'level' || requested === 'tapestry' ? 'world' : requested;
+        const nextTab: TabId = requested === 'level' ? 'world' : requested === 'tapestry' ? 'patterns' : requested;
         latestRef.current.tab = nextTab;
         setTab(nextTab);
       },
@@ -812,6 +813,7 @@ export function App() {
               ['village', 'Village', 'village'],
               ['observatory', 'Control Room', 'observatory'],
               ['world', 'World Editor', 'world'],
+              ['patterns', 'Pattern Studio', 'tapestry'],
               ['characters', 'Characters', 'characters'],
               ['monitor', 'AI & Voice Monitor', 'monitor'],
               ['guides', 'Guides & Templates', 'guides'],
@@ -986,6 +988,9 @@ export function App() {
               setTab('village');
             }}
           />
+        )}
+        {tab === 'patterns' && (
+          <PatternStudioView look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName} />
         )}
         {tab === 'world' && (
           <WorldEditorView

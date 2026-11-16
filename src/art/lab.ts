@@ -15,6 +15,9 @@ import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { CHUNK, generateWangScene } from './wangWorld';
 import { place, type Shape } from './shapes';
 import { WovenText, advanceOf, type WovenSpeaker } from './wovenText';
+import { SHEVITSA_REFERENCES, motifFromReference } from './patternReferences';
+import { ThreadRope, drawThread } from './threadRope';
+import { motifShape } from './patternGrammar';
 import { DUCTUS_X_HEIGHT, drawWovenLetter, type WovenHand, type WovenStyle } from './wovenGlyphs';
 import { ductusAdvance, ductusStrokes, drawDuctus } from './ductus';
 
@@ -78,6 +81,22 @@ const LOOKS: Array<[string, LookName, PaletteName]> = [
 ];
 
 const only = params.get('only');
+
+// Patterns: every Shevitsa reference, six seeds each, grown from the motif grammar.
+if (only === 'patterns') {
+  for (const ref of SHEVITSA_REFERENCES) {
+    const shapes: Shape[] = [];
+    for (let i = 0; i < 6; i++) {
+      const grid = motifFromReference(ref, seed * 10 + i);
+      const cell = Math.min(1, 26 / Math.max(grid.w, grid.h));
+      shapes.push(...place([motifShape(grid, cell)], { dx: i * 30 }));
+    }
+    row(
+      `${ref.label} (${ref.region}): ${ref.description}`,
+      (['festive', 'blackwork'] as const).map((palette) => panel(palette, 760, 200, 'thread', palette, 4, [62, 100], shapes)),
+    );
+  }
+}
 
 // Woven text: three people talking (one walks off), their words sewn onto the cloth, live.
 if (only === 'woven') {
@@ -187,6 +206,7 @@ if (only === 'woven') {
       { id: 'c', build: 'skirted' as const, colour: lineLook ? palette.inks.dark : palette.inks.accent2, lines: ['Hush. Listen to the bells on the ridge.', 'Bring honeyed wheat, silver obols, or an oath kept true.'] },
     ];
     const woven = new WovenText();
+    const ropes = new Map<string, ThreadRope>();
     const opts = {
       size: td * 0.46,
       holdSec: 16,
@@ -228,19 +248,18 @@ if (only === 'woven') {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.drawImage(ground, 0, 0);
       for (const l of woven.letters) drawWovenLetter(ctx, l, t, WovenText.alpha(l, t, opts), style, dpr, lineLook);
-      for (const [id, tail] of woven.tails(t, 5)) {
+      const tails = woven.tails(t, 6);
+      for (const id of [...ropes.keys()]) if (!tails.has(id)) ropes.delete(id);
+      for (const [id, tail] of tails) {
         const [x, y] = where(id, t);
-        const fx = x + td / 2;
-        const fy = y - td * 0.9;
-        ctx.globalAlpha = 0.7;
-        ctx.strokeStyle = tail.colour;
-        ctx.setLineDash([5, 3]);
-        ctx.beginPath();
-        ctx.moveTo(fx, fy);
-        ctx.quadraticCurveTo((fx + tail.x) / 2, (fy + tail.y) / 2 + 18, tail.x, tail.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
+        let rope = ropes.get(id);
+        if (!rope) {
+          rope = new ThreadRope();
+          ropes.set(id, rope);
+        }
+        rope.step(t, x + td / 2, y - td * 0.9, tail.x, tail.y, id.charCodeAt(0));
+        const fade = Math.max(0, 1 - Math.max(0, t - tail.born - 2.5) / 3.5);
+        drawThread(ctx, rope, tail.colour, fade, t, { dashed: tail.kind, flowing: t - tail.born < 0.6, lineLook });
       }
       cast.forEach((c) => {
         const [x, y] = where(c.id, t);
