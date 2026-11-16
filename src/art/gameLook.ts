@@ -232,19 +232,61 @@ const FACE_FRONT_AFTER = 0.6;
  * profile and walking up shows the back; standing, talking or listening faces us, which is
  * the charming front view the cast was designed in.
  */
+/**
+ * Facing and view only change once the new one has held for a moment. The simulation can
+ * flip a character's facing several times a second (sidestepping a neighbour, a path that
+ * zigzags, two talkers re-facing each other), and every flip starts a turn; without a hold
+ * a figure gets stuck turning, squashed through its edge, as if spinning.
+ */
+const HOLD_FACING = 0.3;
+const HOLD_VIEW = 0.35;
+interface Steady<T> {
+  shown: T;
+  pending: T;
+  since: number;
+}
+const steadyFacing = new Map<string, Steady<FigureMotion['facing']>>();
+const steadyView = new Map<string, Steady<FigureView>>();
+
+function steady<T>(store: Map<string, Steady<T>>, id: string, wanted: T, time: number, hold: number): T {
+  const s = store.get(id);
+  if (!s || time < s.since - 5) {
+    store.set(id, { shown: wanted, pending: wanted, since: time });
+    if (store.size > 400) store.clear();
+    return wanted;
+  }
+  if (wanted === s.shown) {
+    s.pending = wanted;
+    s.since = time;
+    return s.shown;
+  }
+  if (wanted !== s.pending) {
+    s.pending = wanted;
+    s.since = time;
+  }
+  if (time - s.since >= hold) s.shown = wanted;
+  return s.shown;
+}
+
+/** The facing to draw: the simulation's facing once it has held for a moment. */
+export function steadyFacingFor(id: string, facing: FigureMotion['facing'], time: number): FigureMotion['facing'] {
+  return steady(steadyFacing, id, facing, time, HOLD_FACING);
+}
+
 export function chooseFigureView(motion: Pick<FigureMotion, 'id' | 'facing' | 'moving' | 'time'>, turning: boolean): FigureView {
   if (!turning) return 'front';
   const memory = motionMemory.get(motion.id);
+  const facing = steadyFacingFor(motion.id, motion.facing, motion.time);
   const wanted: FigureView = motion.moving
-    ? motion.facing === 'left' || motion.facing === 'right'
+    ? facing === 'left' || facing === 'right'
       ? 'side'
-      : motion.facing === 'up'
+      : facing === 'up'
         ? 'back'
         : 'front'
     : memory && motion.time - memory.lastMovedAt < FACE_FRONT_AFTER
       ? memory.view
       : 'front';
-  return wanted;
+  return steady(steadyView, motion.id, wanted, motion.time, HOLD_VIEW);
 }
 
 const motionMemory = new Map<string, MotionMemory>();
@@ -291,7 +333,8 @@ export function paintRig(
   }
   const turnIn = Math.min(1, (motion.time - memory.viewChangedAt) * 7);
   memory.move = approach(memory.move, motion.moving ? 1 : 0, 5, dt);
-  const flipTarget = motion.facing === 'left' ? -1 : motion.facing === 'right' ? 1 : memory.flip >= 0 ? 1 : -1;
+  const facing = steadyFacingFor(motion.id, motion.facing, motion.time);
+  const flipTarget = facing === 'left' ? -1 : facing === 'right' ? 1 : memory.flip >= 0 ? 1 : -1;
   memory.flip = approach(memory.flip, flipTarget, 9, dt);
   memory.talk = approach(memory.talk, motion.state === 'speaking' ? 1 : 0, 4, dt);
   memory.think = approach(memory.think, motion.state === 'thinking' ? 1 : 0, 3, dt);

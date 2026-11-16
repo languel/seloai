@@ -383,3 +383,24 @@ describe('headdress variety', () => {
     }
   });
 });
+
+describe('turning without spinning', () => {
+  it('ignores facing flips shorter than the hold, and turns once a new facing has held', async () => {
+    const { chooseFigureView, steadyFacingFor } = await import('../gameLook');
+    const id = 'spinner';
+    const views = new Set<string>();
+    const facings = new Set<string>();
+    // Facing flips left and right every 0.1 s while walking: no turn should happen.
+    for (let i = 0; i < 40; i++) {
+      const facing = i % 2 ? 'left' : 'right';
+      views.add(chooseFigureView({ id, facing, moving: true, time: i * 0.1 }, true));
+      facings.add(steadyFacingFor(id, facing, i * 0.1));
+    }
+    expect(facings.size).toBe(1);
+    expect(views.size).toBe(1);
+    // A real change of direction, held, does turn the figure.
+    let view = '';
+    for (let t = 5; t < 6; t += 0.05) view = chooseFigureView({ id, facing: 'up', moving: true, time: t }, true);
+    expect(view).toBe('back');
+  });
+});
