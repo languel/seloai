@@ -1,3 +1,4 @@
+import { worldlineRecorderFor } from '../engine/worldlines';
 import { brainRouter } from '../ai/brainRouter';
 import { VillageSimulation } from '../engine/simulation';
 import type { Conversation, ModelSettings, VillageMap, VillagerConfig } from '../engine/types';
@@ -19,9 +20,12 @@ export function createBrowserSimulation(
   world?: WorldContext,
   options: { timers?: 'wall' | 'sim' } = {},
 ): VillageSimulation {
-  return new VillageSimulation(map, villagers, conversations, settings, {
+  const sim = new VillageSimulation(map, villagers, conversations, settings, {
     mind: brainRouter,
     world: world ?? inferWorldContext(map),
     timers: options.timers ?? 'wall',
   });
+  // Remember where everyone goes from the start, for the Loom.
+  worldlineRecorderFor(sim);
+  return sim;
 }

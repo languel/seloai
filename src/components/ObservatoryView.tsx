@@ -15,6 +15,8 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
+import type { PaletteName } from '../art/looks';
+import LoomView from './LoomView';
 import { useAutoScrollToBottom } from '../hooks/useAutoScrollToBottom';
 import { buildNarratorConfig } from '../data/defaultData';
 import {
@@ -29,12 +31,14 @@ import type { ModelSettings, VillagerConfig } from '../engine/types';
 
 interface ObservatoryViewProps {
   sim: VillageSimulation;
+  /** The art look the Loom is woven in. */
+  look: PaletteName;
   villagers: VillagerConfig[];
   settings: ModelSettings;
   onJumpToVillage: (villagerId?: string) => void;
 }
 
-type ObservatorySubTab = 'graph' | 'database' | 'loom';
+type ObservatorySubTab = 'weave' | 'graph' | 'database' | 'loom';
 
 function formatTimeAgo(ts: number): string {
   const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -48,11 +52,12 @@ function formatTimeAgo(ts: number): string {
 
 export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
   sim,
+  look,
   villagers,
   settings,
   onJumpToVillage,
 }) => {
-  const [subTab, setSubTab] = useState<ObservatorySubTab>('graph');
+  const [subTab, setSubTab] = useState<ObservatorySubTab>('weave');
   const [, setTick] = useState(0);
 
   // Graph controls
@@ -297,6 +302,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
         <div className="flex items-center gap-1 rounded-sm border border-borderFolk bg-surface p-0.5">
           {(
             [
+              ['weave', Sparkles, 'The Loom'],
               ['graph', Network, 'Psychophysical Graph'],
               ['database', Database, 'World DB & Query'],
               ['loom', BookOpen, 'Scribe Loom'],
@@ -318,6 +324,12 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
       </div>
 
       {/* Mode 1: Psychophysical Graph */}
+      {subTab === 'weave' && (
+        <div className="min-h-0 flex-1">
+          <LoomView sim={sim} look={look} onJumpToVillage={onJumpToVillage} />
+        </div>
+      )}
+
       {subTab === 'graph' && (
         <div className="grid flex-1 grid-cols-1 lg:grid-cols-[1fr_360px] overflow-hidden">
           <div className="relative flex flex-col overflow-hidden bg-stone-950">

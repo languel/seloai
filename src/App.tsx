@@ -977,6 +977,7 @@ export function App() {
         {tab === 'observatory' && (
           <ObservatoryView
             sim={simRef.current}
+            look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName}
             villagers={villagers}
             settings={settings}
             onJumpToVillage={(villagerId) => {

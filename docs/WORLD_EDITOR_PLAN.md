@@ -215,9 +215,22 @@ sources, patterns should be generated procedurally, based on references.
    story mode moves the Scribe's point of view to them and the director favours their
    thread. Still to do: an optional return to story mode after the viewer has been idle,
    the shot list in the headless runner and agent API, and lead room ahead of a walker.
-4. The Loom: first the cloth and its navigation from the records the simulation already
-   keeps, then basting and deviations, then kept branches (a simulation change: rewinding
-   forks instead of truncating). Also independent of the editors.
+4. The Loom. First pass done: "The Loom" is the Control Room's first tab
+   (`src/components/LoomView.tsx`). `src/engine/worldlines.ts` has a recorder, started
+   with every browser simulation, that remembers which place each character was at, and a
+   pure `layoutLoom` that lays out bands (places, with "On the roads" in the middle, or one
+   row per character), threads, stitches (a cross for a plain line, a ring for a
+   question, a star for an exclamation, a barred cross for a long speech, a seed stitch for
+   a thought, couched thread to each listener, the Scribe as dashed gold across the
+   cloth) and basting from now toward where a walker is heading. By character, threads
+   draw together while their characters talk. Navigation: scroll to zoom through time from
+   seconds to days, drag along it, "the whole cloth", keep now in view, click a thread to
+   pull it out (the rest fade), click a stitch to open the moment (the whole conversation,
+   and a button to go to that character in the village), search lights matching stitches,
+   and close in, the words appear beside their stitches. Still to do: keep the record of
+   places with the saved world (today it starts afresh when the app loads), deviations
+   (red knots where what happened left what was intended), kept branches (rewinding forks
+   instead of truncating), and arranging by story line.
 5. Character editor: trait overrides and the new editor.
 6. Pattern studio: the motif grammar and the first references (Shevitsa regions), then the
    cell editor and library, then motifs in features and garments.
