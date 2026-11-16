@@ -374,8 +374,10 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
                     <div className="grid grid-cols-2 gap-1">
                       {(
                         [
-                          ['satin', 'Satin letters', 'Upper and lower case worked in satin stitch'],
-                          ['counted', 'Counted letters', 'Capitals cross-stitched on the sampler grid'],
+                          ['satin', 'Satin', 'Serif letters, upper and lower case, worked in satin stitch'],
+                          ['ductus', 'Hand-sewn', 'A single-stroke hand written stroke by stroke and sewn in a stitch you choose'],
+                          ['script', 'Script', "The system's handwriting face, thin"],
+                          ['counted', 'Counted', 'Capitals cross-stitched on the sampler grid'],
                         ] as const
                       ).map(([value, label, hint]) => (
                         <button
@@ -391,6 +393,54 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
                         </button>
                       ))}
                     </div>
+                    {settings.wovenHand === 'ductus' && (
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['back', 'running', 'stem', 'chain'] as const).map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            title={{ back: 'Backstitch: a solid line of short stitches', running: 'Running stitch: dashes', stem: 'Stem stitch: a twisted cord', chain: 'Chain stitch: small loops' }[value]}
+                            aria-pressed={settings.wovenStitch === value}
+                            onClick={() => onChange({ ...settings, wovenStitch: value })}
+                            className="rounded border px-1 py-1 text-[10px] capitalize"
+                            style={pillBtnStyle(settings.wovenStitch === value)}
+                          >
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {(
+                      [
+                        ['wovenSize', 'Letter size', 0.4, 2, 0.05, '×'],
+                        ...(settings.wovenHand === 'ductus'
+                          ? ([
+                              ['wovenWeight', 'Thread weight', 0.02, 0.2, 0.005, ''],
+                              ['wovenSlant', 'Slant', -0.3, 0.6, 0.02, ''],
+                              ['wovenWobble', 'Hand wobble', 0, 1.5, 0.05, ''],
+                            ] as const)
+                          : []),
+                      ] as const
+                    ).map(([key, label, min, max, step, unit]) => (
+                      <label key={key} className="block text-[10px]">
+                        <span className="flex justify-between" style={{ color: tokens.hudMutedColor }}>
+                          <span>{label}</span>
+                          <span>
+                            {Math.round(settings[key] * 100) / 100}
+                            {unit}
+                          </span>
+                        </span>
+                        <input
+                          type="range"
+                          min={min}
+                          max={max}
+                          step={step}
+                          value={settings[key]}
+                          onChange={(e) => onChange({ ...settings, [key]: Number(e.target.value) })}
+                          className="stitch-range w-full"
+                        />
+                      </label>
+                    ))}
                     {(
                       [
                         ['wovenHoldSec', 'Words stay', 4, 120, 1],

@@ -14,8 +14,9 @@ import { withAmbience } from './ambient';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { CHUNK, generateWangScene } from './wangWorld';
 import { place, type Shape } from './shapes';
-import { WovenText, type WovenSpeaker } from './wovenText';
-import { stitchedGlyph, type WovenHand } from './wovenGlyphs';
+import { WovenText, advanceOf, type WovenSpeaker } from './wovenText';
+import { DUCTUS_X_HEIGHT, drawWovenLetter, type WovenHand, type WovenStyle } from './wovenGlyphs';
+import { ductusAdvance, ductusStrokes, drawDuctus } from './ductus';
 
 type LookName = 'line' | 'thread';
 
@@ -80,6 +81,84 @@ const only = params.get('only');
 
 // Woven text: three people talking (one walks off), their words sewn onto the cloth, live.
 if (only === 'woven') {
+  // Live controls shared by both panels.
+  const style: WovenStyle & { size: number } = {
+    hand: (params.get('hand') as WovenHand) || 'ductus',
+    weight: 0.06,
+    slant: 0.15,
+    wobble: 0.5,
+    stitch: 'back',
+    size: 0.85,
+  };
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;align-items:center;font:12px system-ui;color:#ddd;margin:0 0 8px';
+  const select = (label: string, options: string[], get: () => string, set: (v: string) => void) => {
+    const wrap = document.createElement('label');
+    wrap.textContent = `${label} `;
+    const el = document.createElement('select');
+    for (const o of options) el.append(new Option(o, o));
+    el.value = get();
+    el.onchange = () => set(el.value);
+    wrap.append(el);
+    bar.append(wrap);
+  };
+  const slider = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void) => {
+    const wrap = document.createElement('label');
+    const value = document.createElement('span');
+    value.textContent = String(get());
+    const el = document.createElement('input');
+    el.type = 'range';
+    el.min = String(min);
+    el.max = String(max);
+    el.step = String(step);
+    el.value = String(get());
+    el.oninput = () => {
+      set(Number(el.value));
+      value.textContent = el.value;
+    };
+    wrap.append(`${label} `, el, ' ', value);
+    bar.append(wrap);
+  };
+  select('hand', ['ductus', 'satin', 'script', 'counted'], () => style.hand, (v) => (style.hand = v as WovenHand));
+  select('stitch', ['back', 'running', 'stem', 'chain'], () => style.stitch, (v) => (style.stitch = v as WovenStyle['stitch']));
+  slider('size', 0.4, 2, 0.05, () => style.size, (v) => (style.size = v));
+  slider('weight', 0.02, 0.2, 0.005, () => style.weight, (v) => (style.weight = v));
+  slider('slant', -0.3, 0.6, 0.02, () => style.slant, (v) => (style.slant = v));
+  slider('wobble', 0, 1.5, 0.05, () => style.wobble, (v) => (style.wobble = v));
+  root.append(bar);
+
+  // An alphabet sampler of the ductus hand at the current settings.
+  const sampler = document.createElement('canvas');
+  const SW = 900;
+  const SH = 150;
+  const sdpr = Math.min(2, window.devicePixelRatio || 1);
+  sampler.width = SW * sdpr;
+  sampler.height = SH * sdpr;
+  sampler.style.cssText = `width:${SW}px;height:${SH}px;display:block;margin-bottom:10px;background:${PALETTES.festive.ground}`;
+  root.append(sampler);
+  const drawSampler = () => {
+    const sc = sampler.getContext('2d')!;
+    sc.setTransform(sdpr, 0, 0, sdpr, 0, 0);
+    sc.fillStyle = PALETTES.festive.ground;
+    sc.fillRect(0, 0, SW, SH);
+    const lines = ['abcdefghijklmnopqrstuvwxyz 0123456789', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ .,;:!?\'"-()&', 'One day they wake up and decide to do something really strange.'];
+    const xh = 15;
+    lines.forEach((line, row) => {
+      let x = 12;
+      [...line].forEach((ch, i) => {
+        const strokes = ductusStrokes(ch, { slant: style.slant, wobble: style.wobble, seed: (i % 4) * 7919 + ch.charCodeAt(0) });
+        const adv = ductusAdvance(ch) * xh;
+        sc.save();
+        sc.translate(x + adv / 2, 30 + row * 44);
+        drawDuctus(sc, strokes, xh, row === 2 ? PALETTES.festive.inks.primary : PALETTES.festive.inks.dark, style.weight / DUCTUS_X_HEIGHT, style.stitch);
+        sc.restore();
+        x += adv;
+      });
+    });
+    requestAnimationFrame(drawSampler);
+  };
+  requestAnimationFrame(drawSampler);
+
   const panels = (['festive', 'ink'] as const).map((look) => {
     const wrap = document.createElement('figure');
     const canvas = document.createElement('canvas');
@@ -102,14 +181,20 @@ if (only === 'woven') {
       g.fillRect(0, 0, W, H);
     } else paintLinen(g, W, H, { unit: 6, origin: [0, 0], palette, seed: 3 });
     const td = 32;
-    const hand = (params.get('hand') as WovenHand) || 'satin';
     const cast = [
       { id: 'a', build: 'skirted' as const, colour: lineLook ? palette.inks.dark : palette.inks.primary, lines: ['The Lamia fears living water freely shared. Leave scarlet thread by the well.', 'And according to what I have seen, one day they wake up and decide to do something really strange!'] },
       { id: 'b', build: 'trousered' as const, colour: lineLook ? palette.inks.dark : palette.inks.secondary, lines: ['Who told you that? The forge was cold all night.', 'Then someone lied at the fire, and the whole square heard it.'] },
       { id: 'c', build: 'skirted' as const, colour: lineLook ? palette.inks.dark : palette.inks.accent2, lines: ['Hush. Listen to the bells on the ridge.', 'Bring honeyed wheat, silver obols, or an oath kept true.'] },
     ];
     const woven = new WovenText();
-    const opts = { size: td * 0.46, holdSec: 16, fadeSec: 5, charsPerSec: 16, bounds: { w: W, h: H } };
+    const opts = {
+      size: td * 0.46,
+      holdSec: 16,
+      fadeSec: 5,
+      charsPerSec: 16,
+      bounds: { w: W, h: H },
+      advance: (ch: string) => (style.hand === 'ductus' ? ductusAdvance(ch) * DUCTUS_X_HEIGHT : advanceOf(ch)),
+    };
     const start = performance.now();
     const where = (id: string, t: number): [number, number] => {
       if (id === 'a') return [300 + Math.min(1, Math.max(0, ((t % 40) - 12) / 8)) * 330, 280];
@@ -138,20 +223,11 @@ if (only === 'woven') {
         const [x, y] = where(c.id, t);
         return { x: x + td / 2 - 14, y: y - td * 1.9, w: 28, h: td * 1.9 + 4 };
       });
+      opts.size = td * 0.46 * style.size;
       woven.update(t, speakers, obstacles, opts);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.drawImage(ground, 0, 0);
-      for (const l of woven.letters) {
-        const glyph = stitchedGlyph(l.ch, l.colour, l.size * dpr, hand, l.kind === 'thought', lineLook);
-        if (!glyph) continue;
-        const w = glyph.width / dpr;
-        ctx.save();
-        ctx.globalAlpha = WovenText.alpha(l, t, opts) * (l.kind === 'thought' ? 0.72 : 1);
-        ctx.translate(l.x, l.y);
-        ctx.rotate(l.angle);
-        ctx.drawImage(glyph, -w / 2, -w / 2, w, w);
-        ctx.restore();
-      }
+      for (const l of woven.letters) drawWovenLetter(ctx, l, t, WovenText.alpha(l, t, opts), style, dpr, lineLook);
       for (const [id, tail] of woven.tails(t, 5)) {
         const [x, y] = where(id, t);
         const fx = x + td / 2;
@@ -179,7 +255,7 @@ if (only === 'woven') {
     wrap.append(canvas, caption);
     return wrap;
   });
-  row('Woven text: speech and thoughts sewn onto the cloth (add &hand=counted for sampler letters)', panels);
+  row('Woven text: speech and thoughts sewn onto the cloth', panels);
 }
 
 // Interface glyphs: each look's ground, every glyph at button size and enlarged.

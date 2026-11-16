@@ -842,6 +842,18 @@ stay and how long they take to fade. Lab: `/art-lab.html?only=woven` (add `&hand
 - `src/art/wovenGlyphs.ts` draws each letter as embroidery: "satin" takes the letter from a
   serif face and fills it with slanting satin threads with a couched outline and a shadow
   (upper and lower case); "counted" cross-stitches the sampler capitals of `lettering`.
+- Four hands (Style panel, "Speech and thoughts"): satin; **hand-sewn**, the ductus hand
+  of `src/art/ductus.ts`, original single-stroke letters (upper and lower case, digits,
+  punctuation) stored as pen strokes in writing order, so they can be modulated (thread
+  weight, slant, hand wobble) and sewn in backstitch, running, stem or chain stitch, and are
+  stitched on stroke by stroke as they appear; script, the system's handwriting face; and
+  counted sampler capitals. A letter-size slider applies to all. The lab row has live
+  controls and an alphabet sampler of the ductus hand.
+- The Scribe's band (`src/art/scribeBand.ts`): in the woven style the Scribe's narration
+  is sewn along the bottom centre of the view in deep gold, in the ductus hand, written as
+  it is spoken, with a couched rule above and a soft edgeless wash of the cloth colour
+  behind it; a new line writes while the old one fades. It replaces the subtitle box in
+  that style, and the director frames shots above it.
 - Each character's words are in the thread of their own bodice (or skirt). Thoughts are
   italic and lighter. A dashed thread joins a speaker to the words they are sewing.
 

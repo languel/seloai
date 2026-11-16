@@ -19,7 +19,10 @@ import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
 import { drawConversationThreads, threadPoint, type ThreadEnd } from '../art/threads';
 import { WovenText, type WovenObstacle, type WovenSpeaker } from '../art/wovenText';
-import { stitchedGlyph } from '../art/wovenGlyphs';
+import { DUCTUS_X_HEIGHT, drawWovenLetter, type WovenStyle } from '../art/wovenGlyphs';
+import { ductusAdvance } from '../art/ductus';
+import { advanceOf } from '../art/wovenText';
+import { ScribeBand, type ScribeLine } from '../art/scribeBand';
 import { seededFigureTraits } from '../art/figures';
 import { createSeededRng, hashString } from '../core/rng';
 import { PALETTES, type PaletteName } from '../art/looks';
@@ -223,6 +226,15 @@ function serializeComposerText(root: HTMLElement | null): string {
 /** A range input: stitched inside the art looks, the browser's own in the classic tiles. */
 function SpeedRange({ stitched, ...rest }: React.InputHTMLAttributes<HTMLInputElement> & { stitched: boolean }) {
   return stitched ? <StitchSlider {...rest} /> : <input type="range" {...rest} />;
+}
+
+/** A #rrggbb colour darkened by `amount` (0..1). */
+function deepen(hex: string, amount: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const ch = (v: number) => Math.round(v * (1 - amount));
+  return `rgb(${ch((n >> 16) & 255)}, ${ch((n >> 8) & 255)}, ${ch(n & 255)})`;
 }
 
 function SubtitleBox({ stitched, ...rest }: React.HTMLAttributes<HTMLDivElement> & { stitched: boolean }) {
@@ -473,6 +485,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const storyRef = useRef(storyMode);
   /** Speech and thoughts embroidered onto the cloth, when the woven text style is on. */
   const wovenRef = useRef(new WovenText());
+  /** The Scribe's band along the bottom of the cloth (woven text style), and its current line. */
+  const scribeBandRef = useRef(new ScribeBand());
+  const scribeLineRef = useRef<ScribeLine | null>(null);
   const threadColourRef = useRef(new Map<string, string>());
   /** The floating toolbar over the top of the view: the director frames only what it leaves visible. */
   const hudRef = useRef<HTMLDivElement>(null);
@@ -707,7 +722,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
             const before = director.current;
             const hudBottom = hudRef.current?.getBoundingClientRect().bottom ?? rect.top;
             const inset = Math.max(0, Math.min(rect.height * 0.6, hudBottom - rect.top));
-            const visibleH = Math.max(1, rect.height - inset);
+            // Leave room for the Scribe's band along the bottom when it is showing.
+            const below = aestheticSettings.speechStyle === 'woven' && scribeLineRef.current ? Math.min(rect.height * 0.3, ScribeBand.height(rect.width)) : 0;
+            const visibleH = Math.max(1, rect.height - inset - below);
             const shot = director.update({
               time: now / 1000,
               actors,
@@ -720,7 +737,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             const tx = (shot.rect.x + shot.rect.w / 2) * td;
             const zoom = Math.min(3.5, Math.max(0.45, Math.min(rect.width / (shot.rect.w * td), visibleH / (shot.rect.h * td))));
             // The camera centre sits half the toolbar's height above the visible middle.
-            const ty = (shot.rect.y + shot.rect.h / 2) * td - inset / 2 / zoom;
+            const ty = (shot.rect.y + shot.rect.h / 2) * td - (inset - below) / 2 / zoom;
             cam.anchor = null;
             const fresh = !before || before.startedAt !== shot.startedAt;
             if (fresh && shot.cut) {
@@ -748,6 +765,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
           const renderStart = performance.now();
           renderWorld(ctx, rect.width, rect.height, now / 1000);
+          if (aestheticSettings.speechStyle === 'woven') {
+            // The Scribe's narration, sewn along the bottom of the view in gold.
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const look = (aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName;
+            const pal = PALETTES[look];
+            const oneInk = look === 'ink' || look === 'night';
+            // A deeper gold than the world's, so it reads against the linen.
+            const gold = oneInk ? pal.inks.dark : deepen(pal.inks.gold, 0.32);
+            scribeBandRef.current.draw(ctx, rect.width, rect.height, scribeLineRef.current, now / 1000, gold, oneInk ? pal.inks.dark : pal.inks.primary, aestheticSettings.wovenStitch, pal.ground);
+          }
           renderMs = performance.now() - renderStart;
         }
       }
@@ -1022,8 +1049,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
         }
         obstacles.push({ x: (sim.player.x + 0.5) * td - td * 0.45, y: (sim.player.y + 1) * td - 4 - bodyH, w: td * 0.9, h: bodyH });
         const woven = wovenRef.current;
+        const style: WovenStyle = {
+          hand: aestheticSettings.wovenHand,
+          weight: aestheticSettings.wovenWeight,
+          slant: aestheticSettings.wovenSlant,
+          wobble: aestheticSettings.wovenWobble,
+          stitch: aestheticSettings.wovenStitch,
+        };
         const options = {
-          size: td * 0.46,
+          size: td * 0.46 * aestheticSettings.wovenSize,
+          advance: style.hand === 'ductus' ? (ch: string) => ductusAdvance(ch) * DUCTUS_X_HEIGHT : advanceOf,
           holdSec: aestheticSettings.wovenHoldSec,
           fadeSec: aestheticSettings.wovenFadeSec,
           charsPerSec: 16,
@@ -1033,16 +1068,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         const scale = Math.min(4, Math.max(1, cam.zoom * (window.devicePixelRatio || 1)));
         for (const l of woven.letters) {
           const a = WovenText.alpha(l, timeSec, options);
-          if (a <= 0.01) continue;
-          const glyph = stitchedGlyph(l.ch, l.colour, l.size * scale, aestheticSettings.wovenHand, l.kind === 'thought', lineLook);
-          if (!glyph) continue;
-          const w = glyph.width / scale;
-          ctx.save();
-          ctx.globalAlpha = a * (l.kind === 'thought' ? 0.72 : 1);
-          ctx.translate(l.x, l.y);
-          ctx.rotate(l.angle);
-          ctx.drawImage(glyph, -w / 2, -w / 2, w, w);
-          ctx.restore();
+          if (a > 0.01) drawWovenLetter(ctx, l, timeSec, a, style, scale, lineLook);
         }
         // A thread from each speaker to the words they are sewing.
         ctx.save();
@@ -1565,6 +1591,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
   }
 
+  scribeLineRef.current = showScribeSubtitles && latestScribeSubtitle ? { id: latestScribeSubtitle.id, text: latestScribeSubtitle.text } : null;
+
   useEffect(() => {
     const el = subtitleBoxRef.current;
     if (!el || !latestScribeSubtitle) return;
@@ -1919,7 +1947,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         </div>
 
         {/* Bottom-Center Docked Scribe Subtitle Field */}
-        {showScribeSubtitles && latestScribeSubtitle && (
+        {showScribeSubtitles && latestScribeSubtitle && aestheticSettings.speechStyle !== 'woven' && (
           <StitchScope look={hudLook}>
           <SubtitleBox
             stitched={stitchHud}
@@ -1994,7 +2022,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             panelStyle={aestheticTokens.subtitleStyle}
             textColor={aestheticTokens.hudTextColor}
             mutedColor={aestheticTokens.hudMutedColor}
-            hasBottomSubtitle={Boolean(showScribeSubtitles && latestScribeSubtitle)}
+            hasBottomSubtitle={Boolean(showScribeSubtitles && latestScribeSubtitle && aestheticSettings.speechStyle !== 'woven')}
             onOpenMonitor={onOpenMonitor}
             onClose={() => setShowPerfHud(false)}
           />

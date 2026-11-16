@@ -76,7 +76,14 @@ export interface AestheticSettings {
   /** How speech and thoughts are shown: in bubbles, or embroidered onto the cloth as woven text. */
   speechStyle: 'bubbles' | 'woven';
   /** The hand woven letters are worked in. */
-  wovenHand: 'satin' | 'counted';
+  wovenHand: 'satin' | 'script' | 'ductus' | 'counted';
+  /** Letter size as a share of the usual (1). */
+  wovenSize: number;
+  /** For the ductus hand: thread thickness, forward lean, hand wobble, and stitch. */
+  wovenWeight: number;
+  wovenSlant: number;
+  wovenWobble: number;
+  wovenStitch: 'back' | 'running' | 'stem' | 'chain';
   /** Seconds woven letters stay at full strength, then seconds they take to fade. */
   wovenHoldSec: number;
   wovenFadeSec: number;
@@ -111,6 +118,11 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   figureQuirks: true,
   speechStyle: 'woven',
   wovenHand: 'satin',
+  wovenSize: 1,
+  wovenWeight: 0.075,
+  wovenSlant: 0.15,
+  wovenWobble: 0.5,
+  wovenStitch: 'back',
   wovenHoldSec: 24,
   wovenFadeSec: 8,
   player: { ...DEFAULT_PLAYER_APPEARANCE },
@@ -406,7 +418,12 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
     figureTurns: typeof raw?.figureTurns === 'boolean' ? raw.figureTurns : DEFAULT_AESTHETIC_SETTINGS.figureTurns,
     figureQuirks: typeof raw?.figureQuirks === 'boolean' ? raw.figureQuirks : DEFAULT_AESTHETIC_SETTINGS.figureQuirks,
     speechStyle: raw?.speechStyle === 'bubbles' || raw?.speechStyle === 'woven' ? raw.speechStyle : DEFAULT_AESTHETIC_SETTINGS.speechStyle,
-    wovenHand: raw?.wovenHand === 'counted' || raw?.wovenHand === 'satin' ? raw.wovenHand : DEFAULT_AESTHETIC_SETTINGS.wovenHand,
+    wovenHand: (['satin', 'script', 'ductus', 'counted'] as const).includes(raw?.wovenHand as never) ? raw!.wovenHand! : DEFAULT_AESTHETIC_SETTINGS.wovenHand,
+    wovenSize: typeof raw?.wovenSize === 'number' ? Math.max(0.4, Math.min(2, raw.wovenSize)) : DEFAULT_AESTHETIC_SETTINGS.wovenSize,
+    wovenWeight: typeof raw?.wovenWeight === 'number' ? Math.max(0.02, Math.min(0.2, raw.wovenWeight)) : DEFAULT_AESTHETIC_SETTINGS.wovenWeight,
+    wovenSlant: typeof raw?.wovenSlant === 'number' ? Math.max(-0.3, Math.min(0.6, raw.wovenSlant)) : DEFAULT_AESTHETIC_SETTINGS.wovenSlant,
+    wovenWobble: typeof raw?.wovenWobble === 'number' ? Math.max(0, Math.min(1.5, raw.wovenWobble)) : DEFAULT_AESTHETIC_SETTINGS.wovenWobble,
+    wovenStitch: (['back', 'running', 'stem', 'chain'] as const).includes(raw?.wovenStitch as never) ? raw!.wovenStitch! : DEFAULT_AESTHETIC_SETTINGS.wovenStitch,
     wovenHoldSec: typeof raw?.wovenHoldSec === 'number' ? Math.max(2, Math.min(300, raw.wovenHoldSec)) : DEFAULT_AESTHETIC_SETTINGS.wovenHoldSec,
     wovenFadeSec: typeof raw?.wovenFadeSec === 'number' ? Math.max(0.5, Math.min(60, raw.wovenFadeSec)) : DEFAULT_AESTHETIC_SETTINGS.wovenFadeSec,
     deoverlapLabels:

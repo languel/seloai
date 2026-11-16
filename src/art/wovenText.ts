@@ -42,6 +42,8 @@ export interface WovenOptions {
   /** Letters sewn per second, at most: the pace of the writing. */
   charsPerSec: number;
   bounds: { w: number; h: number };
+  /** Width of a character along its line, as a share of the letter size (defaults to `advanceOf`). */
+  advance?: (ch: string) => number;
 }
 
 export interface WovenLetter {
@@ -59,6 +61,8 @@ export interface WovenLetter {
   born: number;
   /** Order within its line. */
   seq: number;
+  /** Width along its line, as a share of its size. */
+  adv: number;
 }
 
 interface LineState {
@@ -182,7 +186,8 @@ export class WovenText {
   private place(line: LineState, ch: string, t: number, obstacles: WovenObstacle[], opts: WovenOptions): boolean {
     const size = opts.size * (line.kind === 'thought' ? 0.85 : 1);
     if (!line.started && !this.start(line, obstacles, opts)) return false;
-    const step = advanceOf(ch) * size;
+    const adv = (opts.advance ?? advanceOf)(ch);
+    const step = adv * size;
     // The way the line wants to go: around the speaker at its orbit, curling in or out.
     const dx = line.hx - line.sx;
     const dy = line.hy - line.sy;
@@ -205,7 +210,7 @@ export class WovenText {
         const x = line.hx + Math.cos(a) * step * 0.5;
         const y = line.hy + Math.sin(a) * step * 0.5;
         if (!this.free(x, y, size, line, obstacles, opts)) continue;
-        this.letters.push({ ch, x, y, angle: a, size, colour: line.colour, speakerId: line.speakerId, kind: line.kind, lineKey: line.key, born: t, seq: line.placed });
+        this.letters.push({ ch, x, y, angle: a, size, colour: line.colour, speakerId: line.speakerId, kind: line.kind, lineKey: line.key, born: t, seq: line.placed, adv });
         const k2 = this.key(x, y);
         const list = this.grid.get(k2);
         const letter = this.letters[this.letters.length - 1];
@@ -277,7 +282,7 @@ export class WovenText {
         const dx = s.x - l.x;
         const dy = s.y - l.y;
         const d = Math.hypot(dx, dy) || 0.01;
-        const rest = l.size * 0.56;
+        const rest = l.size * (l.adv + s.adv) * 0.5;
         fx += (dx / d) * (d - rest) * 0.5;
         fy += (dy / d) * (d - rest) * 0.5;
       }

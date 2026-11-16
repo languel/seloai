@@ -1,15 +1,38 @@
 /**
- * Embroidered letters for woven text, drawn once per letter, colour and size and cached.
- *
- * Two hands:
- * - "satin": the letter is taken from a serif face and worked as satin stitch, filled with
- *   fine slanting threads that catch the light, with a couched outline and a shadow so it
- *   sits on the cloth. Upper and lower case, easy to read.
- * - "counted": the letter is cross-stitched on the 5 by 7 sampler grid of `lettering`.
+ * Embroidered letters for woven text, drawn once per letter, colour, size and style and
+ * cached. Satin letters come from a serif face filled with slanting satin threads, a couched
+ * outline and a shadow so they sit on the cloth; the other hands are described below.
  */
+import { ductusStrokes, drawDuctus, type DuctusStitch } from './ductus';
 import { glyphGrid } from './lettering';
+import type { WovenLetter } from './wovenText';
 
-export type WovenHand = 'satin' | 'counted';
+/**
+ * - "satin": serif letters filled with satin stitch.
+ * - "script": the system's handwriting face, thin, with a faint thread sheen.
+ * - "ductus": this project's single-stroke hand, sewn in a chosen stitch and stitched on
+ *   stroke by stroke as it is written.
+ * - "counted": sampler capitals in cross stitch.
+ */
+export type WovenHand = 'satin' | 'script' | 'ductus' | 'counted';
+
+export interface WovenStyle {
+  hand: WovenHand;
+  /** Thread thickness as a share of the letter height (ductus). */
+  weight: number;
+  /** Forward lean (ductus). */
+  slant: number;
+  /** How hand-written each letter wobbles, 0 to 1 (ductus). */
+  wobble: number;
+  stitch: DuctusStitch;
+}
+
+export const DEFAULT_WOVEN_STYLE: WovenStyle = { hand: 'satin', weight: 0.075, slant: 0.15, wobble: 0.5, stitch: 'back' };
+
+const SCRIPT_FACE = '"Bradley Hand", "Segoe Print", "Noteworthy", "Chalkboard SE", "Comic Neue", cursive';
+/** The x-height of a ductus letter, as a share of the woven letter size. */
+export const DUCTUS_X_HEIGHT = 0.52;
+const WRITE_SEC = 0.32;
 
 const cache = new Map<string, HTMLCanvasElement>();
 
@@ -26,10 +49,19 @@ function shade(colour: string, amount: number): string {
  * A letter `px` pixels tall, centred in its canvas (which is 1.3 × px square). `lineLook`
  * leaves out the satin sheen, for the one-ink looks.
  */
-export function stitchedGlyph(ch: string, colour: string, px: number, hand: WovenHand, italic: boolean, lineLook: boolean): HTMLCanvasElement | null {
+export function stitchedGlyph(
+  ch: string,
+  colour: string,
+  px: number,
+  hand: WovenHand,
+  italic: boolean,
+  lineLook: boolean,
+  style: WovenStyle = DEFAULT_WOVEN_STYLE,
+  variant = 0,
+): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null;
   const size = Math.max(6, Math.round(px));
-  const key = `${ch}|${colour}|${size}|${hand}|${italic}|${lineLook}`;
+  const key = `${ch}|${colour}|${size}|${hand}|${italic}|${lineLook}|${hand === 'ductus' ? `${style.weight}|${style.slant}|${style.wobble}|${style.stitch}|${variant}` : ''}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const side = Math.ceil(size * 1.3);
@@ -39,7 +71,31 @@ export function stitchedGlyph(ch: string, colour: string, px: number, hand: Wove
   const ctx = canvas.getContext('2d')!;
   const c = side / 2;
 
-  if (hand === 'counted') {
+  if (hand === 'ductus') {
+    ctx.translate(c, c);
+    const strokes = ductusStrokes(ch, { slant: style.slant + (italic ? 0.12 : 0), wobble: style.wobble, seed: variant * 7919 + ch.charCodeAt(0) });
+    drawDuctus(ctx, strokes, size * DUCTUS_X_HEIGHT, colour, style.weight / DUCTUS_X_HEIGHT, style.stitch, 1, !lineLook);
+  } else if (hand === 'script') {
+    ctx.font = `${italic ? 'italic ' : ''}400 ${size}px ${SCRIPT_FACE}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (!lineLook) {
+      ctx.fillStyle = 'rgba(40, 26, 12, 0.22)';
+      ctx.fillText(ch, c + size * 0.04, c + size * 0.05);
+    }
+    ctx.fillStyle = colour;
+    ctx.fillText(ch, c, c);
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.strokeStyle = lineLook ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = Math.max(0.5, size * 0.03);
+    for (let i = -side; i < side * 2; i += Math.max(1.2, size * 0.1)) {
+      ctx.beginPath();
+      ctx.moveTo(i, side);
+      ctx.lineTo(i + side * 0.55, 0);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  } else if (hand === 'counted') {
     const grid = glyphGrid(ch);
     const cell = size / 7.6;
     const ox = c - (5 * cell) / 2;
@@ -99,4 +155,37 @@ export function stitchedGlyph(ch: string, colour: string, px: number, hand: Wove
   if (cache.size > 3000) cache.clear();
   cache.set(key, canvas);
   return canvas;
+}
+
+/**
+ * Draws one woven letter at its place on the cloth. `scale` is screen pixels per world pixel
+ * (for crisp glyphs). A ductus letter younger than a third of a second is drawn stroke by
+ * stroke as it is being written; every other letter comes from the glyph cache.
+ */
+export function drawWovenLetter(
+  ctx: CanvasRenderingContext2D,
+  l: WovenLetter,
+  t: number,
+  alpha: number,
+  style: WovenStyle,
+  scale: number,
+  lineLook: boolean,
+) {
+  ctx.save();
+  ctx.globalAlpha = alpha * (l.kind === 'thought' ? 0.72 : 1);
+  ctx.translate(l.x, l.y);
+  ctx.rotate(l.angle);
+  const variant = l.seq % 4;
+  const age = t - l.born;
+  if (style.hand === 'ductus' && age < WRITE_SEC) {
+    const strokes = ductusStrokes(l.ch, { slant: style.slant + (l.kind === 'thought' ? 0.12 : 0), wobble: style.wobble, seed: variant * 7919 + l.ch.charCodeAt(0) });
+    drawDuctus(ctx, strokes, l.size * DUCTUS_X_HEIGHT, l.colour, style.weight / DUCTUS_X_HEIGHT, style.stitch, age / WRITE_SEC, !lineLook);
+  } else {
+    const glyph = stitchedGlyph(l.ch, l.colour, l.size * scale, style.hand, l.kind === 'thought', lineLook, style, variant);
+    if (glyph) {
+      const w = glyph.width / scale;
+      ctx.drawImage(glyph, -w / 2, -w / 2, w, w);
+    }
+  }
+  ctx.restore();
 }
