@@ -509,7 +509,28 @@ Within a cell, the art system can also use Wang logic for terrain marks: choose 
 water drawing for a cell from which of its four neighbours share its terrain, exactly as
 `paintWangEdgeCell` does, so bands turn corners and end cleanly.
 
-### 8.2 Ambient density (owner request, not started)
+### 8.2 Ambient density (owner request, first pass done)
+
+Done: `withAmbience(model, seed)` in `src/art/ambient.ts`, applied by `renderWorldLayer`
+after the world's own features. It uses only free open ground (not roads, water, walls,
+dry ground, world features or the cells round a landmark), never moves what the world
+placed and never changes walkability, and is seeded by the map name so it is stable:
+
+- **Yards**: a wattle fence (posts, two gold rails, a gate gap) in front of, beside or
+  behind each house, with a haystack or woodpile, a sunflower and often a hen.
+- **Fields**: up to two strip fields near the houses, rows of grain in alternating inks or
+  vines on posts with tendrils and grapes, inside a stitched boundary.
+- **Groves**: two to seven centres; trees of life and saplings thin with distance and keep
+  clear of roads.
+- **Water life**: reeds with cattails on the banks, the odd duck on the water.
+- **Ground cover**: a diagonal lattice of tiny four-knot rosettes over open meadow.
+
+Low ambient pieces (rosettes, fields, fences, reeds, ducks) draw beneath everything;
+the rest is depth-sorted with the world's features. Still static: characters walk over
+groves rather than among them (see item 5 of section 8). Next: villages along roads with
+houses facing them, orchards, a mill on the river, stepping stones.
+
+The original brief, kept for its detail:
 
 The current world is sparse: 22 trees and 3 houses on a 48×36 map. The owner wants groves
 and villages. Density should come from **clusters with structure**, not from raising a

@@ -199,3 +199,29 @@ describe('figure kinds', () => {
     }
   });
 });
+
+describe('ambient density', () => {
+  it('adds groves, yards and fields only on open ground, deterministically, without moving world features', async () => {
+    const { withAmbience } = await import('../ambient');
+    const pack = findWorldPack('balkan-myth');
+    expect(pack).toBeDefined();
+    const map = pack!.build().map;
+    const model = buildSceneModel(map, tileSemanticsForMap(map));
+    const a = withAmbience(model, 7);
+    const b = withAmbience(model, 7);
+    expect(JSON.stringify(a.features)).toBe(JSON.stringify(b.features));
+    const original = new Set(model.features.map((f) => `${f.kind}:${f.x}:${f.y}`));
+    const added = a.features.filter((f) => !original.has(`${f.kind}:${f.x}:${f.y}`));
+    expect(added.length).toBeGreaterThan(20);
+    expect(a.features.filter((f) => original.has(`${f.kind}:${f.x}:${f.y}`)).length).toBe(model.features.length);
+    const kinds = new Set(added.map((f) => f.kind));
+    for (const k of ['rosette', 'grove'] as const) expect(kinds.has(k), k).toBe(true);
+    for (const f of added) {
+      if (f.kind === 'duck') {
+        expect(model.terrain[f.x][f.y]).toBe('water');
+        continue;
+      }
+      for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y; y < f.y + f.h; y++) expect(model.terrain[x][y], `${f.kind} at ${x},${y}`).toBe('ground');
+    }
+  });
+});

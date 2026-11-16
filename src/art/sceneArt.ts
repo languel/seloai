@@ -118,7 +118,167 @@ function featureShapes(feature: SceneFeature): Shape[] {
       );
     case 'prop':
       return place(chevronLeaf(U * 0.55, ['dark', 'gold']), { dx: footX, dy: footY });
+    case 'grove':
+      return place(treeOfLife(rng, feature.h * U * 0.78), { dx: footX, dy: footY });
+    case 'sapling':
+      return place(pine({ ...feature, h: feature.h * 0.72 }), { dx: footX, dy: footY });
+    case 'fence':
+      return fence(feature);
+    case 'haystack':
+      return place(haystack(), { dx: footX, dy: footY });
+    case 'woodpile':
+      return place(woodpile(), { dx: footX, dy: footY });
+    case 'sunflower':
+      return place(sunflower(), { dx: footX, dy: footY });
+    case 'hen':
+      return place(bird(rng() < 0.5, 'gold', 'primary'), { dx: footX, dy: footY - U * 0.1 });
+    case 'duck':
+      return place(bird(rng() < 0.5, 'gold', 'accent'), { dx: footX, dy: centreY + U * 0.1 });
+    case 'field':
+      return strips(feature, false);
+    case 'vineyard':
+      return strips(feature, true);
+    case 'reeds':
+      return place(reeds(rng), { dx: footX, dy: footY });
+    case 'rosette':
+      return place(rosette(rng), { dx: footX, dy: centreY });
   }
+}
+
+/** A wattle fence round a yard: posts with two woven rails, open at the house and the gate. */
+function fence(feature: SceneFeature): Shape[] {
+  const x0 = feature.x * U + U * 0.2;
+  const x1 = (feature.x + feature.w) * U - U * 0.2;
+  const y0 = feature.y * U + U * 0.15;
+  const y1 = (feature.y + feature.h) * U - U * 0.25;
+  const gate = [(x0 + x1) / 2 - U * 0.45, (x0 + x1) / 2 + U * 0.45];
+  const shapes: Shape[] = [];
+  const run = (a: Pt, b: Pt) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const posts = Math.max(1, Math.round(len / (U * 0.75)));
+    for (let i = 0; i <= posts; i++) {
+      const x = a[0] + ((b[0] - a[0]) * i) / posts;
+      const y = a[1] + ((b[1] - a[1]) * i) / posts;
+      shapes.push({ kind: 'line', points: [[x, y], [x, y - U * 0.42]], ink: 'dark', weight: 0.45 });
+    }
+    for (const lift of [0.14, 0.3]) {
+      shapes.push({ kind: 'line', points: [[a[0], a[1] - U * lift], [b[0], b[1] - U * lift]], ink: 'gold', weight: 0.4 });
+    }
+  };
+  run([x0, y0], [x0, y1]);
+  run([x1, y0], [x1, y1]);
+  run([x0, y1], [gate[0], y1]);
+  run([gate[1], y1], [x1, y1]);
+  return shapes;
+}
+
+function haystack(): Shape[] {
+  const w = U * 0.42;
+  const h = U * 0.8;
+  const dome: Pt[] = [[-w, 0], ...Array.from({ length: 9 }, (_, i): Pt => {
+    const a = Math.PI + (i / 8) * Math.PI;
+    return [Math.cos(a) * w, -h * 0.35 + Math.sin(a) * h * 0.65];
+  }), [w, 0]];
+  return [
+    { kind: 'area', points: dome, ink: 'gold', grain: UP },
+    { kind: 'line', points: [[0, -h], [0, -h - U * 0.18]], ink: 'dark', weight: 0.5 },
+    { kind: 'line', points: [[-w * 0.7, -h * 0.35], [w * 0.7, -h * 0.35]], ink: 'dark', weight: 0.3 },
+  ];
+}
+
+function woodpile(): Shape[] {
+  const shapes: Shape[] = [];
+  const r = U * 0.11;
+  for (const [row, count] of [[0, 3], [1, 2], [2, 1]] as const) {
+    for (let i = 0; i < count; i++) {
+      const x = (i - (count - 1) / 2) * r * 2.2;
+      const y = -r - row * r * 1.9;
+      shapes.push({ kind: 'line', points: circle([x, y], r, 8), ink: 'dark', weight: 0.4, closed: true });
+      shapes.push({ kind: 'knot', at: [x, y], r: r * 0.35, ink: 'gold' });
+    }
+  }
+  return shapes;
+}
+
+function sunflower(): Shape[] {
+  const h = U * 0.95;
+  const shapes: Shape[] = [
+    { kind: 'line', points: [[0, 0], [U * 0.04, -h]], ink: 'accent', weight: 0.5 },
+    { kind: 'area', points: [[0, -h * 0.4], [U * 0.28, -h * 0.55], [U * 0.05, -h * 0.5]], ink: 'accent', grain: 0 },
+  ];
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    shapes.push({ kind: 'knot', at: [U * 0.04 + Math.cos(a) * U * 0.17, -h + Math.sin(a) * U * 0.17], r: U * 0.07, ink: 'gold' });
+  }
+  shapes.push({ kind: 'knot', at: [U * 0.04, -h], r: U * 0.1, ink: 'dark' });
+  return shapes;
+}
+
+/** A small bird: a hen in a yard, a duck on the water. */
+function bird(facingLeft: boolean, body: Ink, head: Ink): Shape[] {
+  const s = U * 0.26;
+  const shapes: Shape[] = [
+    { kind: 'area', points: [[-s, -s * 0.2], [-s * 0.4, -s * 0.9], [s * 0.6, -s * 0.8], [s, -s * 0.3], [s * 0.5, 0], [-s * 0.6, 0]], ink: body, grain: 0 },
+    { kind: 'knot', at: [s * 0.75, -s * 1.05], r: s * 0.32, ink: head },
+    { kind: 'area', points: [[s * 1.0, -s * 1.1], [s * 1.35, -s * 0.98], [s * 1.0, -s * 0.9]], ink: 'primary', grain: 0 },
+    { kind: 'line', points: [[-s, -s * 0.25], [-s * 1.35, -s * 0.85]], ink: 'dark', weight: 0.35 },
+  ];
+  return facingLeft ? place(shapes, { mirrorX: true }) : shapes;
+}
+
+/** Strip fields: parallel rows of grain, or vines on posts, inside a stitched boundary. */
+function strips(feature: SceneFeature, vines: boolean): Shape[] {
+  const x0 = feature.x * U + U * 0.25;
+  const x1 = (feature.x + feature.w) * U - U * 0.25;
+  const y0 = feature.y * U + U * 0.3;
+  const y1 = (feature.y + feature.h) * U - U * 0.2;
+  const shapes: Shape[] = [
+    { kind: 'line', points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], ink: 'dark', weight: 0.3, closed: true },
+  ];
+  const rows = Math.max(2, Math.round((y1 - y0) / (U * 0.55)));
+  for (let r = 0; r < rows; r++) {
+    const y = y0 + ((r + 0.7) / rows) * (y1 - y0);
+    if (vines) {
+      shapes.push({ kind: 'line', points: [[x0 + U * 0.2, y - U * 0.3], [x1 - U * 0.2, y - U * 0.3]], ink: 'dark', weight: 0.25 });
+      for (let x = x0 + U * 0.35; x < x1 - U * 0.2; x += U * 0.7) {
+        shapes.push({ kind: 'line', points: [[x, y], [x, y - U * 0.38]], ink: 'dark', weight: 0.35 });
+        shapes.push({ kind: 'line', points: curl([x + U * 0.08, y - U * 0.22], U * 0.12, 1, 1, 0), ink: 'accent', weight: 0.35 });
+        shapes.push({ kind: 'knot', at: [x + U * 0.22, y - U * 0.12], r: U * 0.06, ink: 'accent2' });
+      }
+    } else {
+      const ink: Ink = r % 2 ? 'gold' : 'accent';
+      for (let x = x0 + U * 0.2; x < x1 - U * 0.1; x += U * 0.32) {
+        shapes.push({ kind: 'line', points: [[x - U * 0.06, y], [x + U * 0.06, y - U * 0.26]], ink, weight: 0.35 });
+      }
+    }
+  }
+  return shapes;
+}
+
+function reeds(rng: () => number): Shape[] {
+  const shapes: Shape[] = [];
+  for (let i = 0; i < 3; i++) {
+    const x = (i - 1) * U * 0.16 + (rng() - 0.5) * U * 0.06;
+    const h = U * (0.55 + rng() * 0.3);
+    shapes.push({ kind: 'line', points: [[x, 0], [x + (i - 1) * U * 0.06, -h]], ink: 'accent', weight: 0.35 });
+    if (i !== 1) {
+      // A cattail head: a small upright oval at the top of the stem.
+      const cx = x + (i - 1) * U * 0.06;
+      const cy = -h - U * 0.1;
+      shapes.push({ kind: 'area', points: circle([cx, cy], U * 0.05, 8).map(([px, py]): Pt => [px, cy + (py - cy) * 2.2]), ink: 'dark', grain: UP });
+    }
+  }
+  return shapes;
+}
+
+/** A tiny four-knot rosette: one repeat of the meadow's all-over pattern. */
+function rosette(rng: () => number): Shape[] {
+  const r = U * 0.12;
+  const ink: Ink = rng() < 0.5 ? 'accent' : 'gold';
+  return [
+    ...[0, 1, 2, 3].map((i): Shape => ({ kind: 'knot', at: [Math.cos((i * Math.PI) / 2) * r, Math.sin((i * Math.PI) / 2) * r], r: 0.32, ink })),
+    { kind: 'knot', at: [0, 0], r: 0.3, ink: 'primary' },
+  ];
 }
 
 function terrainShapes(model: SceneModel): Shape[] {

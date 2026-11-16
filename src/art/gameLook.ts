@@ -6,6 +6,7 @@ import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureView } from './figures';
+import { withAmbience } from './ambient';
 import { buildSceneModel, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { bounds, type Pt, type Shape } from './shapes';
@@ -42,7 +43,7 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
     palette: PALETTES[look],
     seed: hashString(map.name),
   };
-  const shapes = sceneShapes(buildSceneModel(map, semantics));
+  const shapes = sceneShapes(withAmbience(buildSceneModel(map, semantics), hashString(map.name)));
   if (isThread(look)) {
     paintLinen(ctx, canvas.width, canvas.height, options);
     renderEmbroidery(ctx, shapes, options);

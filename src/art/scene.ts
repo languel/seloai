@@ -6,7 +6,30 @@ import { createSeededRng, hashString } from '../core/rng';
 import type { PointOfInterest, VillageMap } from '../engine/types';
 
 export type Terrain = 'ground' | 'water' | 'road' | 'dry' | 'wall' | 'bridge';
-export type FeatureKind = 'house' | 'tree' | 'pine' | 'well' | 'hearth' | 'star' | 'pool' | 'wheat' | 'flowers' | 'prop';
+export type FeatureKind =
+  | 'house'
+  | 'tree'
+  | 'pine'
+  | 'well'
+  | 'hearth'
+  | 'star'
+  | 'pool'
+  | 'wheat'
+  | 'flowers'
+  | 'prop'
+  // Ambient detail, added by `withAmbience` (src/art/ambient.ts) rather than by a world.
+  | 'grove'
+  | 'sapling'
+  | 'fence'
+  | 'haystack'
+  | 'woodpile'
+  | 'sunflower'
+  | 'hen'
+  | 'field'
+  | 'vineyard'
+  | 'reeds'
+  | 'duck'
+  | 'rosette';
 
 export interface TileMeaning {
   terrain?: Terrain;
