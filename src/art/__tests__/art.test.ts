@@ -265,3 +265,18 @@ describe('Wang worlds', () => {
     }
   });
 });
+
+describe('conversation threads', () => {
+  it('joins everyone in a conversation to its speaker, and sags below the straight line', async () => {
+    const { threadPairs, threadPoint } = await import('../threads');
+    const pairs = threadPairs([
+      { id: 'a', x: 0, y: 0, speaking: false, conversationId: 'c1' },
+      { id: 'b', x: 100, y: 0, speaking: true, conversationId: 'c1' },
+      { id: 'c', x: 50, y: 50, speaking: false, conversationId: 'c1' },
+      { id: 'd', x: 300, y: 0, speaking: false, conversationId: 'c2' },
+    ]);
+    expect(pairs.map(([s, l]) => `${s.id}-${l.id}`)).toEqual(['b-a', 'b-c']);
+    const [, midY] = threadPoint({ x: 0, y: 0 }, { x: 100, y: 0 }, 0.5);
+    expect(midY).toBeGreaterThan(0);
+  });
+});

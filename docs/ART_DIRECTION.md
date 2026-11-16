@@ -595,7 +595,12 @@ like a flat sticker sheet.
 The owner wants thread to be part of play, not only decoration. Nothing is built. Ideas
 that fit the engine as it stands, cheapest first:
 
-- **Conversation threads.** While two characters talk, draw a stitched line between them
+- **Conversation threads** (first pass done, `src/art/threads.ts`): everyone sharing an
+  `activeConversationId` is joined to the speaker by a sagging running-stitch thread at
+  chest height, drawn behind the bodies in the art looks. While someone speaks, the
+  stitches flow from speaker to listener and a small gold knot travels along the thread.
+  Next: keep a faint thread for a while after a conversation ends, and colour threads by
+  relationship. The original note: while two characters talk, draw a stitched line between them
   that grows stitch by stitch with each turn. `VillagerRuntime.activeConversationId` gives
   the pairs.
 - **Relationship threads.** The Control Room already derives a graph of who has spoken to

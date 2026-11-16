@@ -16,6 +16,7 @@ import { tileSemanticsForMap } from '../world/packs';
 import { Glyph, GlyphButton, GlyphTip } from './Glyph';
 import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
+import { drawConversationThreads, type ThreadEnd } from '../art/threads';
 import type { PaletteName } from '../art/looks';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
@@ -873,6 +874,23 @@ export const VillageView: React.FC<VillageViewProps> = ({
       // Optional pass: Bubbles draw behind character sprites when enabled
       if (aestheticSettings.bubblesBehindCharacters) {
         renderOverlayBatch(ctx, overlayBatch, 'bubbles');
+      }
+
+      // Conversation threads hang between talking characters, behind their bodies.
+      if (worldLook !== 'tiles') {
+        const bodyH = map.tileDim * aestheticTokens.canvasTheme.characterScale * FIGURE_HEIGHT_SCALE;
+        const ends: ThreadEnd[] = [];
+        for (const rt of sim.runtimes.values()) {
+          if (!rt.activeConversationId) continue;
+          ends.push({
+            id: rt.id,
+            x: rt.x * map.tileDim + map.tileDim / 2,
+            y: rt.y * map.tileDim + map.tileDim - 4 - bodyH * 0.5,
+            speaking: rt.state === 'speaking',
+            conversationId: rt.activeConversationId,
+          });
+        }
+        drawConversationThreads(ctx, ends, worldLook, timeSec);
       }
 
       // Pass 2: Y-sorted entities (villagers + player)
