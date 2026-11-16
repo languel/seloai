@@ -347,6 +347,77 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
               </div>
               <div>
                 <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
+                  Speech and thoughts
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {(
+                    [
+                      ['bubbles', 'Bubbles', 'Speech bubbles that follow the characters'],
+                      ['woven', 'Woven text', 'Words embroidered onto the cloth around the speaker, fading in time'],
+                    ] as const
+                  ).map(([value, label, hint]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      title={hint}
+                      aria-pressed={settings.speechStyle === value}
+                      onClick={() => onChange({ ...settings, speechStyle: value })}
+                      className="rounded border px-1.5 py-1 text-[10px]"
+                      style={pillBtnStyle(settings.speechStyle === value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {settings.speechStyle === 'woven' && (
+                  <div className="mt-1.5 space-y-1.5">
+                    <div className="grid grid-cols-2 gap-1">
+                      {(
+                        [
+                          ['satin', 'Satin letters', 'Upper and lower case worked in satin stitch'],
+                          ['counted', 'Counted letters', 'Capitals cross-stitched on the sampler grid'],
+                        ] as const
+                      ).map(([value, label, hint]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          title={hint}
+                          aria-pressed={settings.wovenHand === value}
+                          onClick={() => onChange({ ...settings, wovenHand: value })}
+                          className="rounded border px-1.5 py-1 text-[10px]"
+                          style={pillBtnStyle(settings.wovenHand === value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {(
+                      [
+                        ['wovenHoldSec', 'Words stay', 4, 120, 1],
+                        ['wovenFadeSec', 'Then fade over', 1, 30, 0.5],
+                      ] as const
+                    ).map(([key, label, min, max, step]) => (
+                      <label key={key} className="block text-[10px]">
+                        <span className="flex justify-between" style={{ color: tokens.hudMutedColor }}>
+                          <span>{label}</span>
+                          <span>{settings[key]}s</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={min}
+                          max={max}
+                          step={step}
+                          value={settings[key]}
+                          onChange={(e) => onChange({ ...settings, [key]: Number(e.target.value) })}
+                          className="stitch-range w-full"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
                   Figure drawing
                 </div>
                 <div className="grid grid-cols-2 gap-1">

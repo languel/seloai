@@ -825,6 +825,26 @@ one has missed the point.
     the Wang worlds are the generator to build on.
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.
 
+## 12.1 Woven text (owner request)
+
+Speech and thoughts can be embroidered onto the cloth instead of shown in bubbles, in the
+manner of concrete poetry: not always legible, part of the picture. Style panel, "Speech
+and thoughts": Bubbles or Woven text (the default), satin or counted letters, how long words
+stay and how long they take to fade. Lab: `/art-lab.html?only=woven` (add `&hand=counted`).
+
+- `src/art/wovenText.ts` lays each line letter by letter along a path that circles its
+  speaker, bending gently, wandering a little and spiralling slowly outward, turning to
+  avoid characters and existing text; when boxed in it jumps to the nearest spot with room
+  for several letters. New letters stay wet for about a second while a small packing
+  simulation (repulsion from neighbours and characters, springs along the line) settles
+  them; then they never move. As a speaker walks, new letters follow them and old ones stay.
+  Letters hold, then fade, freeing room. Pure and reproducible.
+- `src/art/wovenGlyphs.ts` draws each letter as embroidery: "satin" takes the letter from a
+  serif face and fills it with slanting satin threads with a couched outline and a shadow
+  (upper and lower case); "counted" cross-stitches the sampler capitals of `lettering`.
+- Each character's words are in the thread of their own bodice (or skirt). Thoughts are
+  italic and lighter. A dashed thread joins a speaker to the words they are sewing.
+
 ## 13. Related documents
 
 - `HANDOFF.md`: architecture of the whole app, commands for running and testing.

@@ -17,8 +17,12 @@ import { tileSemanticsForMap } from '../world/packs';
 import { Glyph, GlyphButton, GlyphTip } from './Glyph';
 import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
-import { drawConversationThreads, type ThreadEnd } from '../art/threads';
-import type { PaletteName } from '../art/looks';
+import { drawConversationThreads, threadPoint, type ThreadEnd } from '../art/threads';
+import { WovenText, type WovenObstacle, type WovenSpeaker } from '../art/wovenText';
+import { stitchedGlyph } from '../art/wovenGlyphs';
+import { seededFigureTraits } from '../art/figures';
+import { createSeededRng, hashString } from '../core/rng';
+import { PALETTES, type PaletteName } from '../art/looks';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -467,6 +471,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
   });
   const storyRef = useRef(storyMode);
+  /** Speech and thoughts embroidered onto the cloth, when the woven text style is on. */
+  const wovenRef = useRef(new WovenText());
+  const threadColourRef = useRef(new Map<string, string>());
   /** The floating toolbar over the top of the view: the director frames only what it leaves visible. */
   const hudRef = useRef<HTMLDivElement>(null);
   const directorRef = useRef(new Director());
@@ -923,8 +930,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
         const cfg = sim.configs.get(rt.id);
         if (!cfg) continue;
         drawVillager(ctx, cfg, rt, map.tileDim, rt.id === selectedId, showLabels, {
-          showSpeechBubbles,
-          showThoughtBubbles,
+          // Woven text replaces the bubbles: words are sewn onto the cloth instead.
+          showSpeechBubbles: showSpeechBubbles && aestheticSettings.speechStyle !== 'woven',
+          showThoughtBubbles: showThoughtBubbles && aestheticSettings.speechStyle !== 'woven',
           pois: map.pointsOfInterest,
           theme: canvasTheme,
           collector: overlayCollector,
@@ -976,6 +984,94 @@ export const VillageView: React.FC<VillageViewProps> = ({
           });
         }
         drawConversationThreads(ctx, ends, worldLook, timeSec);
+      }
+
+      // Woven text: what is said and thought, embroidered onto the cloth under the characters.
+      if (aestheticSettings.speechStyle === 'woven') {
+        const td = map.tileDim;
+        const bodyH = td * aestheticTokens.canvasTheme.characterScale * FIGURE_HEIGHT_SCALE;
+        const look = (worldLook === 'tiles' ? 'festive' : worldLook) as PaletteName;
+        const palette = PALETTES[look];
+        const lineLook = look === 'ink' || look === 'night';
+        const colourFor = (id: string): string => {
+          const cfg = sim.configs.get(id);
+          const key = `${id}|${look}|${cfg?.figure?.seed ?? ''}|${JSON.stringify(cfg?.figure?.traits ?? {})}`;
+          const hit = threadColourRef.current.get(key);
+          if (hit) return hit;
+          // A character's words are sewn in the thread of their own bodice (or skirt).
+          const looks = cfg ? figureLooksFor(cfg) : undefined;
+          const seeded = seededFigureTraits(createSeededRng(looks?.seed ?? hashString(id)), looks?.kind);
+          const traits = { ...seeded, ...(looks?.traits ?? {}) };
+          const ink = traits.bodiceInk === 'dark' || traits.bodiceInk === 'gold' ? traits.skirtInk : traits.bodiceInk;
+          const colour = lineLook ? palette.inks.dark : palette.inks[ink];
+          threadColourRef.current.set(key, colour);
+          return colour;
+        };
+        const speakers: WovenSpeaker[] = [];
+        const obstacles: WovenObstacle[] = [];
+        const headOf = (x: number, y: number): [number, number] => [(x + 0.5) * td, (y + 1) * td - 4 - bodyH * 0.8];
+        for (const rt of sim.runtimes.values()) {
+          obstacles.push({ x: (rt.x + 0.5) * td - td * 0.45, y: (rt.y + 1) * td - 4 - bodyH, w: td * 0.9, h: bodyH });
+          const [hx, hy] = headOf(rt.x, rt.y);
+          if (showSpeechBubbles && rt.currentBubble?.text) {
+            speakers.push({ id: rt.id, x: hx, y: hy, text: rt.currentBubble.text, lineId: String(rt.currentBubble.startedAt ?? rt.currentBubble.text.slice(0, 12)), kind: 'speech', colour: colourFor(rt.id) });
+          }
+          if (showThoughtBubbles && rt.currentThoughtBubble?.text) {
+            speakers.push({ id: rt.id, x: hx, y: hy, text: rt.currentThoughtBubble.text, lineId: String(rt.currentThoughtBubble.startedAt ?? rt.currentThoughtBubble.text.slice(0, 12)), kind: 'thought', colour: colourFor(rt.id) });
+          }
+        }
+        obstacles.push({ x: (sim.player.x + 0.5) * td - td * 0.45, y: (sim.player.y + 1) * td - 4 - bodyH, w: td * 0.9, h: bodyH });
+        const woven = wovenRef.current;
+        const options = {
+          size: td * 0.46,
+          holdSec: aestheticSettings.wovenHoldSec,
+          fadeSec: aestheticSettings.wovenFadeSec,
+          charsPerSec: 16,
+          bounds: { w: map.width * td, h: map.height * td },
+        };
+        woven.update(timeSec, speakers, obstacles, options);
+        const scale = Math.min(4, Math.max(1, cam.zoom * (window.devicePixelRatio || 1)));
+        for (const l of woven.letters) {
+          const a = WovenText.alpha(l, timeSec, options);
+          if (a <= 0.01) continue;
+          const glyph = stitchedGlyph(l.ch, l.colour, l.size * scale, aestheticSettings.wovenHand, l.kind === 'thought', lineLook);
+          if (!glyph) continue;
+          const w = glyph.width / scale;
+          ctx.save();
+          ctx.globalAlpha = a * (l.kind === 'thought' ? 0.72 : 1);
+          ctx.translate(l.x, l.y);
+          ctx.rotate(l.angle);
+          ctx.drawImage(glyph, -w / 2, -w / 2, w, w);
+          ctx.restore();
+        }
+        // A thread from each speaker to the words they are sewing.
+        ctx.save();
+        ctx.lineCap = 'round';
+        for (const [id, tail] of woven.tails(timeSec, 5)) {
+          const rt = sim.runtimes.get(id);
+          if (!rt) continue;
+          const [hx, hy] = headOf(rt.x, rt.y);
+          const from = { x: hx, y: hy + bodyH * 0.25 };
+          const fade = Math.max(0, 1 - Math.max(0, timeSec - tail.born - 2) / 3);
+          const sag = Math.min(30, Math.hypot(tail.x - from.x, tail.y - from.y) * 0.18);
+          ctx.globalAlpha = 0.75 * fade;
+          ctx.strokeStyle = tail.colour;
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash(tail.kind === 'thought' ? [2, 3] : [5, 3]);
+          ctx.beginPath();
+          ctx.moveTo(from.x, from.y);
+          ctx.quadraticCurveTo((from.x + tail.x) / 2, (from.y + tail.y) / 2 + sag, tail.x, tail.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const [kx, ky] = threadPoint(from, tail, 1);
+          ctx.fillStyle = tail.colour;
+          ctx.beginPath();
+          ctx.arc(kx, ky, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      } else if (wovenRef.current.letters.length) {
+        wovenRef.current.clear();
       }
 
       // Pass 2: Y-sorted entities (villagers + player)

@@ -63,6 +63,11 @@ function baseCharacter(ch: string): string {
   return GLYPHS[plain] ? plain : ' ';
 }
 
+/** The sampler grid for one character (seven rows of five; '#' is a stitch), or empty rows. */
+export function glyphGrid(ch: string): string[] {
+  return GLYPHS[baseCharacter(ch)] ?? Array(GLYPH_H).fill('.'.repeat(GLYPH_W));
+}
+
 export interface LetteringOptions {
   /** Size of one stitch, in units. */
   cell: number;

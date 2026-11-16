@@ -73,6 +73,13 @@ export interface AestheticSettings {
   figureTurns: boolean;
   /** In the art looks, draw figures with the maker's quirks: uneven hems, a tipped head, big motifs. */
   figureQuirks: boolean;
+  /** How speech and thoughts are shown: in bubbles, or embroidered onto the cloth as woven text. */
+  speechStyle: 'bubbles' | 'woven';
+  /** The hand woven letters are worked in. */
+  wovenHand: 'satin' | 'counted';
+  /** Seconds woven letters stay at full strength, then seconds they take to fade. */
+  wovenHoldSec: number;
+  wovenFadeSec: number;
   player: PlayerAppearanceConfig;
 }
 
@@ -102,6 +109,10 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   worldLook: 'festive',
   figureTurns: true,
   figureQuirks: true,
+  speechStyle: 'woven',
+  wovenHand: 'satin',
+  wovenHoldSec: 24,
+  wovenFadeSec: 8,
   player: { ...DEFAULT_PLAYER_APPEARANCE },
 };
 
@@ -394,6 +405,10 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
     worldLook: isWorldLook(raw?.worldLook) ? raw!.worldLook : DEFAULT_AESTHETIC_SETTINGS.worldLook,
     figureTurns: typeof raw?.figureTurns === 'boolean' ? raw.figureTurns : DEFAULT_AESTHETIC_SETTINGS.figureTurns,
     figureQuirks: typeof raw?.figureQuirks === 'boolean' ? raw.figureQuirks : DEFAULT_AESTHETIC_SETTINGS.figureQuirks,
+    speechStyle: raw?.speechStyle === 'bubbles' || raw?.speechStyle === 'woven' ? raw.speechStyle : DEFAULT_AESTHETIC_SETTINGS.speechStyle,
+    wovenHand: raw?.wovenHand === 'counted' || raw?.wovenHand === 'satin' ? raw.wovenHand : DEFAULT_AESTHETIC_SETTINGS.wovenHand,
+    wovenHoldSec: typeof raw?.wovenHoldSec === 'number' ? Math.max(2, Math.min(300, raw.wovenHoldSec)) : DEFAULT_AESTHETIC_SETTINGS.wovenHoldSec,
+    wovenFadeSec: typeof raw?.wovenFadeSec === 'number' ? Math.max(0.5, Math.min(60, raw.wovenFadeSec)) : DEFAULT_AESTHETIC_SETTINGS.wovenFadeSec,
     deoverlapLabels:
       typeof raw?.deoverlapLabels === 'boolean'
         ? raw.deoverlapLabels

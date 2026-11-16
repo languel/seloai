@@ -14,6 +14,8 @@ import { withAmbience } from './ambient';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { CHUNK, generateWangScene } from './wangWorld';
 import { place, type Shape } from './shapes';
+import { WovenText, type WovenSpeaker } from './wovenText';
+import { stitchedGlyph, type WovenHand } from './wovenGlyphs';
 
 type LookName = 'line' | 'thread';
 
@@ -75,6 +77,110 @@ const LOOKS: Array<[string, LookName, PaletteName]> = [
 ];
 
 const only = params.get('only');
+
+// Woven text: three people talking (one walks off), their words sewn onto the cloth, live.
+if (only === 'woven') {
+  const panels = (['festive', 'ink'] as const).map((look) => {
+    const wrap = document.createElement('figure');
+    const canvas = document.createElement('canvas');
+    const W = 900;
+    const H = 560;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    const ctx = canvas.getContext('2d')!;
+    const palette = PALETTES[look];
+    const lineLook = look === 'ink';
+    const ground = document.createElement('canvas');
+    ground.width = W;
+    ground.height = H;
+    const g = ground.getContext('2d')!;
+    if (lineLook) {
+      g.fillStyle = palette.ground;
+      g.fillRect(0, 0, W, H);
+    } else paintLinen(g, W, H, { unit: 6, origin: [0, 0], palette, seed: 3 });
+    const td = 32;
+    const hand = (params.get('hand') as WovenHand) || 'satin';
+    const cast = [
+      { id: 'a', build: 'skirted' as const, colour: lineLook ? palette.inks.dark : palette.inks.primary, lines: ['The Lamia fears living water freely shared. Leave scarlet thread by the well.', 'And according to what I have seen, one day they wake up and decide to do something really strange!'] },
+      { id: 'b', build: 'trousered' as const, colour: lineLook ? palette.inks.dark : palette.inks.secondary, lines: ['Who told you that? The forge was cold all night.', 'Then someone lied at the fire, and the whole square heard it.'] },
+      { id: 'c', build: 'skirted' as const, colour: lineLook ? palette.inks.dark : palette.inks.accent2, lines: ['Hush. Listen to the bells on the ridge.', 'Bring honeyed wheat, silver obols, or an oath kept true.'] },
+    ];
+    const woven = new WovenText();
+    const opts = { size: td * 0.46, holdSec: 16, fadeSec: 5, charsPerSec: 16, bounds: { w: W, h: H } };
+    const start = performance.now();
+    const where = (id: string, t: number): [number, number] => {
+      if (id === 'a') return [300 + Math.min(1, Math.max(0, ((t % 40) - 12) / 8)) * 330, 280];
+      if (id === 'b') return [430, 330];
+      return [560, 250];
+    };
+    const frame = () => {
+      const t = (performance.now() - start) / 1000;
+      const speakers: WovenSpeaker[] = [];
+      cast.forEach((c, i) => {
+        const period = 8;
+        const phase = t + i * 2.7;
+        const k = Math.floor(phase / period);
+        const into = phase % period;
+        const [x, y] = where(c.id, t);
+        if (into < period * 0.75) {
+          const text = c.lines[k % c.lines.length];
+          speakers.push({ id: c.id, x: x + td / 2, y: y - td * 1.2, text: text.slice(0, Math.floor(into * 18)), lineId: `${c.id}${k}`, kind: 'speech', colour: c.colour });
+        }
+      });
+      if (t % 40 > 5 && t % 40 < 10) {
+        const [x, y] = where('b', t);
+        speakers.push({ id: 'b', x: x + td / 2, y: y - td * 1.2, text: 'I should not have said it so plainly...'.slice(0, Math.floor(((t % 40) - 5) * 14)), lineId: `th${Math.floor(t / 40)}`, kind: 'thought', colour: cast[1].colour });
+      }
+      const obstacles = cast.map((c) => {
+        const [x, y] = where(c.id, t);
+        return { x: x + td / 2 - 14, y: y - td * 1.9, w: 28, h: td * 1.9 + 4 };
+      });
+      woven.update(t, speakers, obstacles, opts);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.drawImage(ground, 0, 0);
+      for (const l of woven.letters) {
+        const glyph = stitchedGlyph(l.ch, l.colour, l.size * dpr, hand, l.kind === 'thought', lineLook);
+        if (!glyph) continue;
+        const w = glyph.width / dpr;
+        ctx.save();
+        ctx.globalAlpha = WovenText.alpha(l, t, opts) * (l.kind === 'thought' ? 0.72 : 1);
+        ctx.translate(l.x, l.y);
+        ctx.rotate(l.angle);
+        ctx.drawImage(glyph, -w / 2, -w / 2, w, w);
+        ctx.restore();
+      }
+      for (const [id, tail] of woven.tails(t, 5)) {
+        const [x, y] = where(id, t);
+        const fx = x + td / 2;
+        const fy = y - td * 0.9;
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = tail.colour;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.quadraticCurveTo((fx + tail.x) / 2, (fy + tail.y) / 2 + 18, tail.x, tail.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      cast.forEach((c) => {
+        const [x, y] = where(c.id, t);
+        const rig = getFigureRig(`woven-${c.id}`, look, td * 1.75, undefined, { build: c.build, view: 'front' });
+        paintRig(ctx, rig, x, y - td, td, { id: `wv-${look}-${c.id}`, facing: 'down', moving: c.id === 'a' && t % 40 > 12 && t % 40 < 20, animFrame: t * 5, state: 'idle', time: t });
+      });
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    const caption = document.createElement('figcaption');
+    caption.textContent = look === 'ink' ? 'Line art' : 'Thread, festive';
+    wrap.append(canvas, caption);
+    return wrap;
+  });
+  row('Woven text: speech and thoughts sewn onto the cloth (add &hand=counted for sampler letters)', panels);
+}
 
 // Interface glyphs: each look's ground, every glyph at button size and enlarged.
 if (!only || only === 'glyphs') {
