@@ -1,5 +1,6 @@
 import { isWorldLook, type WorldLook } from '../art/gameLook';
 import type { CSSProperties } from 'react';
+import type { PaletteName } from '../art/looks';
 import type { VillageMap } from '../engine/types';
 
 export type WorldThemeKind = 'balkan-myth' | 'shevitsa' | 'classic';
@@ -231,6 +232,11 @@ export interface CanvasThemeConfig {
   poiGemFill: string;
   /** Draw label and bubble borders as running stitch, for looks where they sit on cloth. */
   stitched?: boolean;
+  /**
+   * The art look to draw bubble and label chrome through (stitched or inked outlines).
+   * Unset for the classic tiles, which keep the flat card styles above.
+   */
+  artLook?: PaletteName;
 }
 
 export interface ResolvedAestheticTokens {

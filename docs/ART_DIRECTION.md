@@ -522,7 +522,7 @@ world in every look.
 
 ---
 
-## 10. The interface (started; glyph buttons done)
+## 10. The interface (started; glyph buttons and bubble chrome done)
 
 The owner's instruction: refine the UI "to match the now beautiful world and chars". The
 HUD, speech bubbles, name pills, sidebar and panels predate the art system and now clash
@@ -553,15 +553,34 @@ Done so far, as a first pass only:
   `resolveOverlappingRects` in `src/engine/renderer.ts`), so other characters' bubbles and
   labels are placed around bodies instead of over them.
 
-This removes the clash but is recolouring, not design. Everything below is still to do.
+- **Bubble and label chrome through the look** (`src/art/overlayChrome.ts`, used by
+  `src/engine/renderer.ts` whenever `CanvasThemeConfig.artLook` is set, which
+  `clothOverlayColours` does for every art look; the classic tiles keep the flat cards in
+  `drawFlatBubbleShape`):
+  - A speech bubble is a see-through cloth patch with a stem-stitched edge (an inked,
+    slightly wavering edge in the line looks). A thought is a lighter patch ringed with
+    knots, trailing three knots towards the head.
+  - Names and places are ribbons: a faint patch, a stitched rule under the words (and over
+    them for places, in gold) with a knot at each end. The selected character and the player
+    use the primary ink.
+  - Outlines are rendered once per size, look and zoom into small cached canvases; text is
+    real text drawn on top. The tail is drawn live.
+  - `bubbleTail(box, head)` picks the edge that faces the head (bottom by preference, else
+    left, right or top), so a bubble the layout pushed beside its speaker still points at
+    them. When a bubble ends up far from its speaker the tail shrinks to a nub and a thin
+    running-stitch thread joins it to the head (`drawBubbleThread`, drawn in a
+    `renderUnder` pass before any bubble so threads never cross bubbles).
+  - Status dots, label leader lines and the scroll marker take the look's inks.
+- **Layout keeps bubbles in view.** `resolveOverlayBatch` takes the visible world rect.
+  A visible speaker's bubbles and labels are kept inside it, trying spots beside the head
+  first; a speaker off screen keeps its bubble where it would be. Body reservations are
+  `fixed` and never move.
 
-**Bubble layout, next steps.** The layout is a greedy rectangle de-overlapper: it moves
-whole bubbles. The owner also suggested text that wraps around characters. Options, in
-order of effort: (a) choose the bubble's side (above, left, right) from where neighbours
-and the screen edge are, with the tail drawn to match; (b) shape the bubble's width to the
-free space before wrapping the text; (c) flow lines of text around body rectangles, using
-the reserved body rects as exclusion zones per line. Whatever is done, a head must never
-be covered, and a bubble must stay visibly attached to its speaker.
+**Bubble layout, next steps.** Still a greedy rectangle de-overlapper. Not yet done: (b)
+shape the bubble's width to the free space before wrapping; (c) flow text around body
+rectangles. The Scribe subtitle panel is not counted as occupied space, so bubbles can
+slide under it at the bottom of the view; pass its rect as a reserved area. Name labels
+are still drawn before bodies, so a figure can stand over its own label.
 
 Direction:
 
@@ -591,9 +610,7 @@ Direction:
 2. **Draw chrome with the art system.** Panel borders as a counted band or running stitch,
    dividers as a row of knots, buttons as stitched outlines, a selected state as a filled
    satin block. Render these to small cached canvases or CSS `border-image` sources.
-3. **Bubbles and labels through the look.** A speech bubble as a stitched outline patch on
-   the cloth; a thought as a looser dotted outline; name labels as small embroidered
-   ribbons. Keep text itself as crisp real text for legibility.
+3. ~~**Bubbles and labels through the look.**~~ Done as described above.
 4. **Typography.** Choose a face that sits with hand-made work and reads at small sizes.
    The two bundled pixel fonts (`upheaval_pro.ttf`, `vcr_osd_mono.ttf`) came from ai-town;
    the owner wants a clean break, so replace them and delete the files.
@@ -650,8 +667,8 @@ one has missed the point.
 1. ~~Animation charm, first pass~~ and ~~expressions from the simulation~~: done (section 7).
    Continue with the "more charm still" list there.
 2. ~~Glyph toolbar~~: done for the header and village toolbar (section 10, item 0).
-3. **Interface restyle** (section 10). The owner named it. Primitives first, then bubbles
-   and labels, then the HUD, then panels.
+3. **Interface restyle** (section 10). The owner named it. Bubbles and labels are done;
+   next the shared primitives (panel, tab, slider, tooltip), then the HUD, then panels.
 4. **Cast-specific figures** (section 7, item 3), starting with Lamia.
 5. **Ambient density**: groves, villages with yards, fields (section 8.2), with depth
    sorting so characters walk among them. The owner named it.

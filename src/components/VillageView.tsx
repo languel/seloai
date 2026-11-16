@@ -817,10 +817,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
         bodyHeightScale: bodyPainter ? FIGURE_HEIGHT_SCALE : 1,
       });
 
-      const overlayBatch = resolveOverlayBatch(
-        overlayCollector,
-        aestheticSettings.deoverlapLabels,
-      );
+      const overlayBatch = resolveOverlayBatch(overlayCollector, aestheticSettings.deoverlapLabels, {
+        x: cam.x - viewW / 2 / cam.zoom,
+        y: cam.y - viewH / 2 / cam.zoom,
+        w: viewW / cam.zoom,
+        h: viewH / cam.zoom,
+      });
 
       // Pass 0: Stationary location labels stay fixed on the lowest layer behind characters
       renderOverlayBatch(ctx, overlayBatch, 'locations');

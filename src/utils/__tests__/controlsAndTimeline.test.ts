@@ -248,6 +248,31 @@ describe('aesthetic themes, overlay de-overlap & procedural world-matched player
     expect(resolved.get('speech:a')?.y).toBe(100);
     });
 
+  it('keeps a visible speaker\'s bubble in view and beside a fixed body, never over it', () => {
+    const view = { x: 0, y: 0, w: 400, h: 300 };
+    const resolved = resolveOverlappingRects(
+      [
+        // A body near the top edge: its bubble would sit above the view.
+        { id: 'body-a', x: 190, y: 10, w: 20, h: 40, anchorX: 200, anchorY: 10, priority: 1000, fixed: true },
+        { id: 'speech:a', x: 140, y: -40, w: 100, h: 40, anchorX: 200, anchorY: 10, priority: 40, preferAbove: true },
+        // A speaker outside the view keeps its ideal position.
+        { id: 'speech:off', x: 600, y: -40, w: 100, h: 40, anchorX: 650, anchorY: 10, priority: 30, preferAbove: true },
+      ],
+      4,
+      view,
+    );
+    const body = resolved.get('body-a')!;
+    expect(body.x).toBe(190);
+    const a = resolved.get('speech:a')!;
+    expect(a.y).toBeGreaterThanOrEqual(4);
+    expect(a.x).toBeGreaterThanOrEqual(4);
+    expect(a.x + a.w).toBeLessThanOrEqual(396);
+    const overlapsBody = a.x < body.x + body.w && a.x + a.w > body.x && a.y < body.y + body.h && a.y + a.h > body.y;
+    expect(overlapsBody).toBe(false);
+    expect(resolved.get('speech:off')?.x).toBe(600);
+    expect(resolved.get('speech:off')?.y).toBe(-40);
+    });
+
   it('splits overlay rendering into pills before characters and configurable bubbles layer', () => {
     const collector = createOverlayCollector();
     const calls: string[] = [];

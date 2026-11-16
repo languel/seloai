@@ -323,25 +323,28 @@ export function clothOverlayColours(look: PaletteName) {
   const { ground } = palette;
   const { dark, primary, gold, secondary } = palette.inks;
   const lineLook = look === 'ink' || look === 'night';
-  const patch = withAlpha(mix(ground, look === 'night' ? '#000000' : '#ffffff', 0.35), 0.93);
+  // Patches are see-through enough that the cloth shows: no solid slabs over the world.
+  const lighter = mix(ground, look === 'night' ? '#000000' : '#ffffff', 0.35);
+  const patch = withAlpha(lighter, 0.84);
   return {
     stitched: true,
+    artLook: look,
     bubbleStyle: 'parchment-scroll' as const,
     speechFill: patch,
     speechRimLight: 'transparent',
     speechBorder: dark,
     speechText: dark,
     speechHighlight: primary,
-    thoughtFill: withAlpha(ground, 0.86),
+    thoughtFill: withAlpha(lighter, 0.7),
     thoughtBorder: mix(dark, ground, 0.35),
     thoughtText: mix(dark, ground, 0.15),
     thoughtHighlight: secondary,
-    namePillFill: patch,
+    namePillFill: withAlpha(lighter, 0.6),
     namePillBorder: mix(dark, ground, 0.25),
     namePillText: dark,
-    playerPillFill: patch,
+    playerPillFill: withAlpha(lighter, 0.6),
     playerPillBorder: primary,
-    poiFill: withAlpha(ground, 0.9),
+    poiFill: withAlpha(lighter, 0.62),
     poiBorder: lineLook ? dark : gold,
     poiText: lineLook ? dark : mix(primary, dark, 0.35),
     poiGemFill: primary,

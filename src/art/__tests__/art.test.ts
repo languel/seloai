@@ -4,6 +4,7 @@ import { findWorldPack, tileSemanticsForMap } from '../../world/packs';
 import { GLYPH_NAMES, glyphShapes } from '../glyphs';
 import { lettering, letteringWidth } from '../lettering';
 import { PALETTES } from '../looks';
+import { bubbleTail } from '../overlayChrome';
 import { EXPRESSIONS, cloth, figure, treeOfLife } from '../motifs';
 import { buildSceneModel } from '../scene';
 import { sceneShapes } from '../sceneArt';
@@ -87,6 +88,34 @@ describe('interface glyphs', () => {
       expect(shapes.length, name).toBeGreaterThan(0);
       const b = bounds(shapes);
       expect(Math.max(-b.minX, -b.minY, b.maxX, b.maxY), name).toBeLessThanOrEqual(9);
+    }
+  });
+});
+
+describe('bubble tails', () => {
+  const box = { x: 100, y: 50, w: 120, h: 40 };
+  it('points down from the bottom edge to a head below the bubble', () => {
+    const tail = bubbleTail(box, [160, 110]);
+    expect(tail.side).toBe('bottom');
+    expect(tail.base[0][1]).toBe(90);
+    expect(tail.tip[1]).toBeGreaterThan(90);
+    expect(tail.tip[1]).toBeLessThan(110);
+  });
+  it('leaves from the side that faces a head beside the bubble', () => {
+    expect(bubbleTail(box, [60, 70]).side).toBe('left');
+    expect(bubbleTail(box, [270, 72]).side).toBe('right');
+    expect(bubbleTail(box, [160, 10]).side).toBe('top');
+    const right = bubbleTail(box, [270, 72]);
+    expect(right.base[0][0]).toBe(220);
+    expect(right.tip[0]).toBeGreaterThan(220);
+  });
+  it('keeps the tail base on the box edge even when the head is far off to one side', () => {
+    const tail = bubbleTail(box, [400, 200]);
+    for (const [x, y] of tail.base) {
+      expect(x).toBeGreaterThanOrEqual(box.x);
+      expect(x).toBeLessThanOrEqual(box.x + box.w);
+      expect(y).toBeGreaterThanOrEqual(box.y);
+      expect(y).toBeLessThanOrEqual(box.y + box.h);
     }
   });
 });
