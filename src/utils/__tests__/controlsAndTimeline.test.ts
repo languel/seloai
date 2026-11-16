@@ -165,7 +165,19 @@ describe('aesthetic themes, overlay de-overlap & procedural world-matched player
       detectWorldTheme({ tileSetUrl: '/assets/custom-tileset.png', name: 'Oakville' }),
     ).toBe('classic');
 
-    const balkanTokens = resolveAestheticTokens(DEFAULT_AESTHETIC_SETTINGS, 'balkan-myth');
+    // With the classic tile look the HUD decoration follows the world theme...
+    const balkanTokens = resolveAestheticTokens(
+      { ...DEFAULT_AESTHETIC_SETTINGS, worldLook: 'tiles' },
+      'balkan-myth',
+    );
+    // ...and on a cloth look it is parchment, or dark for the night plate.
+    expect(resolveAestheticTokens(DEFAULT_AESTHETIC_SETTINGS, 'balkan-myth').resolvedDecoration).toBe(
+      'parchment-chronicle',
+    );
+    expect(
+      resolveAestheticTokens({ ...DEFAULT_AESTHETIC_SETTINGS, worldLook: 'night' }, 'balkan-myth')
+        .resolvedDecoration,
+    ).toBe('frosted-obsidian');
     expect(balkanTokens.resolvedDecoration).toBe('balkan-shevitsa');
     expect(balkanTokens.isLightSurface).toBe(false);
     expect(balkanTokens.canvasTheme.speechText).toBe('#faf6ee');

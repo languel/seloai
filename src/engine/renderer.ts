@@ -340,6 +340,27 @@ export interface ResolvedOverlayBatch {
   resolved: Map<string, OverlayRectInput> | null;
 }
 
+/**
+ * Claims the space a character's body occupies so that labels and bubbles are laid out
+ * around it. Nothing is drawn; the layout simply treats the body as already placed.
+ */
+function reserveBodySpace(
+  collector: CanvasOverlayCollector | undefined,
+  id: string,
+  centerX: number,
+  topY: number,
+  height: number,
+) {
+  if (!collector) return;
+  const width = height * 0.5;
+  collector.items.push({
+    rect: { id, x: centerX - width / 2, y: topY, w: width, h: height * 0.82, anchorX: centerX, anchorY: topY, priority: 1000 },
+    layerOrder: 0,
+    layerGroup: 'pills',
+    render: () => {},
+  });
+}
+
 export function createOverlayCollector(): CanvasOverlayCollector {
   return { items: [] };
 }
@@ -484,10 +505,12 @@ export function drawPoiMarkers(
       ctx.fillStyle = theme.poiFill;
       ctx.strokeStyle = theme.poiBorder;
       ctx.lineWidth = 1;
+      if (theme.stitched) ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.roundRect(rx, ry, tw, pillH, 5);
       ctx.fill();
       ctx.stroke();
+      ctx.setLineDash([]);
       ctx.fillStyle = theme.poiText;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -527,6 +550,8 @@ export interface VillagerRenderOptions {
   deferredBodies?: DeferredCanvasDraw[];
   /** When set, draws the character's body in place of its sprite sheet (used by art looks). */
   bodyPainter?: BodyPainter;
+  /** How tall the drawn body is relative to a sprite-sheet character (art figures are taller). */
+  bodyHeightScale?: number;
 }
 
 export type BodyPainter = (
@@ -552,8 +577,10 @@ export function drawVillager(
 
   const px = rt.x * tileDim;
   const py = rt.y * tileDim;
-  const headTopY = py + tileDim - 4 - tileDim * charScale;
+  const bodyHeight = tileDim * charScale * (options.bodyHeightScale ?? 1);
+  const headTopY = py + tileDim - 4 - bodyHeight;
   const centerX = px + tileDim / 2;
+  reserveBodySpace(options.collector, `body-${cfg.id}`, centerX, headTopY, bodyHeight);
 
   const paintBody = () => {
     ctx.save();
@@ -656,10 +683,12 @@ export function drawVillager(
       ctx.fillStyle = theme.namePillFill;
       ctx.strokeStyle = selected ? cfg.accentColor : theme.namePillBorder;
       ctx.lineWidth = selected ? 1.4 : 1;
+      if (theme.stitched) ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.roundRect(rx, ry, pillW, pillH, 5);
       ctx.fill();
       ctx.stroke();
+      ctx.setLineDash([]);
       ctx.fillStyle = theme.namePillText;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -796,6 +825,7 @@ export interface PlayerRenderOptions {
   showLabels?: boolean;
   playerSprite?: CustomSpriteSheet | null;
   bodyPainter?: BodyPainter;
+  bodyHeightScale?: number;
   theme?: CanvasThemeConfig;
   collector?: CanvasOverlayCollector;
   deferredBodies?: DeferredCanvasDraw[];
@@ -816,6 +846,8 @@ export function drawPlayer(
   const px = player.x * tileDim;
   const py = player.y * tileDim;
   const centerX = px + tileDim / 2;
+  const playerBodyHeight = tileDim * charScale * (opts.bodyHeightScale ?? 1);
+  reserveBodySpace(opts.collector, `body-${player.id}`, centerX, py + tileDim - 4 - playerBodyHeight, playerBodyHeight);
 
   const paintPlayerBody = () => {
     ctx.save();
@@ -886,10 +918,12 @@ export function drawPlayer(
       ctx.fillStyle = theme.playerPillFill;
       ctx.strokeStyle = theme.playerPillBorder;
       ctx.lineWidth = 1;
+      if (theme.stitched) ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.roundRect(rx, ry, tw, pillH, 5);
       ctx.fill();
       ctx.stroke();
+      ctx.setLineDash([]);
       ctx.fillStyle = '#fbf7ef';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -1097,8 +1131,8 @@ function drawBubbleCardAt(
           : 7;
 
   ctx.save();
-  ctx.shadowColor = 'rgba(8, 8, 12, 0.36)';
-  ctx.shadowBlur = 10;
+  ctx.shadowColor = theme.stitched ? 'rgba(40, 26, 12, 0.22)' : 'rgba(8, 8, 12, 0.36)';
+  ctx.shadowBlur = theme.stitched ? 5 : 10;
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 3;
 
@@ -1136,12 +1170,14 @@ function drawBubbleCardAt(
   } else {
     ctx.fillStyle = theme.speechFill;
     ctx.strokeStyle = theme.bubbleStyle === 'parchment-scroll' ? accentColor || theme.speechBorder : theme.speechBorder;
-    ctx.lineWidth = 1.35;
+    ctx.lineWidth = theme.stitched ? 1.6 : 1.35;
+    if (theme.stitched) ctx.setLineDash([5, 3]);
     ctx.beginPath();
     ctx.roundRect(x, y, boxW, boxH, cornerRadius);
     ctx.fill();
     ctx.shadowColor = 'transparent';
     ctx.stroke();
+    ctx.setLineDash([]);
 
     // Inner glass specular top rim for depth matching the Scribe subtitle glass
     if (theme.bubbleStyle === 'frosted-glass' || theme.bubbleStyle === 'embroidered-card') {

@@ -229,6 +229,8 @@ export interface CanvasThemeConfig {
   poiBorder: string;
   poiText: string;
   poiGemFill: string;
+  /** Draw label and bubble borders as running stitch, for looks where they sit on cloth. */
+  stitched?: boolean;
 }
 
 export interface ResolvedAestheticTokens {
@@ -422,7 +424,14 @@ export function resolveAestheticTokens(
   settings: AestheticSettings,
   worldTheme: WorldThemeKind,
 ): ResolvedAestheticTokens {
-  const resolvedDecoration = resolveUiDecoration(settings.uiDecoration, worldTheme);
+  // On a cloth look the HUD sits on linen, so it takes the light parchment styling; the
+  // night plate keeps a dark one. The classic tile look keeps whatever was chosen.
+  const resolvedDecoration: ResolvedUiDecoration =
+    settings.worldLook === 'tiles'
+      ? resolveUiDecoration(settings.uiDecoration, worldTheme)
+      : settings.worldLook === 'night'
+        ? 'frosted-obsidian'
+        : 'parchment-chronicle';
   const pal = DECORATION_PALETTES[resolvedDecoration];
   const fontSpec = FONT_PRESET_OPTIONS.find((f) => f.id === settings.fontPreset) ?? FONT_PRESET_OPTIONS[0];
   const hudAlpha = settings.hudGlassOpacity;

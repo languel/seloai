@@ -33,6 +33,8 @@ export interface SceneModel {
   terrain: Terrain[][];
   features: SceneFeature[];
   landmarks: PointOfInterest[];
+  /** The place name to stitch onto the cloth, if any. */
+  title?: string;
 }
 
 export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): SceneModel {
@@ -71,7 +73,8 @@ export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): Sce
     }
   }
   features.sort((a, b) => a.y + a.h - (b.y + b.h));
-  return { width: map.width, height: map.height, terrain, features, landmarks: map.pointsOfInterest ?? [] };
+  const title = map.name.split(/[:(]/)[0].trim();
+  return { width: map.width, height: map.height, terrain, features, landmarks: map.pointsOfInterest ?? [], title };
 }
 
 /** A stable random stream for one cell, so scattered detail does not move between redraws. */

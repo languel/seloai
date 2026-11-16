@@ -4,6 +4,7 @@
  */
 import { createSeededRng } from '../core/rng';
 import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type PaletteName } from './looks';
+import { lettering, ribbon } from './lettering';
 import { cloth, figure, treeOfLife } from './motifs';
 import { place, type Shape } from './shapes';
 
@@ -74,6 +75,21 @@ if (!only || only === 'cloth') {
   row(
     `Cloth, seed ${seed}: one drawing, five looks`,
     LOOKS.map(([title, look, palette]) => panel(title, 460, 590, look, palette, 4.3, [240, 288], clothShapes)),
+  );
+}
+
+// Lettering: words set as counted stitches, in every look.
+if (!only || only === 'lettering') {
+  const words: Shape[] = [
+    ...place(ribbon('Zmeyovo', { cell: 1.6, ink: 'primary', rule: 'dark' }), { dx: 60, dy: 4 }),
+    ...place(ribbon('Well of the Lamia', { cell: 0.9, ink: 'dark' }), { dx: 60, dy: 26 }),
+    ...place(lettering('The quick brown fox, 1234567890!?', { cell: 0.7, ink: 'secondary', align: 'centre' }), { dx: 60, dy: 42 }),
+  ];
+  row(
+    'Lettering: a sampler alphabet',
+    (['ink', 'night', 'redBlack', 'festive'] as const).map((palette) =>
+      panel(palette, 520, 210, palette === 'ink' || palette === 'night' ? 'line' : 'thread', palette, 4.2, [8, 26], words),
+    ),
   );
 }
 

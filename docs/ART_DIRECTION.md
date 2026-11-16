@@ -42,6 +42,16 @@ These are requirements, in the owner's words where quoted.
 10. **Ambient density.** "In general we also want the environment to have more ambient
     density, e.g. forest groves rather than sparse trees, villages instead of sparse houses."
 
+11. **Embroidered text.** "It would be amazing if the text can look like embroidery too."
+    The owner recalled single-stroke vector fonts; the best known are the Hershey fonts.
+12. **No solid slabs.** Of the dark label, bubble and menu backgrounds: "the solid
+    backgrounds don't look great now that our visual style is so nice", and "same for menus".
+14. **Bubbles must not cover characters, heads above all.** "Be careful for the bubbles not
+    to obscure the characters esp heads", "make some dynamic layout relative to positions",
+    "or you can have text dynamically wrap around chars if needed".
+13. **Glyph buttons.** "In general use glyphs where possible for buttons with hover tips if
+    needed."
+
 The owner's overall verdict on the direction: "as a whole though I love this direction."
 
 Near-term target the owner set earlier: a black-and-white game and editor on Balkan folklore
@@ -117,6 +127,7 @@ is one shape kind among four.
 | `src/art/scene.ts` | The view-independent reading of a map: `SceneModel` (terrain kinds and placed features), `buildSceneModel`, the `TileSemantics` type. |
 | `src/art/sceneArt.ts` | `SceneModel` to shapes (`sceneShapes`). Houses, pines, the well, the hearth, terrain marks. `UNITS_PER_TILE = 8`. |
 | `src/art/gameLook.ts` | Glue for the running game: `WorldLook`, `WORLD_LOOK_OPTIONS`, `renderWorldLayer`, `getFigureSprite`, `paintFigure`. |
+| `src/art/lettering.ts` | Embroidered text: a 5 by 7 counted-stitch sampler alphabet (`lettering`, `ribbon`, `letteringWidth`). |
 | `src/art/lab.ts` + `art-lab.html` | The art lab page for judging motifs and looks by eye. |
 | `src/world/packs/balkanSemantics.ts` | What each tile of the Balkan tileset means. |
 | `src/world/packs/index.ts` | `tileSemanticsForMap(map)`. |
@@ -273,6 +284,31 @@ When adding motifs:
 - Fill gaps with knots or small sprigs, as a maker would.
 - Missing and worth adding: the kanatitsa, the mother-goddess with sun and moon, birds,
   a vine border that turns corners, a proper Lamia (serpent) and other creature forms.
+
+### 6.1 Lettering (`src/art/lettering.ts`)
+
+Text is drawn by the looks like everything else.
+
+- `lettering(text, { cell, ink, tracking, align })` sets a line as a `counted` shape on a
+  5 by 7 grid: capitals, digits and `. , : ! ? ' - &`. Lowercase is set as capitals, as on
+  a sampler, and accented letters fall back to their plain base. Unknown characters become
+  a space. The glyph table is original to this project.
+- `ribbon(text, options)` adds guide lines above and below and a knot at each end. The
+  world layer uses it to stitch the place name at the top of the cloth
+  (`SceneModel.title`, taken from the map name before any colon).
+- A stitch needs about 3 screen pixels to read in the thread looks. Below that, use real
+  text.
+
+Next steps for lettering:
+
+1. **Cyrillic.** The setting is Bulgarian; add the Cyrillic capitals to the glyph table.
+2. **A stroke alphabet** for stem-stitch script: glyphs as polylines (`line` shapes), which
+   reads as hand embroidery and scales to any size. The Hershey fonts are the classic
+   single-stroke vector fonts and are public domain, but they are third-party data. Either
+   author an original stroke alphabet, or ask the owner before importing Hershey data,
+   since the project rule is no third-party assets.
+3. **Use it in the interface** for headings, tab names and the title screen. Body text and
+   chat stay as real text for legibility.
 
 ---
 
@@ -459,7 +495,7 @@ world in every look.
 
 ---
 
-## 10. The interface (not started)
+## 10. The interface (started)
 
 The owner's instruction: refine the UI "to match the now beautiful world and chars". The
 HUD, speech bubbles, name pills, sidebar and panels predate the art system and now clash
@@ -474,8 +510,39 @@ Where the current styling lives:
 - The views are very large single files with no shared primitives: `VillageView.tsx`,
   `MonitorView.tsx`, `TapestryStudioView.tsx`, `LevelEditorView.tsx`, `App.tsx`.
 
+Done so far, as a first pass only:
+
+- In an art look, canvas labels and bubbles are patches of the ground colour with
+  running-stitch borders and ink text (`clothOverlayColours` in `src/art/gameLook.ts`,
+  `CanvasThemeConfig.stitched`). The dark slabs are gone from the world view.
+- The in-world HUD takes the light `parchment-chronicle` styling on cloth looks and
+  `frosted-obsidian` on the night plate (`resolveAestheticTokens`).
+- With the theme set to System, the app shell goes light beside cloth and paper looks and
+  dark beside the night plate (`App.tsx`).
+
+- Bubbles anchor above the real head height of the taller art figures
+  (`bodyHeightScale`, `FIGURE_HEIGHT_SCALE`), and every character's body is reserved as a
+  top-priority rectangle in the label layout (`reserveBodySpace` feeding
+  `resolveOverlappingRects` in `src/engine/renderer.ts`), so other characters' bubbles and
+  labels are placed around bodies instead of over them.
+
+This removes the clash but is recolouring, not design. Everything below is still to do.
+
+**Bubble layout, next steps.** The layout is a greedy rectangle de-overlapper: it moves
+whole bubbles. The owner also suggested text that wraps around characters. Options, in
+order of effort: (a) choose the bubble's side (above, left, right) from where neighbours
+and the screen edge are, with the tail drawn to match; (b) shape the bubble's width to the
+free space before wrapping the text; (c) flow lines of text around body rectangles, using
+the reserved body rects as exclusion zones per line. Whatever is done, a head must never
+be covered, and a bubble must stay visibly attached to its speaker.
+
 Direction:
 
+0. **Glyph buttons** (owner request). Prefer an icon to a text label wherever the meaning
+   is clear, with a hover tip. The toolbar still spells out Pause, Paths, Labels, Speech,
+   Thoughts, Subtitles, Follow, Scatter and Eavesdrop. Draw the glyphs with the art system
+   (a small `Shape[]` per icon rendered through the active look) so they match the cloth,
+   rather than using the `lucide-react` set.
 1. **One source of truth.** Derive interface colours from the active look's palette, so
    switching World Look restyles the whole app. The line-art looks give a paper-and-ink UI;
    the thread looks give linen panels with stitched borders.

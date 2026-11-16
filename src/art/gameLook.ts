@@ -63,6 +63,9 @@ export interface FigureSprite {
   density: number;
 }
 
+/** How tall an art figure stands, in map cells, at character scale 1. */
+export const FIGURE_HEIGHT_SCALE = 1.75;
+
 const FIGURE_UNITS = 30;
 const figureCache = new Map<string, FigureSprite>();
 
@@ -118,4 +121,50 @@ export function paintFigure(
   ctx.scale((facingLeft ? -1 : 1) / sprite.density, 1 / sprite.density);
   ctx.drawImage(sprite.canvas, -sprite.footX, -sprite.footY);
   ctx.restore();
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+function mix(a: string, b: string, t: number): string {
+  const x = parseInt(a.slice(1), 16);
+  const y = parseInt(b.slice(1), 16);
+  const ch = (shift: number) => Math.round(((x >> shift) & 255) * (1 - t) + ((y >> shift) & 255) * t);
+  return `#${[16, 8, 0].map((shift) => ch(shift).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * Colours for labels and bubbles that sit on the cloth: patches of the ground colour with
+ * stitched borders and ink text, taken from the active look instead of a fixed dark theme.
+ */
+export function clothOverlayColours(look: PaletteName) {
+  const palette = PALETTES[look];
+  const { ground } = palette;
+  const { dark, primary, gold, secondary } = palette.inks;
+  const lineLook = look === 'ink' || look === 'night';
+  const patch = withAlpha(mix(ground, look === 'night' ? '#000000' : '#ffffff', 0.35), 0.93);
+  return {
+    stitched: true,
+    bubbleStyle: 'parchment-scroll' as const,
+    speechFill: patch,
+    speechRimLight: 'transparent',
+    speechBorder: dark,
+    speechText: dark,
+    speechHighlight: primary,
+    thoughtFill: withAlpha(ground, 0.86),
+    thoughtBorder: mix(dark, ground, 0.35),
+    thoughtText: mix(dark, ground, 0.15),
+    thoughtHighlight: secondary,
+    namePillFill: patch,
+    namePillBorder: mix(dark, ground, 0.25),
+    namePillText: dark,
+    playerPillFill: patch,
+    playerPillBorder: primary,
+    poiFill: withAlpha(ground, 0.9),
+    poiBorder: lineLook ? dark : gold,
+    poiText: lineLook ? dark : mix(primary, dark, 0.35),
+    poiGemFill: primary,
+  };
 }

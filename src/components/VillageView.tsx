@@ -1,4 +1,11 @@
-import { getFigureSprite, paintFigure, renderWorldLayer, type WorldLook } from '../art/gameLook';
+import {
+  FIGURE_HEIGHT_SCALE,
+  clothOverlayColours,
+  getFigureSprite,
+  paintFigure,
+  renderWorldLayer,
+  type WorldLook,
+} from '../art/gameLook';
 import type { BodyPainter } from '../engine/renderer';
 import { tileSemanticsForMap } from '../world/packs';
 import { getLastSimStepMs } from '../app/simulationDriver';
@@ -646,6 +653,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
       const tilesetImg = getCachedImage(map.tileSetUrl);
       const tilesetCols = Math.max(1, Math.floor(map.tileSetDimX / map.tileDim));
       const worldLook = aestheticSettings.worldLook;
+      const canvasTheme =
+        worldLook === 'tiles'
+          ? aestheticTokens.canvasTheme
+          : { ...aestheticTokens.canvasTheme, ...clothOverlayColours(worldLook) };
 
       if (worldLook !== 'tiles') {
         // Art looks draw the world from its meaning, not from tile images.
@@ -766,7 +777,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
           ctx,
           map.pointsOfInterest ?? [],
           map.tileDim,
-          aestheticTokens.canvasTheme,
+          canvasTheme,
           overlayCollector,
         );
       }
@@ -775,7 +786,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         worldLook === 'tiles'
           ? undefined
           : (bodyCtx, body) => {
-              const sprite = getFigureSprite(body.id, worldLook, body.tileDim * body.scale * 1.75);
+              const sprite = getFigureSprite(body.id, worldLook, body.tileDim * body.scale * FIGURE_HEIGHT_SCALE);
               paintFigure(bodyCtx, sprite, body.tileX, body.tileY, body.tileDim, body.facing === 'left', body.moving, body.animFrame);
             };
 
@@ -787,19 +798,21 @@ export const VillageView: React.FC<VillageViewProps> = ({
           showSpeechBubbles,
           showThoughtBubbles,
           pois: map.pointsOfInterest,
-          theme: aestheticTokens.canvasTheme,
+          theme: canvasTheme,
           collector: overlayCollector,
           deferredBodies,
           bodyPainter,
+          bodyHeightScale: bodyPainter ? FIGURE_HEIGHT_SCALE : 1,
         });
       }
       drawPlayer(ctx, sim.player, map.tileDim, {
         showLabels,
         playerSprite: playerCustomSprite,
-        theme: aestheticTokens.canvasTheme,
+        theme: canvasTheme,
         collector: overlayCollector,
         deferredBodies,
         bodyPainter,
+        bodyHeightScale: bodyPainter ? FIGURE_HEIGHT_SCALE : 1,
       });
 
       const overlayBatch = resolveOverlayBatch(

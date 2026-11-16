@@ -3,6 +3,7 @@
  * map is drawn by whichever look is active. Units: `UNITS_PER_TILE` per map cell.
  */
 import { createSeededRng } from '../core/rng';
+import { ribbon } from './lettering';
 import { blossom, chevronLeaf, comb, star, treeOfLife, tulip } from './motifs';
 import { cellRng, type SceneFeature, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
@@ -184,5 +185,10 @@ function terrainShapes(model: SceneModel): Shape[] {
 
 /** Everything that does not move, in drawing order. */
 export function sceneShapes(model: SceneModel): Shape[] {
-  return [...terrainShapes(model), ...model.features.flatMap(featureShapes)];
+  const shapes = [...terrainShapes(model), ...model.features.flatMap(featureShapes)];
+  if (model.title) {
+    // The place name, stitched into the top of the cloth like the heading of a sampler.
+    shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 0.9 }));
+  }
+  return shapes;
 }

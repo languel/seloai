@@ -158,12 +158,16 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (theme === 'system') {
+    if (theme !== 'system') {
+      document.documentElement.dataset.theme = theme;
+    } else if (aestheticSettings.worldLook === 'tiles') {
       delete document.documentElement.dataset.theme;
     } else {
-      document.documentElement.dataset.theme = theme;
+      // With no explicit choice, the panels follow the world: light beside cloth and paper,
+      // dark beside the night plate.
+      document.documentElement.dataset.theme = aestheticSettings.worldLook === 'night' ? 'dark' : 'light';
     }
-  }, [theme]);
+  }, [theme, aestheticSettings.worldLook]);
 
   useEffect(() => {
     let mounted = true;

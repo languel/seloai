@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createSeededRng } from '../../core/rng';
 import { findWorldPack, tileSemanticsForMap } from '../../world/packs';
+import { lettering, letteringWidth } from '../lettering';
 import { PALETTES } from '../looks';
 import { EXPRESSIONS, cloth, figure, treeOfLife } from '../motifs';
 import { buildSceneModel } from '../scene';
@@ -47,6 +48,17 @@ describe('Generative art', () => {
       }
       expect(palette.skinTones.length).toBeGreaterThan(0);
     }
+  });
+
+  it('sets text as counted stitches, capitals for lowercase and plain letters for accents', () => {
+    const upper = lettering('WELL', { cell: 1 });
+    expect(JSON.stringify(lettering('well', { cell: 1 }))).toBe(JSON.stringify(upper));
+    expect(JSON.stringify(lettering('wéll', { cell: 1 }))).toBe(JSON.stringify(upper));
+    expect(upper[0].kind).toBe('counted');
+    expect(letteringWidth('AB', 2)).toBe((5 + 1 + 5) * 2);
+    expect(lettering('', { cell: 1 })).toEqual([]);
+    const centred = bounds(lettering('ABC', { cell: 1, align: 'centre' }));
+    expect(Math.abs(centred.minX + centred.maxX)).toBeLessThan(1.01);
   });
 
   it('reads a world for what is there, with or without tile meanings', () => {
