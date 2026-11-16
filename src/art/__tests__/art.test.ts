@@ -122,17 +122,19 @@ describe('bubble tails', () => {
 });
 
 describe('figures in builds and views', () => {
-  it('draws the skirted front figure exactly as before the views were added', async () => {
+  // Pinned output of the skirted front figure. Five seeds were rebaselined when the newer
+  // headdresses arrived; only their head part changed (checked when the change was made).
+  it('draws the skirted front figure exactly as pinned', async () => {
     const { createHash } = await import('node:crypto');
     const expected: Record<number, string> = {
-      1: '66930031b79e8c30',
+      1: '7d62e79a064e18cb',
       5: '3b6f576ae0aa8ed4',
       7: '56f290af71ce5b1c',
-      11: '99beb35f3e49ddbe',
+      11: 'ffea56eb5627446e',
       42: 'f7aa6037cd8f62e2',
-      99: '45881695e86b3e43',
-      1234: 'ad116a7a58650d5d',
-      98765: '497964fb04a2ea0b',
+      99: '7b0805b331380eb4',
+      1234: 'b89ad5db2cc322e9',
+      98765: '42fb7597c39121a6',
     };
     for (const [seed, hash] of Object.entries(expected)) {
       const json = JSON.stringify(figure(createSeededRng(Number(seed)), { height: 30 }));
@@ -278,5 +280,21 @@ describe('conversation threads', () => {
     expect(pairs.map(([s, l]) => `${s.id}-${l.id}`)).toEqual(['b-a', 'b-c']);
     const [, midY] = threadPoint({ x: 0, y: 0 }, { x: 100, y: 0 }, 0.5);
     expect(midY).toBeGreaterThan(0);
+  });
+});
+
+describe('headdress variety', () => {
+  it('makes horns rare and gives every newer headdress a fair share', async () => {
+    const { headdressFor } = await import('../figures');
+    const counts: Record<string, number> = {};
+    const n = 2000;
+    for (let seed = 1; seed <= n; seed++) {
+      const h = headdressFor(createSeededRng(seed));
+      counts[h] = (counts[h] ?? 0) + 1;
+    }
+    expect(counts.horns ?? 0).toBeLessThan(n * 0.05);
+    for (const h of ['crown', 'kerchief', 'wreath', 'sokai', 'coins', 'sprig', 'veil', 'braids']) {
+      expect(counts[h] ?? 0, h).toBeGreaterThan(n * 0.05);
+    }
   });
 });

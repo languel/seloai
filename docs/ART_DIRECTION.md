@@ -328,7 +328,15 @@ What exists:
 - Neck, head, hair cap in one of several inks, optional hair falls.
 - A face: eyes, brows, nose stroke, mouth. Five expressions in `EXPRESSIONS`: `calm`,
   `glad`, `grim`, `awed`, `sly`. Brow tilt and mouth curve carry the mood.
-- Four headdresses: crown of knots, kerchief, horns, wreath.
+- Headdresses (owner request for more variety and fewer horns): the original crown of
+  knots, kerchief, horns and wreath, plus five newer ones in `newerHeaddress`
+  (`src/art/figures.ts`): a tall wrapped **sokai** hung with rows of coins, a **coin band**
+  over the brow with two braids tied in red, a **sprig** of flowers (kitka) at the ear, an
+  embroidered **veil** framing the face, and **braids** wound round the crown. The seed still
+  makes one four-way draw; the rest of that draw decides whether she keeps the original
+  (crown 55%, kerchief 60%, wreath 55%, horns only 10%) or wears a newer one, so horns now
+  turn up for about one woman in forty. Men read the original four-way choice. Lab:
+  `/art-lab.html?seed=8&only=women`.
 - Boots, hem knots, and a slight lean so no two stand alike.
 
 Done since the first pass:

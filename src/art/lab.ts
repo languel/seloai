@@ -224,6 +224,18 @@ if (!only || only === 'kinds') {
   );
 }
 
+// Women: a run of seeds, to judge the mix of headdresses.
+if (!only || only === 'women') {
+  const women: Shape[] = [];
+  for (let i = 0; i < 12; i++) women.push(...place(figure(createSeededRng(seed * 100 + i), { height: 30 }), { dx: (i % 6) * 24, dy: Math.floor(i / 6) * 44 }));
+  row(
+    'Women: twelve seeds, for the mix of headdresses',
+    (['ink', 'festive'] as const).map((palette) =>
+      panel(palette === 'ink' ? 'Line art' : 'Thread, festive', 760, 470, palette === 'ink' ? 'line' : 'thread', palette, 5.2, [70, 205], women),
+    ),
+  );
+}
+
 // A cast: every seed is a different person.
 if (!only || only === 'figures') {
   const castRng = createSeededRng(seed * 31 + 5);

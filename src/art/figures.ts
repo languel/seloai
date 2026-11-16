@@ -63,7 +63,15 @@ export interface FigureParts {
   restingExpression: Expression;
 }
 
-type Headdress = 'crown' | 'kerchief' | 'horns' | 'wreath';
+type BaseHeaddress = 'crown' | 'kerchief' | 'horns' | 'wreath';
+/** Women's headdresses: the four originals and five more; horns are now a rare one. */
+type Headdress = BaseHeaddress | 'sokai' | 'coins' | 'sprig' | 'veil' | 'braids';
+/**
+ * How much of each original choice a skirted figure keeps; the rest of that draw goes to the
+ * newer headdresses. Horns keep only a sliver, so a horned woman is a rare sight.
+ */
+const KEEP_SHARE: Record<BaseHeaddress, number> = { crown: 0.55, kerchief: 0.6, wreath: 0.55, horns: 0.1 };
+const NEWER_HEADDRESSES: readonly Headdress[] = ['sokai', 'coins', 'sprig', 'veil', 'braids'];
 type Pose = 'raised' | 'offering' | 'akimbo' | 'resting';
 
 interface Traits {
@@ -86,7 +94,10 @@ interface Traits {
   hairInk: Ink;
   /** Long hair falling to the shoulders; on a trousered figure, a moustache. */
   hairFalls: boolean;
+  /** What a skirted figure wears on her head. */
   headdress: Headdress;
+  /** The four-way choice the seed made, which trousered figures read. */
+  baseHeaddress: BaseHeaddress;
   pose: Pose;
   sleeveFilled: boolean;
   carriesComb: boolean;
@@ -122,7 +133,14 @@ function drawTraits(rng: Rng, height: number): Traits {
   const seededSkinTone = Math.floor(rng() * 5);
   const hairInk = pick(rng, ['dark', 'dark', 'gold', 'accent'] as const);
   const hairFalls = rng() < 0.55;
-  const headdress = pick(rng, ['crown', 'kerchief', 'horns', 'wreath'] as const);
+  // One draw, as before, so nothing else about a person shifts. The rest of that same draw
+  // decides whether she keeps the original choice or wears one of the newer headdresses.
+  const headdressDraw = rng();
+  const baseHeaddress = (['crown', 'kerchief', 'horns', 'wreath'] as const)[Math.floor(headdressDraw * 4)];
+  const rest = (headdressDraw * 4) % 1;
+  const keep = KEEP_SHARE[baseHeaddress];
+  const headdress: Headdress =
+    rest < keep ? baseHeaddress : NEWER_HEADDRESSES[Math.min(NEWER_HEADDRESSES.length - 1, Math.floor(((rest - keep) / (1 - keep)) * NEWER_HEADDRESSES.length))];
   const pose = pick(rng, ['raised', 'offering', 'akimbo', 'resting'] as const);
   const sleeveFilled = rng() < 0.4;
   let carriesComb = false;
@@ -150,6 +168,7 @@ function drawTraits(rng: Rng, height: number): Traits {
     hairInk,
     hairFalls,
     headdress,
+    baseHeaddress,
     pose,
     sleeveFilled,
     carriesComb,
@@ -261,7 +280,7 @@ function headdressShapes(t: Traits, headY: number, view: FigureView, build: Figu
   if (build === 'trousered') {
     // Men's headwear from the same choice: a fur kalpak, a flat cap, horns, or bare-headed
     // with a flower tucked at the ear.
-    if (t.headdress === 'crown') {
+    if (t.baseHeaddress === 'crown') {
       const lean = view === 'side' ? -r * 0.25 : 0;
       shapes.push({
         kind: 'area',
@@ -276,7 +295,7 @@ function headdressShapes(t: Traits, headY: number, view: FigureView, build: Figu
         ink: 'dark',
         grain: UP,
       });
-    } else if (t.headdress === 'kerchief') {
+    } else if (t.baseHeaddress === 'kerchief') {
       const brim = view === 'side' ? r * 1.35 : r * 1.15;
       const back = view === 'side' ? -r * 1.05 : -r * 1.15;
       shapes.push({
@@ -286,7 +305,7 @@ function headdressShapes(t: Traits, headY: number, view: FigureView, build: Figu
         grain: 0,
       });
       shapes.push({ kind: 'line', points: [[back, headY - r * 0.5], [brim, headY - r * 0.5]], ink: 'gold', weight: 0.5 });
-    } else if (t.headdress === 'horns') {
+    } else if (t.baseHeaddress === 'horns') {
       const horn: Shape = { kind: 'line', points: curl([r * 0.5, headY - r * 0.9], r * 0.75, 0.7, -1, Math.PI), ink: 'dark', weight: 0.6 };
       shapes.push(...(view === 'side' ? [horn] : mirrored([horn])));
     } else if (view !== 'back') {
@@ -310,6 +329,8 @@ function headdressShapes(t: Traits, headY: number, view: FigureView, build: Figu
   } else if (t.headdress === 'horns') {
     const horn: Shape = { kind: 'line', points: curl([r * 0.5, headY - r * 0.9], r * 0.75, 0.7, -1, Math.PI), ink: 'dark', weight: 0.6 };
     shapes.push(...(view === 'side' ? [horn] : mirrored([horn])));
+  } else if (t.headdress !== 'wreath') {
+    shapes.push(...newerHeaddress(t, headY, view));
   } else {
     const count = view === 'side' ? 5 : 7;
     for (let i = 0; i < count; i++) {
@@ -319,6 +340,96 @@ function headdressShapes(t: Traits, headY: number, view: FigureView, build: Figu
     }
   }
   return shapes;
+}
+
+/**
+ * The newer women's headdresses, after regional dress: a tall wrapped sokai hung with
+ * coins, a band of coins over the brow with braids, a sprig of flowers (a kitka) at the
+ * ear, an embroidered veil framing the face, and braids wound round the crown.
+ */
+function newerHeaddress(t: Traits, headY: number, view: FigureView): Shape[] {
+  const r = t.headR;
+  const out: Shape[] = [];
+  const side = view === 'side';
+  const back = view === 'back';
+  const k = side ? 0.78 : 1;
+  const dx = side ? -r * 0.2 : 0;
+  if (t.headdress === 'sokai') {
+    out.push({
+      kind: 'area',
+      points: [[-r * 1.15 * k + dx, headY - r * 0.45], [r * 1.15 * k + dx, headY - r * 0.45], [r * 0.95 * k + dx, headY - r * 2.3], [-r * 0.95 * k + dx, headY - r * 2.3]],
+      ink: t.bodiceInk === 'primary' ? 'secondary' : 'primary',
+      grain: 0,
+    });
+    for (const [row, y] of [[0, 0.95], [1, 1.6]] as const) {
+      const n = side ? 4 : 5;
+      for (let i = 0; i < n; i++) {
+        const x = (-0.8 + (1.6 * i) / (n - 1)) * r * k + dx;
+        out.push({ kind: 'knot', at: [x, headY - r * y], r: r * (row ? 0.12 : 0.15), ink: 'gold' });
+      }
+    }
+    out.push({ kind: 'line', points: [[-r * 0.95 * k + dx, headY - r * 2.3], [r * 0.95 * k + dx, headY - r * 2.3]], ink: 'gold', weight: 0.6 });
+    if (back || side) {
+      const bx = side ? -r * 0.9 : 0;
+      out.push({ kind: 'area', points: [[bx - r * 0.3, headY - r * 0.5], [bx + r * 0.3, headY - r * 0.5], [bx + r * 0.35, headY + r * 1.7], [bx - r * 0.35, headY + r * 1.7]], ink: 'primary', grain: Math.PI / 2 });
+    }
+  } else if (t.headdress === 'coins') {
+    const span = side ? [-r * 0.2, r * 1.0] : [-r * 1.0, r * 1.0];
+    const band: Pt[] = [];
+    for (let i = 0; i <= 8; i++) {
+      const x = span[0] + ((span[1] - span[0]) * i) / 8;
+      band.push([x, headY - r * 0.62 + Math.pow(x / r, 2) * r * 0.12]);
+    }
+    out.push({ kind: 'line', points: band, ink: 'gold', weight: 0.7 });
+    if (!back) {
+      for (let i = 1; i < band.length - 1; i++) out.push({ kind: 'knot', at: [band[i][0], band[i][1] + r * 0.16], r: r * 0.11, ink: 'gold' });
+    }
+    // Two braids, tied with red thread.
+    const braids = side ? [-r * 0.85] : back ? [-r * 0.25, r * 0.25] : [-r * 1.0, r * 1.0];
+    for (const x of braids) {
+      out.push({ kind: 'line', points: [[x, headY + r * 0.1], [x * 1.05, headY + r * 2.1]], ink: t.hairInk, weight: 0.9 });
+      out.push({ kind: 'knot', at: [x * 1.05, headY + r * 2.15], r: r * 0.14, ink: 'primary' });
+    }
+  } else if (t.headdress === 'sprig') {
+    const cx = side ? -r * 0.55 : r * 0.95;
+    const blossoms: Pt[] = [[cx, headY - r * 0.7], [cx + r * 0.32, headY - r * 0.32], [cx - r * 0.18, headY - r * 1.08]];
+    out.push({ kind: 'line', points: [[cx - r * 0.2, headY - r * 0.2], [cx + r * 0.25, headY - r * 1.25]], ink: 'accent', weight: 0.5 });
+    blossoms.forEach(([x, y], i) => {
+      for (let p = 0; p < 5; p++) {
+        const a = (p / 5) * Math.PI * 2;
+        out.push({ kind: 'knot', at: [x + Math.cos(a) * r * 0.16, y + Math.sin(a) * r * 0.16], r: r * 0.1, ink: i === 1 ? 'accent2' : 'primary' });
+      }
+      out.push({ kind: 'knot', at: [x, y], r: r * 0.08, ink: 'gold' });
+    });
+  } else if (t.headdress === 'veil') {
+    const ink: Ink = t.bodiceInk === 'secondary' ? 'accent' : 'secondary';
+    const points: Pt[] = back
+      ? [[-r * 1.25, headY + r * 1.4], [-r * 1.15, headY - r * 0.4], [-r * 0.6, headY - r * 1.25], [r * 0.6, headY - r * 1.25], [r * 1.15, headY - r * 0.4], [r * 1.25, headY + r * 1.4]]
+      : side
+        ? [[-r * 1.4, headY + r * 1.4], [-r * 1.2, headY - r * 0.5], [-r * 0.5, headY - r * 1.25], [r * 0.55, headY - r * 1.15], [r * 0.7, headY - r * 0.75], [-r * 0.2, headY - r * 0.55], [-r * 0.75, headY + r * 1.35]]
+        : [
+            [-r * 1.25, headY + r * 1.4], [-r * 1.15, headY - r * 0.4], [-r * 0.6, headY - r * 1.25], [r * 0.6, headY - r * 1.25], [r * 1.15, headY - r * 0.4], [r * 1.25, headY + r * 1.4],
+            [r * 0.98, headY + r * 1.3], [r * 0.98, headY - r * 0.3], [-r * 0.98, headY - r * 0.3], [-r * 0.98, headY + r * 1.3],
+          ];
+    out.push({ kind: 'area', points, ink, grain: UP });
+    if (!back) {
+      const n = side ? 4 : 7;
+      for (let i = 0; i < n; i++) {
+        const x = side ? -r * 0.15 + (i / (n - 1)) * r * 0.75 : -r * 0.85 + (i / (n - 1)) * r * 1.7;
+        out.push({ kind: 'knot', at: [x, headY - r * (side ? 0.72 : 0.42)], r: r * 0.1, ink: i % 2 ? 'gold' : 'primary' });
+      }
+    }
+  } else if (t.headdress === 'braids') {
+    const count = side ? 7 : 9;
+    for (let i = 0; i < count; i++) {
+      const a = Math.PI * 1.05 + (i / (count - 1)) * Math.PI * 0.9;
+      const x = Math.cos(a) * r * 1.02 * (side ? 0.85 : 1) + dx * 0.5;
+      out.push({ kind: 'knot', at: [x, headY + Math.sin(a) * r * 1.02], r: r * 0.22, ink: t.hairInk });
+      if (i % 2) out.push({ kind: 'knot', at: [x, headY + Math.sin(a) * r * 1.02], r: r * 0.08, ink: 'gold' });
+    }
+    out.push({ kind: 'knot', at: [side ? -r * 0.95 : r * 0.85, headY - r * 0.75], r: r * 0.16, ink: 'primary' });
+  }
+  return out;
 }
 
 function headShapes(t: Traits, headY: number, view: FigureView, build: FigureBuild, expression: Expression, skinTone: number): Shape[] {
@@ -430,6 +541,11 @@ function armShapes(t: Traits, height: number, armPath: Pt[], skinTone: number, b
   const hand = armPath[2];
   arm.push({ kind: 'area', points: circle(hand, height * 0.03, 10), ink: 'skin', grain: 0, tone: skinTone });
   return arm;
+}
+
+/** The headdress a seed gives a skirted figure, for the lab and tests. */
+export function headdressFor(rng: Rng, height = 30): Headdress {
+  return drawTraits(rng, height).headdress;
 }
 
 /** A standing figure drawn as one picture. */
