@@ -821,8 +821,16 @@ one has missed the point.
 8. ~~**Tile meanings in packs**~~, done, with a Shevitsa table (section 8).
 9. ~~**Conversation threads**~~, first pass done (section 9).
 10. **Folk-art push and legibility at size** (section 7, items 6 and 7). Bold faces and the maker's quirks done (first passes).
-11. **Scene-level world authoring**: worlds as scenes done (see `docs/WORLD_EDITOR_PLAN.md`); the world editor is next and procedural world generators (section 8, item 2);
-    the Wang worlds are the generator to build on.
+11. ~~**Scene-level world authoring**~~, first pass done (see `docs/WORLD_EDITOR_PLAN.md`):
+    worlds as scenes, the World Editor with layers, the patchwork village, pattern
+    brushes, stitched houses (upright or turned), world thread palettes, house size,
+    packed or overlapping layout, and legibility settings (backdrop, quiet paths).
+11a. **Composable patterns** (owner request, next): snowflake (radial) and tree-of-life
+    (branching) structures composed from motifs, with interwoven crossings, grown in the
+    Pattern Studio and usable everywhere a reference is. Motifs on the ground are never
+    strewn like stickers: large one-offs or regular lattices.
+11b. Characters must stay legible against any palette: keep paths sparse or the backdrop
+    subdued (both are world settings now).
 12. **A print-pipeline look** in the manner of vale, then the first 3D experiment.
 
 ## 12.1 Woven text (owner request)

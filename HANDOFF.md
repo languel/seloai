@@ -20,6 +20,18 @@
 | **AI Router, Audio & Anti-Loop** | `src/ai/brainRouter.ts`, `src/ai/audioPipeline.ts` | Inference routing, serialized speech queue with `flushAudioQueue()` & `subscribeSpeechState`, spatial attenuation & stereo pan, `<think>`/`<thought>` parsing, `isTextTooSimilar()` anti-repetition guard across motives, narration beats, and dialogue |
 | **Storage & Subpath Assets** | `src/storage/villageStore.ts`, `src/utils/assetUrl.ts`, `src/utils/formatNames.ts`, `src/utils/speedSlider.ts` | IndexedDB (`seloai-db`) persistence + browser-memory saved world slots (`saveWorldSlot`, `loadWorldSlot`, auto-backup), granular bundle export/import (`seloai-project-v1`, `seloai-level-v1`, `seloai-characters-v1`, `seloai-characters-history-v1`, `seloai-db-v1`), `BASE_URL`-aware asset resolution for GitHub Pages |
 
+## 1.1 World authoring and the patchwork (branch `patchwork`, latest work)
+
+The full design and every setting is in [docs/WORLD_EDITOR_PLAN.md](docs/WORLD_EDITOR_PLAN.md); this is the map.
+
+- **Worlds are scenes.** A world is a recipe (generator, parameters, seed) plus hand edits (`src/world/worldScene.ts`). `bakeScene` runs it (cached per scene), `mapFromScene` derives walkability, landmarks and spawns. Every change is a `scene.edit` command through `WorldStore` (`src/world/commands.ts` validates each op). Generators: valley (Wang), patchwork village, Zmeyovo, Shevitsa (`src/world/sceneGenerators.ts`).
+- **Patchwork village** (`src/world/patchworkVillage.ts`, art in `src/art/patchworkArt.ts`): an irregular quad grid (`src/art/irregularGrid.ts`) filled by a collapse fill; plots are drawn in from the streets, a continuous river with plank bridges, named buildings near the square, animals. Plots keep their raw face and street widths so they can be merged and split.
+- **World Editor** (`src/components/WorldEditorView.tsx`, tab `world`): layers as in a tile map (ground, patterns, plantings, works, buildings, animals; hide, lock, active layer), select and move, rotate (`[` `]`), paint (terrain, or plot kind, merge, split in a patchwork), place (a palette per layer, including building kinds), scatter (medallions go on a lattice), the pattern brush (strokes, fills, fill a plot), an erase brush, landmarks and spawns, and an edit list that survives reseeding.
+- **World settings** (left panel): threads (`WORLD_PALETTES` in `src/art/looks.ts`; figures and overlays follow via `clothPalette`), house look (drawn, stitched upright, stitched along the streets), house size, layout (overlapping or packed), and legibility (backdrop strength, quiet paths).
+- **Figures** (`src/art/figures.ts`, `src/art/gameLook.ts`): arms down by default (`stance: 'everyday'`), swinging when walking, gesturing when talking; raised only to dance (an activity that names a dance or celebration, or standing still on a dancing ground).
+- **Known gaps**: big houses are drawn past their footprints, so people can cross the overhang; packed layout measures bounding boxes, so it leaves more linen than a stitcher would; the old Level Editor and Tapestry Studio tabs (`level`, `tapestry`) are still present and should be retired; characters' portraits keep their signature pose.
+- **Next, proposed to the owner**: a composable pattern system in the Pattern Studio (radial snowflake compositions, branching tree-of-life compositions, interwoven crossings), whose results become references usable by the palette, the pattern brush and medallions. Then: Loom pass two, the pattern cell editor and library, retiring the old editors.
+
 ## 2. Local Model Weights (`public/models/`, gitignored)
 
 Optional local model checkpoints in `public/models/` are probed first at runtime before falling back to Hugging Face:
