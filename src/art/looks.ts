@@ -329,6 +329,61 @@ export function renderLineArt(ctx: CanvasRenderingContext2D, shapes: Shape[], o:
 // ---------------------------------------------------------------------------------------
 
 /** Fills the canvas with a woven linen ground. */
+/** A small deterministic hash to 0..1, so a thread's look depends only on where it is. */
+function unitHash(a: number, b: number, seed: number): number {
+  let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(seed | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * The linen weave over part of a cloth (x0, y0, w, h, in the cloth's own pixels). Every
+ * thread's shade comes from its own position, not from a running sequence, so any region
+ * can be drawn on its own and still meet its neighbours exactly: the world is drawn in
+ * tiles at the sharpness of the zoom.
+ */
+export function paintLinenRegion(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, o: LookOptions) {
+  const seed = (o.seed ?? 1) + 77;
+  ctx.fillStyle = o.palette.ground;
+  ctx.fillRect(x0, y0, w, h);
+  const pitch = Math.max(2, o.unit * 0.5);
+  ctx.lineWidth = Math.max(1, pitch * 0.45);
+  for (let k = Math.floor(y0 / pitch); k * pitch <= y0 + h; k++) {
+    const y = k * pitch;
+    ctx.strokeStyle = `rgba(70, 52, 30, ${0.05 + unitHash(k, 1, seed) * 0.09})`;
+    ctx.beginPath();
+    ctx.moveTo(x0, y + (unitHash(k, 2, seed) - 0.5));
+    ctx.lineTo(x0 + w, y + (unitHash(k, 2, seed) - 0.5));
+    ctx.stroke();
+  }
+  for (let k = Math.floor(x0 / pitch); k * pitch <= x0 + w; k++) {
+    const x = k * pitch;
+    ctx.strokeStyle = `rgba(255, 250, 235, ${0.06 + unitHash(k, 3, seed) * 0.1})`;
+    ctx.beginPath();
+    ctx.moveTo(x + (unitHash(k, 4, seed) - 0.5), y0);
+    ctx.lineTo(x + (unitHash(k, 4, seed) - 0.5), y0 + h);
+    ctx.stroke();
+  }
+  // Slubs, one in about every 160-pixel square, placed by that square's own hash; the
+  // squares just outside the region are included, since a slub can reach into it.
+  const cell = 160;
+  for (let cx = Math.floor(x0 / cell) - 1; cx * cell <= x0 + w; cx++) {
+    for (let cy = Math.floor(y0 / cell) - 1; cy * cell <= y0 + h; cy++) {
+      const x = (cx + unitHash(cx, cy, seed + 5)) * cell;
+      const y = (cy + unitHash(cx, cy, seed + 6)) * cell;
+      ctx.strokeStyle = `rgba(90, 68, 40, ${0.08 + unitHash(cx, cy, seed + 7) * 0.1})`;
+      ctx.lineWidth = pitch * (0.6 + unitHash(cx, cy, seed + 8) * 0.6);
+      const along = 12 + unitHash(cx, cy, seed + 9) * 40;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      if (unitHash(cx, cy, seed + 10) < 0.5) ctx.lineTo(x + along, y);
+      else ctx.lineTo(x, y + along);
+      ctx.stroke();
+    }
+  }
+}
+
 export function paintLinen(ctx: CanvasRenderingContext2D, width: number, height: number, o: LookOptions) {
   const rng = createSeededRng((o.seed ?? 1) + 77);
   ctx.fillStyle = o.palette.ground;

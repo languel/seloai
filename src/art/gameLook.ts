@@ -4,7 +4,7 @@
  */
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
-import { activeWorldThreadsId, clothPalette, paintLinen, worldPalette, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
+import { activeWorldThreadsId, clothPalette, paintLinenRegion, worldPalette, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureTraits, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
@@ -34,12 +34,28 @@ function isThread(look: PaletteName): boolean {
   return look !== 'ink' && look !== 'night';
 }
 
-/** Renders the whole static world into a canvas of map pixel size. */
-export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?: TileSemantics, hidden?: ReadonlySet<SceneLayer>): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, map.width * map.tileDim);
-  canvas.height = Math.max(1, map.height * map.tileDim);
-  const ctx = canvas.getContext('2d')!;
+/**
+ * The static world, ready to be drawn at any sharpness: `drawRegion` draws part of it (in
+ * the world's own pixels, `tileDim` to a cell) into a context that may be scaled up, so the
+ * village can draw the cells in view at the zoom's own resolution instead of stretching one
+ * image. Every shape keeps its own seed and the linen is drawn from positions, so a region
+ * drawn alone matches its neighbours and the whole.
+ */
+export interface WorldArt {
+  width: number;
+  height: number;
+  drawRegion(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number): void;
+}
+
+interface PreparedShape {
+  shape: Shape;
+  seed: number;
+  box: [number, number, number, number];
+}
+
+export function createWorldArt(map: VillageMap, look: PaletteName, semantics?: TileSemantics, hidden?: ReadonlySet<SceneLayer>): WorldArt {
+  const width = Math.max(1, map.width * map.tileDim);
+  const height = Math.max(1, map.height * map.tileDim);
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
   const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
   const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
@@ -55,42 +71,81 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
   };
   // Every element in one family of stitch, charted on the world's stitch grid.
   const stitchCell = UNITS_PER_TILE / STITCHES_PER_CELL;
-  const draw = (raw: Shape[]) => {
-    const shapes = restitch(raw, model.stitch, stitchCell);
-    return isThread(look) ? renderEmbroidery(ctx, shapes, options) : renderLineArt(ctx, shapes, options);
+  const pad = options.unit * 2;
+  const prepare = (raw: Shape[], offset: number): PreparedShape[] =>
+    restitch(raw, model.stitch, stitchCell).map((shape, i) => {
+      const b = bounds([shape]);
+      return {
+        shape,
+        seed: (options.seed ?? 1) + offset + i * 7919,
+        box: [b.minX * options.unit - pad, b.minY * options.unit - pad, b.maxX * options.unit + pad, b.maxY * options.unit + pad],
+      };
+    });
+  const upright: SceneLayer[] = ['plantings', 'works', 'buildings', 'life'];
+  const below = model.quietPaths
+    ? prepare(sceneShapes(model, new Set([...(hidden ?? []), ...upright]), false), 0)
+    : prepare(sceneShapes(model, hidden), 0);
+  const above = model.quietPaths ? prepare(sceneShapes(model, new Set([...(hidden ?? []), 'ground', 'patterns'])), 1_000_003) : [];
+  const thread = isThread(look);
+  const mask = model.quietPaths ? quietMask(map, options.palette.ground) : null;
+
+  const drawShapes = (ctx: CanvasRenderingContext2D, list: PreparedShape[], x0: number, y0: number, x1: number, y1: number) => {
+    for (const p of list) {
+      if (p.box[2] < x0 || p.box[0] > x1 || p.box[3] < y0 || p.box[1] > y1) continue;
+      const o = { ...options, seed: p.seed };
+      if (thread) renderEmbroidery(ctx, [p.shape], o);
+      else renderLineArt(ctx, [p.shape], o);
+    }
   };
-  if (isThread(look)) paintLinen(ctx, canvas.width, canvas.height, options);
-  else {
-    ctx.fillStyle = options.palette.ground;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  if (model.quietPaths) {
-    // The ground first, then the paths washed quiet, then what stands on it, untouched.
-    const upright: SceneLayer[] = ['plantings', 'works', 'buildings', 'life'];
-    draw(sceneShapes(model, new Set([...(hidden ?? []), ...upright]), false));
-    quietPaths(ctx, canvas, map, options.palette.ground);
-    draw(sceneShapes(model, new Set([...(hidden ?? []), 'ground', 'patterns'])));
-  } else {
-    draw(sceneShapes(model, hidden));
-  }
+
+  return {
+    width,
+    height,
+    drawRegion(ctx, x0, y0, w, h) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0, y0, w, h);
+      ctx.clip();
+      if (thread) paintLinenRegion(ctx, x0, y0, w, h, options);
+      else {
+        ctx.fillStyle = options.palette.ground;
+        ctx.fillRect(x0, y0, w, h);
+      }
+      drawShapes(ctx, below, x0, y0, x0 + w, y0 + h);
+      if (mask) {
+        // The places people walk, washed back toward plain linen with soft edges.
+        ctx.save();
+        ctx.globalAlpha = 0.72;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(mask, 0, 0, width, height);
+        ctx.restore();
+        drawShapes(ctx, above, x0, y0, x0 + w, y0 + h);
+      }
+      ctx.restore();
+    },
+  };
+}
+
+/** Renders the whole static world into a canvas of map pixel size. */
+export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?: TileSemantics, hidden?: ReadonlySet<SceneLayer>): HTMLCanvasElement {
+  const art = createWorldArt(map, look, semantics, hidden);
+  const canvas = document.createElement('canvas');
+  canvas.width = art.width;
+  canvas.height = art.height;
+  art.drawRegion(canvas.getContext('2d')!, 0, 0, art.width, art.height);
   return canvas;
 }
 
-/** Washes the places people walk back to near-plain linen, with soft edges. */
-function quietPaths(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, map: VillageMap, ground: string) {
-  // One pixel per cell, scaled up with smoothing: soft edges for free.
+/** One pixel per cell where people walk, scaled up with smoothing for soft-edged quiet paths. */
+function quietMask(map: VillageMap, ground: string): HTMLCanvasElement {
   const mask = document.createElement('canvas');
   mask.width = map.width;
   mask.height = map.height;
   const m = mask.getContext('2d')!;
   m.fillStyle = ground;
   for (let x = 0; x < map.width; x++) for (let y = 0; y < map.height; y++) if (!map.collisionGrid[x]?.[y]) m.fillRect(x, y, 1, 1);
-  ctx.save();
-  ctx.globalAlpha = 0.72;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
-  ctx.restore();
+  return mask;
 }
 
 type PartName = 'legLeft' | 'legRight' | 'skirt' | 'torso' | 'head' | 'armLeft' | 'armRight';

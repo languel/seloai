@@ -8,7 +8,8 @@ import {
   expressionFor,
   getFigureRig,
   paintRig,
-  renderWorldLayer,
+  createWorldArt,
+  type WorldArt,
   type WorldLook,
 } from '../art/gameLook';
 import type { BodyPainter } from '../engine/renderer';
@@ -693,7 +694,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
     let lastTime = performance.now();
     let lastMicUiAt = 0;
     let staticLayerCanvas: HTMLCanvasElement | null = null;
-    let artLayer: { map: typeof sim.map; look: WorldLook; canvas: HTMLCanvasElement } | null = null;
+    let artLayer: {
+      map: typeof sim.map;
+      look: WorldLook;
+      canvas: HTMLCanvasElement;
+      art: WorldArt;
+      /** Sharper tiles of the world, by `${level}:${tx}:${ty}`, most recently used last. */
+      tiles: Map<string, HTMLCanvasElement>;
+    } | null = null;
     let staticCacheKey: {
       mapRef: object;
       bgRef: unknown;
@@ -847,6 +855,55 @@ export const VillageView: React.FC<VillageViewProps> = ({
       rafId = requestAnimationFrame(frame);
     };
 
+    /**
+     * Zoomed in, the one world image is stretched past its own pixels and goes soft. Over it,
+     * draw the cells in view again at the zoom's sharpness (2x or 4x), in tiles of 8 by 8
+     * cells, a few new ones a frame; tiles are kept, most recently used first, up to a limit.
+     */
+    const TILE_CELLS = 8;
+    const MAX_TILES = 48;
+    const drawSharpTiles = (ctx: CanvasRenderingContext2D, layer: NonNullable<typeof artLayer>, tileDim: number) => {
+      const t = ctx.getTransform();
+      const scale = Math.hypot(t.a, t.b);
+      if (scale < 1.3) return;
+      const level = scale >= 2.8 ? 4 : 2;
+      const inv = t.inverse();
+      const c = ctx.canvas;
+      const a = inv.transformPoint(new DOMPoint(0, 0));
+      const b = inv.transformPoint(new DOMPoint(c.width, c.height));
+      const size = TILE_CELLS * tileDim;
+      const tx0 = Math.max(0, Math.floor(Math.min(a.x, b.x) / size));
+      const ty0 = Math.max(0, Math.floor(Math.min(a.y, b.y) / size));
+      const tx1 = Math.min(Math.ceil(layer.art.width / size) - 1, Math.floor(Math.max(a.x, b.x) / size));
+      const ty1 = Math.min(Math.ceil(layer.art.height / size) - 1, Math.floor(Math.max(a.y, b.y) / size));
+      let budget = 3;
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          const key = `${level}:${tx}:${ty}`;
+          let tile = layer.tiles.get(key);
+          if (tile) {
+            layer.tiles.delete(key);
+            layer.tiles.set(key, tile);
+          } else if (budget > 0) {
+            budget--;
+            tile = document.createElement('canvas');
+            tile.width = size * level;
+            tile.height = size * level;
+            const tctx = tile.getContext('2d')!;
+            tctx.scale(level, level);
+            tctx.translate(-tx * size, -ty * size);
+            layer.art.drawRegion(tctx, tx * size, ty * size, size, size);
+            layer.tiles.set(key, tile);
+            if (layer.tiles.size > MAX_TILES) layer.tiles.delete(layer.tiles.keys().next().value!);
+          } else {
+            // Not drawn yet at this sharpness: use the other sharpness if it is to hand.
+            tile = layer.tiles.get(`${level === 4 ? 2 : 4}:${tx}:${ty}`);
+          }
+          if (tile) ctx.drawImage(tile, tx * size, ty * size, size, size);
+        }
+      }
+    };
+
     const renderWorld = (ctx: CanvasRenderingContext2D, viewW: number, viewH: number, timeSec: number) => {
       // Beyond the edge of the map: the cloth's own colour in the art looks, so nothing drawn
       // over the view (the Scribe's band) ever sits on a dark void.
@@ -880,10 +937,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
       if (worldLook !== 'tiles') {
         // Art looks draw the world from its meaning, not from tile images.
         if (!artLayer || artLayer.map !== map || artLayer.look !== worldLook) {
-          artLayer = { map, look: worldLook, canvas: renderWorldLayer(map, worldLook, tileSemanticsForMap(map)) };
+          const art = createWorldArt(map, worldLook, tileSemanticsForMap(map));
+          const canvas = document.createElement('canvas');
+          canvas.width = art.width;
+          canvas.height = art.height;
+          art.drawRegion(canvas.getContext('2d')!, 0, 0, art.width, art.height);
+          artLayer = { map, look: worldLook, canvas, art, tiles: new Map() };
         }
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(artLayer.canvas, 0, 0);
+        drawSharpTiles(ctx, artLayer, map.tileDim);
         ctx.imageSmoothingEnabled = false;
       } else if (tilesetImg) {
         const needsRebuild =
