@@ -106,9 +106,15 @@ export interface SceneFeature {
 
 /**
  * How a world's houses are worked: `drawn` (the folk houses of grid worlds, the solid
- * fold-out houses of a patchwork) or `stitched` (counted cross-stitch, like the motifs).
+ * fold-out houses of a patchwork), `stitched` (counted cross-stitch, upright as on a
+ * sampler) or `stitched-turned` (counted cross-stitch laid along the street, like the drawn
+ * houses).
  */
-export type HouseLook = 'drawn' | 'stitched';
+export type HouseLook = 'drawn' | 'stitched' | 'stitched-turned';
+
+export const HOUSE_LOOKS: readonly HouseLook[] = ['drawn', 'stitched', 'stitched-turned'];
+
+export const isStitched = (look?: HouseLook) => look === 'stitched' || look === 'stitched-turned';
 
 /**
  * A pattern laid on the cloth with a brush: a stroke (motifs stamped along a path, or a
@@ -235,6 +241,11 @@ export interface SceneModel {
   backdrop?: number;
   /** Wash the places people walk (streets, square, meadows) back to near-plain linen. */
   quietPaths?: boolean;
+  /**
+   * How things share the cloth: `overlap` (the default: trees and houses crowd and cross
+   * each other) or `packed` (as in counted work, nothing on a layer touches another).
+   */
+  packing?: 'overlap' | 'packed';
 }
 
 /** What a plot of a patchwork village holds (`road` is kept only for older saved worlds). */

@@ -247,12 +247,13 @@ export function patchworkShapes(model: SceneModel, U: number, hidden?: ReadonlyS
     shapes.push({ kind: 'area', points: pts, ink: p.kind === 'orchard' || p.kind === 'wood' ? 'accent' : p.ink, grain, open });
   }
 
+  const packed = model.packing === 'packed';
   for (const { p, pts } of plots) {
     const rng = createSeededRng(p.seed);
     const fr = frameOf(pts, p.front ?? 0);
     switch (p.kind) {
       case 'house':
-        houseRow(buildings, p, pts, fr, rng, U, model.houseLook === 'stitched', model.houseScale ?? 2);
+        houseRow(buildings, p, pts, fr, rng, U, model.houseLook === 'stitched' ? 'upright' : model.houseLook === 'stitched-turned' ? 'turned' : false, model.houseScale ?? 2, model.packing === 'packed');
         break;
       case 'garden':
       case 'vineyard':
@@ -287,8 +288,9 @@ export function patchworkShapes(model: SceneModel, U: number, hidden?: ReadonlyS
       case 'orchard':
       case 'wood': {
         const dense = p.kind === 'wood';
-        for (const q of scatter(pts, U * (dense ? 0.95 : 1.4), rng)) {
-          const r = U * (dense ? 0.55 + rng() * 0.25 : 0.45 + rng() * 0.15);
+        const spacing = U * (dense ? 0.95 : 1.4) * (packed ? 1.25 : 1);
+        for (const q of scatter(pts, spacing, rng)) {
+          const r = Math.min(U * (dense ? 0.55 + rng() * 0.25 : 0.45 + rng() * 0.15), packed ? spacing * 0.3 : Infinity);
           plantings.push({ kind: 'area', points: circle(q, r, 12), ink: dense && rng() < 0.4 ? 'dark' : 'accent', grain: rng() * Math.PI });
           if (!dense) for (let k = 0; k < 3; k++) plantings.push({ kind: 'knot', at: [q[0] + (rng() - 0.5) * r, q[1] + (rng() - 0.5) * r], r: U * 0.05, ink: 'primary' });
         }
@@ -370,24 +372,28 @@ function bridgeShapes(shapes: Shape[], br: Bridge, U: number) {
 }
 
 /** The houses of a house plot: a row along the street, sometimes overlapping, sometimes a corner house on the side street. */
-function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: number, stitched = false, scale = 2) {
+function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: number, stitched: 'upright' | 'turned' | false = false, scale = 2, packed = false) {
   const special = p.special;
   // Houses may stand taller than their plot is deep (they overlap what is behind, as on an
   // old map), so the room is set by the house size, not only by the plot.
   const s = scale;
-  const room = Math.min(U * 4.2 * s, Math.max(fr.depth * 1.1, U * 2.2 * s));
+  // Packed, a house keeps within its plot; otherwise it may stand over what is behind.
+  const room = packed ? Math.min(U * 4.2 * s, fr.depth * 0.92) : Math.min(U * 4.2 * s, Math.max(fr.depth * 1.1, U * 2.2 * s));
   const mid = pts.reduce<Pt>((acc, q) => [acc[0] + q[0] / pts.length, acc[1] + q[1] / pts.length], [0, 0]);
   const place = (ra: Pt, ru: Pt, rn: Pt, along: number, w: number, h: number, kind: HouseKind | SpecialBuilding) => {
-    const tilt = (rng() - 0.5) * 0.3; // a Chagall lean
+    const tilt = (rng() - 0.5) * (packed ? 0.08 : 0.3); // a Chagall lean (barely, when packed)
     const c: Pt = [ra[0] + ru[0] * (along + w / 2) + rn[0] * U * 0.05, ra[1] + ru[1] * (along + w / 2) + rn[1] * U * 0.05];
     const cu: Pt = [ru[0] * Math.cos(tilt) - ru[1] * Math.sin(tilt), ru[0] * Math.sin(tilt) + ru[1] * Math.cos(tilt)];
     const cn: Pt = [rn[0] * Math.cos(tilt) - rn[1] * Math.sin(tilt), rn[0] * Math.sin(tilt) + rn[1] * Math.cos(tilt)];
     if (stitched) {
-      // Counted houses stand upright, as on a sampler, just inside the plot from the street.
+      // Counted houses stand just inside the plot from the street: upright, as on a sampler,
+      // or turned to rise along the plot.
       const cell = U / STITCHES_PER_CELL;
       const grid = stitchedHouseGrid(kind, Math.round(w / cell), Math.round(h / cell), Math.floor(rng() * 1e9));
       const at: Pt = [c[0] + cn[0] * grid.h * cell * 0.5, c[1] + cn[1] * grid.h * cell * 0.5];
-      shapes.push(...placeShapes([motifShape(grid, cell)], { dx: at[0], dy: at[1] }));
+      // Turned, the house rises from the street along the plot, like the drawn houses.
+      const rot = stitched === 'turned' ? Math.atan2(cn[0], -cn[1]) : 0;
+      shapes.push(...placeShapes([motifShape(grid, cell)], { dx: at[0], dy: at[1], rot }));
       return;
     }
     building(shapes, c, cu, cn, w, h, rng, U, kind, p.ink);
@@ -412,10 +418,10 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
     place(fr.a, fr.u, fr.n, built === 0 && w > fr.len ? (fr.len - w) / 2 : along, w, h, kind);
     built++;
     // Neighbours sometimes overlap a little, sometimes leave a gap.
-    along += w + U * (rng() < 0.25 ? -0.15 : 0.1 + rng() * 0.25);
+    along += w + U * (packed ? 0.25 + rng() * 0.2 : rng() < 0.25 ? -0.15 : 0.1 + rng() * 0.25);
   }
   // A corner house on the side street, turned to face it.
-  if (fr.depth > U * 3.2 * s && rng() < 0.6) {
+  if (!packed && fr.depth > U * 3.2 * s && rng() < 0.6) {
     const side = (p.front ?? 0) + 1;
     const sa = pts[side % pts.length];
     const sb = pts[(side + 1) % pts.length];

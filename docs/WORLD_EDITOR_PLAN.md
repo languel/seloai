@@ -76,8 +76,14 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   `patternMark` edits on the patterns layer, in one stitch count with stitched houses
   (`STITCHES_PER_CELL`), and the erase brush cuts them away.
 - **House look**: a world's houses are drawn (the folk houses of grid worlds, the solid
-  fold-out houses of a patchwork) or stitched in counted cross-stitch, like a sampler
-  (`houseLook` edit); a placed house can take its own look.
+  fold-out houses of a patchwork), stitched upright in counted cross-stitch like a
+  sampler, or stitched and turned along the streets like the drawn houses (`houseLook`
+  edit; counted grids can turn, `rot` on a counted shape); a placed house can take its own
+  look.
+- **Layout**: overlapping (trees and houses crowd and cross) or packed, as in counted work:
+  nothing on a layer touches another thing on that layer. Each feature's drawn bounds are
+  measured and it is placed in turn, shrinking a little if it would touch; ambient detail
+  that still does not fit is left out (`layout` edit).
 - **Threads**: a world can be worked in its own palette (natural dyes, faded heirloom,
   indigo and rust, Rhodope wool, harvest, winter linen) under the full-colour look
   (`palette` edit, `WORLD_PALETTES`). The figures, their conversation threads, woven words

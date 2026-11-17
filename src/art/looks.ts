@@ -284,8 +284,15 @@ export function renderLineArt(ctx: CanvasRenderingContext2D, shapes: Shape[], o:
       } else ctx.fill();
     } else {
       const size = shape.cell * o.unit;
+      // A turned grid is drawn in its own frame.
+      const turned = Boolean(shape.rot);
+      if (turned) {
+        ctx.save();
+        ctx.translate(...toPx(shape.origin, o));
+        ctx.rotate(shape.rot!);
+      }
       for (const [cx, cy, ink] of shape.cells) {
-        const [x, y] = toPx([shape.origin[0] + cx * shape.cell, shape.origin[1] + cy * shape.cell], o);
+        const [x, y] = turned ? [cx * size, cy * size] : toPx([shape.origin[0] + cx * shape.cell, shape.origin[1] + cy * shape.cell], o);
         const tone = LINE_TONE[ink];
         ctx.strokeStyle = o.palette.inks[ink];
         ctx.fillStyle = o.palette.inks[ink];
@@ -303,6 +310,7 @@ export function renderLineArt(ctx: CanvasRenderingContext2D, shapes: Shape[], o:
           ctx.stroke();
         }
       }
+      if (turned) ctx.restore();
     }
   }
 }
@@ -470,8 +478,14 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
       const size = shape.cell * o.unit;
       const reach = size * 0.46;
       const width = Math.max(1.2, size * 0.34);
+      const turned = Boolean(shape.rot);
+      if (turned) {
+        ctx.save();
+        ctx.translate(...toPx(shape.origin, o));
+        ctx.rotate(shape.rot!);
+      }
       for (const [cx, cy, ink] of shape.cells) {
-        const [x, y] = toPx([shape.origin[0] + cx * shape.cell, shape.origin[1] + cy * shape.cell], o);
+        const [x, y] = turned ? [cx * size, cy * size] : toPx([shape.origin[0] + cx * shape.cell, shape.origin[1] + cy * shape.cell], o);
         const cellColour = o.palette.inks[ink];
         ctx.strokeStyle = 'rgba(40, 26, 12, 0.2)';
         ctx.lineWidth = width;
@@ -482,6 +496,7 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
         threadStroke(ctx, x - reach, y + reach, x + reach, y - reach, cellColour, width, rng);
         threadStroke(ctx, x - reach, y - reach, x + reach, y + reach, cellColour, width, rng);
       }
+      if (turned) ctx.restore();
     }
   }
 }

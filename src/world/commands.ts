@@ -13,7 +13,7 @@ import { findGenerator, generatedFromTileMap, type SceneParams } from './sceneGe
 import { PLOT_KINDS } from './patchworkVillage';
 import { mapFromScene, type SceneEdit, type SceneRecipe, type WorldScene } from './worldScene';
 import { WORLD_PALETTES } from '../art/looks';
-import { BUILDING_VARIANTS, SCENE_LAYERS, type FeatureKind, type Terrain } from '../art/scene';
+import { BUILDING_VARIANTS, HOUSE_LOOKS, SCENE_LAYERS, type FeatureKind, type Terrain } from '../art/scene';
 import type { WorldContext } from './worldContext';
 
 export type MapLayerId = 'bg0' | 'bg1' | 'obj0' | 'obj1';
@@ -291,7 +291,7 @@ function checkEdit(edit: SceneEdit) {
         if (f.layer !== undefined && !SCENE_LAYERS.some((l) => l.id === f.layer)) fail(`"${f.layer}" is not a layer.`);
         if (f.angle !== undefined && !Number.isFinite(f.angle)) fail('angle must be a number of radians.');
         if (f.variant !== undefined && !BUILDING_VARIANTS.some((v) => v.id === f.variant)) fail(`"${f.variant}" is not a kind of building.`);
-        if (f.look !== undefined && f.look !== 'drawn' && f.look !== 'stitched') fail('look is "drawn" or "stitched".');
+        if (f.look !== undefined && !HOUSE_LOOKS.includes(f.look)) fail(`look is one of ${HOUSE_LOOKS.join(', ')}.`);
       }
       return;
     }
@@ -325,11 +325,14 @@ function checkEdit(edit: SceneEdit) {
       if (edit.strength !== undefined && !(edit.strength >= 0.3 && edit.strength <= 1)) fail('backdrop strength is 0.3 to 1.');
       if (edit.quietPaths !== undefined && typeof edit.quietPaths !== 'boolean') fail('quietPaths is true or false.');
       return;
+    case 'layout':
+      if (edit.packing !== 'overlap' && edit.packing !== 'packed') fail('layout packing is "overlap" or "packed".');
+      return;
     case 'houseScale':
       if (!(edit.scale >= 0.75 && edit.scale <= 4)) fail('houseScale is 0.75 to 4.');
       return;
     case 'houseLook':
-      if (edit.look !== 'drawn' && edit.look !== 'stitched') fail('houseLook is "drawn" or "stitched".');
+      if (!HOUSE_LOOKS.includes(edit.look)) fail(`houseLook is one of ${HOUSE_LOOKS.join(', ')}.`);
       return;
     case 'patternMark': {
       const m = edit.mark;

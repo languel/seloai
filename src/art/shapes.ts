@@ -30,7 +30,8 @@ export type Shape =
   /** A dot: a knot, a sequin, a berry. */
   | { kind: 'knot'; at: Pt; r: number; ink: Ink }
   /** Counted-thread work: cells on a square grid, each one stitch. */
-  | { kind: 'counted'; origin: Pt; cell: number; cells: Array<[number, number, Ink]> };
+  /** Counted-thread work: cells on a square grid, each one stitch; `rot` turns the grid about its origin. */
+  | { kind: 'counted'; origin: Pt; cell: number; cells: Array<[number, number, Ink]>; rot?: number };
 
 export interface Transform {
   dx?: number;
@@ -61,9 +62,11 @@ export function place(shapes: Shape[], transform: Transform): Shape[] {
         return { ...shape, points: shape.points.map((p) => applyPt(p, t)), weight: shape.weight * t.scale };
       case 'knot':
         return { ...shape, at: applyPt(shape.at, t), r: shape.r * t.scale };
-      case 'counted':
-        // Counted work stays axis-aligned: only move and scale it.
-        return { ...shape, origin: [shape.origin[0] * t.scale + t.dx, shape.origin[1] * t.scale + t.dy], cell: shape.cell * t.scale };
+      case 'counted': {
+        // The grid turns with everything else, about its own origin.
+        const rot = (shape.rot ?? 0) + t.rot;
+        return { ...shape, origin: applyPt(shape.origin, { ...t, mirrorX: false }), cell: shape.cell * t.scale, ...(rot ? { rot } : { rot: undefined }) };
+      }
     }
   });
 }
@@ -144,8 +147,12 @@ export function bounds(shapes: Shape[]): { minX: number; minY: number; maxX: num
   for (const shape of shapes) {
     if (shape.kind === 'knot') take(shape.at[0], shape.at[1], shape.r);
     else if (shape.kind === 'counted') {
+      const cos = Math.cos(shape.rot ?? 0);
+      const sin = Math.sin(shape.rot ?? 0);
       for (const [cx, cy] of shape.cells) {
-        take(shape.origin[0] + cx * shape.cell, shape.origin[1] + cy * shape.cell, shape.cell);
+        const lx = cx * shape.cell;
+        const ly = cy * shape.cell;
+        take(shape.origin[0] + lx * cos - ly * sin, shape.origin[1] + lx * sin + ly * cos, shape.cell);
       }
     } else for (const [x, y] of shape.points) take(x, y);
   }

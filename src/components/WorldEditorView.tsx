@@ -88,6 +88,8 @@ function describeEdit(edit: SceneEdit): string {
       return `Houses ${edit.look}`;
     case 'houseScale':
       return `Houses ${edit.scale}× size`;
+    case 'layout':
+      return edit.packing === 'packed' ? 'Packed layout' : 'Overlapping layout';
     case 'backdrop':
       return edit.quietPaths !== undefined ? (edit.quietPaths ? 'Quiet paths' : 'Busy paths') : `Backdrop ${edit.strength}`;
     case 'palette':
@@ -780,6 +782,21 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               </span>
               {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
             </label>
+            <div className="flex flex-col gap-0.5" title="Overlapping: trees and houses crowd and cross. Packed: as in counted work, nothing on a layer touches.">
+              <span className="stitch-muted text-[10px]">Layout</span>
+              <span className="flex gap-1">
+                {(
+                  [
+                    ['overlap', 'Overlapping'],
+                    ['packed', 'Packed'],
+                  ] as const
+                ).map(([v, label]) => (
+                  <Chip key={v} on={(baked?.model.packing ?? 'overlap') === v} onClick={() => edit({ op: 'layout', packing: v }, `${label} layout`)}>
+                    {label}
+                  </Chip>
+                ))}
+              </span>
+            </div>
             <div className="flex flex-col gap-0.5">
               <span className="stitch-muted text-[10px]">Behind the people</span>
               <span className="flex gap-1">
@@ -808,7 +825,8 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                 className="rounded-sm border border-borderFolk bg-transparent px-1 py-1"
               >
                 <option value="drawn">Drawn</option>
-                <option value="stitched">Stitched (cross-stitch)</option>
+                <option value="stitched">Stitched, upright (sampler)</option>
+                <option value="stitched-turned">Stitched, along the streets</option>
               </select>
               <span className="mt-0.5 flex gap-1" title="How large houses are drawn against people">
                 {(
@@ -1004,6 +1022,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                       ['', "world's"],
                       ['drawn', 'drawn'],
                       ['stitched', 'stitched'],
+                      ['stitched-turned', 'stitched, turned'],
                     ] as const
                   ).map(([id, label]) => (
                     <Chip key={id || 'world'} on={placeLook === id} onClick={() => setPlaceLook(id)}>

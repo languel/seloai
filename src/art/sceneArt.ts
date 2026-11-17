@@ -5,8 +5,8 @@
 import { createSeededRng } from '../core/rng';
 import { lettering, letteringWidth } from './lettering';
 import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
-import { FLAT_KINDS, SCENE_LAYERS, cellRng, layerOf, type PatternMark, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
-import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
+import { FLAT_KINDS, SCENE_LAYERS, cellRng, isStitched, layerOf, type PatternMark, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
+import { bounds, circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
 import { patchworkShapes, standingBuilding } from './patchworkArt';
 import { STITCHES_PER_CELL, stitchedHouseGrid } from './stitchedHouse';
@@ -137,7 +137,8 @@ export function houseScaleOf(model?: { houseScale?: number }): number {
  * and stitched houses stand upright on the foot of their footprint.
  */
 function houseExtent(f: SceneFeature, model: SceneModel, scale: number, facing?: number): [number, number, number, number] {
-  const upright = Boolean(f.variant) || (f.look ?? model.houseLook) === 'stitched';
+  const look = f.look ?? model.houseLook;
+  const upright = look === 'stitched' || (Boolean(f.variant) && look !== 'stitched-turned');
   const cx = f.x + f.w / 2;
   if (upright) {
     const tall = f.variant === 'tall' || f.variant === 'church';
@@ -205,7 +206,8 @@ export function fittedHouses(model: SceneModel): Map<SceneFeature, { scale: numb
   for (const f of ordered) {
     const mine = own.get(f)!;
     const natural = houseFacing(f, model);
-    const upright = Boolean(f.variant) || (f.look ?? model.houseLook) === 'stitched';
+    const look = f.look ?? model.houseLook;
+    const upright = look === 'stitched' || (Boolean(f.variant) && look !== 'stitched-turned');
     // A house lying on its side may stand upright instead when that crowds less.
     const facings = upright || natural === 0 ? [natural] : [natural, 0];
     let best = { scale: 0.8, facing: natural, crowd: Infinity };
@@ -253,13 +255,25 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
     case 'house': {
       const fit = model ? fittedHouses(model).get(feature) : undefined;
       const hs = fit?.scale ?? houseScaleOf(model);
-      if ((feature.look ?? model?.houseLook) === 'stitched') {
-        // A counted house, standing upright on its footprint like a house on a sampler.
+      const look = feature.look ?? model?.houseLook;
+      if (isStitched(look)) {
+        // A counted house: upright on its footprint like a house on a sampler, or turned to
+        // stand on the edge facing the road, like the drawn houses.
         const cell = U / STITCHES_PER_CELL;
         const tall = feature.variant === 'tall' || feature.variant === 'church';
         const w = feature.w * U * (feature.variant ? 0.95 : 0.86 * HOUSE_SCALE) * hs;
         const h = (feature.variant ? U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) : feature.h * U * 0.92 * HOUSE_SCALE) * hs;
         const grid = stitchedHouseGrid(feature.variant ?? 'folk', Math.round(w / cell), Math.round(h / cell), feature.seed);
+        if (look === 'stitched-turned' && model) {
+          const rot = fit?.facing ?? houseFacing(feature, model);
+          const cx = (feature.x + feature.w / 2) * U;
+          const cy = (feature.y + feature.h / 2) * U;
+          const halfW = (feature.w * U) / 2;
+          const halfH = (feature.h * U) / 2 - U * 0.12;
+          const base: Pt = rot === 0 ? [cx, cy + halfH] : rot === Math.PI ? [cx, cy - halfH] : rot < 0 ? [cx + halfW - U * 0.12, cy] : [cx - halfW + U * 0.12, cy];
+          const half = (grid.h * cell) / 2;
+          return place([motifShape(grid, cell)], { dx: base[0] + Math.sin(rot) * half, dy: base[1] - Math.cos(rot) * half, rot });
+        }
         return place([motifShape(grid, cell)], { dx: footX, dy: footY - (grid.h * cell) / 2 });
       }
       if (feature.variant) {
@@ -701,6 +715,69 @@ function patternMarkShapes(marks: readonly PatternMark[], refs: PatternReference
   return shapes;
 }
 
+const packedCache = new WeakMap<SceneModel, Map<SceneFeature, number>>();
+
+/**
+ * Packed layout, as in counted work: nothing on a layer touches another thing on that
+ * layer. Each feature's real drawn bounds are measured; features are placed in turn (what
+ * a world or a hand placed before ambient detail, then front to back), each shrinking a
+ * little if it would touch what is already there. Ambient detail that still does not fit
+ * is left out; placed things are always kept. Returns each feature's scale (0: left out).
+ */
+function packedScales(features: SceneFeature[], refs: PatternReference[], model: SceneModel): Map<SceneFeature, number> {
+  const hit = packedCache.get(model);
+  if (hit && features.every((f) => hit.has(f))) return hit;
+  const out = hit ?? new Map<SceneFeature, number>();
+  const gap = U * 0.12;
+  const kept = new Map<SceneLayer, Array<[number, number, number, number]>>();
+  const order = [...model.features].sort((a, b) => {
+    const amb = Number(Boolean(a.id?.startsWith('amb-'))) - Number(Boolean(b.id?.startsWith('amb-')));
+    return amb || a.y + a.h - (b.y + b.h) || a.x - b.x;
+  });
+  for (const f of order) {
+    const b = bounds(turnedFeatureShapes(f, refs, model));
+    if (!Number.isFinite(b.minX)) {
+      out.set(f, 1);
+      continue;
+    }
+    const footX = (f.x + f.w / 2) * U;
+    const footY = (f.y + f.h) * U;
+    const layer = layerOf(f);
+    const boxes = kept.get(layer) ?? [];
+    let chosen = 0;
+    let box: [number, number, number, number] = [0, 0, 0, 0];
+    for (const s of [1, 0.85, 0.72]) {
+      box = [footX + (b.minX - footX) * s, footY + (b.minY - footY) * s, footX + (b.maxX - footX) * s, footY + (b.maxY - footY) * s];
+      const clear = boxes.every(([x0, y0, x1, y1]) => box[2] + gap <= x0 || box[0] - gap >= x1 || box[3] + gap <= y0 || box[1] - gap >= y1);
+      if (clear) {
+        chosen = s;
+        break;
+      }
+    }
+    if (!chosen && !f.id?.startsWith('amb-')) chosen = 0.72;
+    out.set(f, chosen);
+    if (chosen) {
+      boxes.push(box);
+      kept.set(layer, boxes);
+    }
+  }
+  packedCache.set(model, out);
+  return out;
+}
+
+function packedFeatureShapes(features: SceneFeature[], refs: PatternReference[], model: SceneModel): Shape[][] {
+  const scales = packedScales(features, refs, model);
+  return features.map((f) => {
+    const s = scales.get(f) ?? 1;
+    if (s === 0) return [];
+    const shapes = turnedFeatureShapes(f, refs, model);
+    if (s === 1) return shapes;
+    const footX = (f.x + f.w / 2) * U;
+    const footY = (f.y + f.h) * U;
+    return place(place(shapes, { dx: -footX, dy: -footY }), { dx: footX, dy: footY, scale: s });
+  });
+}
+
 /**
  * The order features are drawn in: flat things first, layer by layer, then everything that
  * stands up, front to back by where it stands (layer order breaks ties).
@@ -718,7 +795,8 @@ export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>,
   const ground = model.patches ? patchworkShapes(model, U, hidden) : hidden?.has('ground') ? [] : terrainShapes(model);
   const features = drawOrder(hidden?.size ? model.features.filter((f) => !hidden.has(layerOf(f))) : model.features);
   const marks = hidden?.has('patterns') ? [] : patternMarkShapes(model.patternMarks ?? [], refs);
-  const shapes = [...ground, ...marks, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...(frame ? clothBorder(model, refs) : [])];
+  const drawn = model.packing === 'packed' ? packedFeatureShapes(features, refs, model) : features.map((f) => turnedFeatureShapes(f, refs, model));
+  const shapes = [...ground, ...marks, ...drawn.flat(), ...(frame ? clothBorder(model, refs) : [])];
 
   return shapes;
 }
