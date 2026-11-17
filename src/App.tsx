@@ -159,6 +159,7 @@ export function App() {
   const autoHideBar = aestheticSettings.topBarAutoHide;
   const [barPinned, setBarPinned] = useState(false);
   const [barHover, setBarHover] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
   const barOut = !autoHideBar || barPinned || barHover;
   useEffect(() => {
     if (!autoHideBar) return;
@@ -184,6 +185,21 @@ export function App() {
       return next;
     });
   };
+
+  // `\` shows or hides the side panel, whichever mode it is in.
+  const togglePanelRef = useRef<() => void>(() => {});
+  togglePanelRef.current = () => (tab === 'village' ? toggleSidebarOpen() : setSidePanel((p) => (p ? null : lastPanelRef.current)));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '\\' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      e.preventDefault();
+      togglePanelRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     const u1 = brainRouter.subscribeTextStatus(setTextStatus);
@@ -1213,11 +1229,11 @@ export function App() {
       ) : null}
       {showVoiceNudge && settings ? <VoiceNudge settings={settings} onClose={() => setShowVoiceNudge(false)} /> : null}
       <header
-        className={`z-30 flex items-center gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0 ${
-          autoHideBar
-            ? `absolute inset-x-0 top-0 shadow-sm transition-transform duration-200 ${barOut ? 'translate-y-0' : '-translate-y-full'}`
-            : 'relative'
+        ref={headerRef}
+        className={`relative z-30 flex items-center gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0 ${
+          autoHideBar ? 'transition-[margin] duration-200' : ''
         }`}
+        style={autoHideBar && !barOut ? { marginTop: -(headerRef.current?.offsetHeight ?? 41) } : undefined}
         onMouseLeave={autoHideBar ? () => setBarHover(false) : undefined}
       >
         {/* Left: home, then the village's own controls (they render into this slot). */}
@@ -1282,7 +1298,7 @@ export function App() {
         {/* Right, over the panel: the other views, undo and redo, and the panel toggle. */}
         <div
           className="flex shrink-0 items-center justify-between gap-1"
-          style={tab === 'village' && panelWidth ? { width: panelWidth } : tab !== 'village' && sidePanel ? { width: 'min(92vw, 22rem)' } : undefined}
+          style={tab === 'village' && panelWidth ? { minWidth: panelWidth } : tab !== 'village' && sidePanel ? { minWidth: 'min(92vw, 22rem)' } : undefined}
         >
         <nav aria-label="Workspace Views" className="flex shrink-0 items-center gap-1">
           {(
@@ -1336,9 +1352,9 @@ export function App() {
 
           <GlyphButton
             glyph="panel"
-            label={(tab === 'village' ? sidebarOpen : Boolean(sidePanel)) ? 'Hide the side panel' : 'Show the side panel'}
+            label={(tab === 'village' ? sidebarOpen : Boolean(sidePanel)) ? 'Hide the side panel (\\)' : 'Show the side panel (\\)'}
             tipSide="below-left"
-            onClick={() => (tab === 'village' ? toggleSidebarOpen() : setSidePanel((p) => (p ? null : lastPanelRef.current)))}
+            onClick={() => togglePanelRef.current()}
             pressed={tab === 'village' ? sidebarOpen : Boolean(sidePanel)}
           />
         </div>
@@ -1358,6 +1374,7 @@ export function App() {
             onUpdateAesthetic={handleUpdateAesthetic}
             sidebarOpen={sidebarOpen}
             sidebarSwap={sidePanel ? sidePanelNode(true) : undefined}
+            onShowStoryline={() => setSidePanel(null)}
             panelTabs={panelTabs(true)}
             toolbarSlot={toolbarSlot}
             onPanelWidth={setPanelWidth}

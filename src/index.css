@@ -184,6 +184,9 @@ dialog::backdrop {
 .glyph-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, currentColor 35%, transparent);
 }
+.glyph-button.stitch-select:focus-within {
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+}
 .glyph-button.glyph-on {
   border-color: color-mix(in srgb, var(--text-ink) 55%, transparent);
   background: color-mix(in srgb, var(--text-ink) 7%, transparent);
@@ -264,7 +267,15 @@ dialog::backdrop {
 .stitch-scope .glyph-button.glyph-on {
   border-color: transparent;
 }
-.stitch-scope .glyph-button:hover:not(:disabled)::after {
+.stitch-scope .glyph-button:hover:not(:disabled)::after,
+.stitch-scope .glyph-button.stitch-select:focus-within::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-style: solid;
+  border-color: transparent;
+  border-image: var(--stitch-frame) 20 / 8px round;
   border-width: 8px;
   border-image-width: 8px;
   opacity: 0.45;

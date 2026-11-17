@@ -17,7 +17,7 @@ import {
 import type { BodyPainter } from '../engine/renderer';
 import { tileSemanticsForMap } from '../world/packs';
 import { Glyph, GlyphButton, GlyphTip } from './Glyph';
-import { KnotDivider, StitchPanel, StitchScope } from './Stitch';
+import { KnotDivider, StitchPanel, StitchScope, StitchSelect } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
 import { drawConversationThreads, type ThreadEnd } from '../art/threads';
 import { WovenText, type WovenObstacle, type WovenSpeaker } from '../art/wovenText';
@@ -108,6 +108,8 @@ interface VillageViewProps {
    * stays mounted underneath, hidden, so it comes back as it was.
    */
   sidebarSwap?: React.ReactNode;
+  /** Switch the side panel back to the Storyline (the village's own inspector). */
+  onShowStoryline?: () => void;
   /** The panel's mode tabs (Storyline, Style, World & Data), shown above whichever is open. */
   panelTabs?: React.ReactNode;
   /** A place in the app's top bar to draw the village controls into, instead of over the map. */
@@ -481,6 +483,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onUpdateAesthetic,
   sidebarOpen: sidebarOpenProp,
   sidebarSwap,
+  onShowStoryline,
   panelTabs,
   toolbarSlot,
   onPanelWidth,
@@ -1431,6 +1434,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
     if (villager) {
       focusCharacter(villager.id);
+      const name = sim.configs.get(villager.id)?.name;
+      if (name) {
+        setSelectedId(villager.id);
+        openQuickSay({ x: e.clientX, y: e.clientY }, `@${name} `);
+      }
       return;
     }
     let place: { x: number; y: number } | null = null;
@@ -1744,6 +1752,59 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const handleTriggerAtMention = () => insertTriggerChar('@');
   const handleTriggerHashMention = () => insertTriggerChar('#');
 
+  // `/` speaks to the world. With the panel open it jumps to the Storyline's message box;
+  // with the panel hidden a small field opens where the pointer is, so the map stays in view.
+  // Double-clicking a character opens the same field already addressed to them.
+  const pointerAtRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const [quickSay, setQuickSay] = useState<{ x: number; y: number } | null>(null);
+  const [quickText, setQuickText] = useState('');
+  const openQuickSay = (at: { x: number; y: number }, prefill = '') => {
+    setQuickText(prefill);
+    setQuickSay({ ...at });
+  };
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      pointerAtRef.current = { x: e.clientX, y: e.clientY };
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      e.preventDefault();
+      if (sidebarOpen) {
+        if (sidebarSwap) onShowStoryline?.();
+        // The Storyline renders on the next frame when it was swapped out.
+        requestAnimationFrame(() => requestAnimationFrame(() => composerRef.current?.focus()));
+        return;
+      }
+      setQuickText('');
+      setQuickSay({ ...pointerAtRef.current });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [sidebarOpen, sidebarSwap, onShowStoryline]);
+
+  const sendQuickSay = async () => {
+    const text = quickText.trim();
+    setQuickSay(null);
+    setQuickText('');
+    if (!text || sending) return;
+    setSending(true);
+    setVoiceError(null);
+    try {
+      const res = await sim.sendUserAddressedMessage(selectedId || undefined, text, settings.enableOmniTts || settings.enableWebSpeechFallback);
+      if (res.focusedTargetId) setSelectedId(res.focusedTargetId);
+    } catch (err: any) {
+      setVoiceError(err?.message || String(err));
+    } finally {
+      setSending(false);
+    }
+  };
+
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
     const raw = serializeComposerText(composerRef.current) || chatInput;
@@ -1931,20 +1992,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor };
               return (
                 <div className="flex items-center gap-1 px-0.5" role="group" aria-label="Time pace and rewind">
-                  <select
+                  <StitchSelect
                     value={String(SPEED_LOG_MARKS.reduce((best, m) => (Math.abs(m.value - effectiveSpeed) < Math.abs(best - effectiveSpeed) ? m.value : best), 1))}
-                    onChange={(e) => applySpeed(Number(e.target.value))}
-                    aria-label="Simulation speed (negative rewinds, 0 pauses)"
-                    title="Simulation speed: negative rewinds, 0 pauses"
-                    style={speedBadgeStyle}
-                    className={`h-6 cursor-pointer rounded border-0 px-1 font-mono text-[11px] font-semibold ${stitchHud ? 'glyph-button bg-transparent' : ''}`}
-                  >
-                    {[...SPEED_LOG_MARKS].reverse().map((mark) => (
-                      <option key={mark.value} value={String(mark.value)}>
-                        {mark.value === 0 ? 'Pause' : `${mark.label}×`}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => applySpeed(Number(v))}
+                    label="Simulation speed: negative rewinds, 0 pauses"
+                    style={stitchHud ? { color: speedBadgeStyle.color } : speedBadgeStyle}
+                    className="font-semibold"
+                    options={[...SPEED_LOG_MARKS].reverse().map((mark) => ({ value: String(mark.value), label: mark.value === 0 ? 'Pause' : `${mark.label}×` }))}
+                  />
                   {(isRewinding || rewindInfo.behindPresentSec >= 0.4) && (
                     <span
                       className="whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
@@ -2109,36 +2164,30 @@ export const VillageView: React.FC<VillageViewProps> = ({
               }}
               className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-xs transition"
             >
-              <label htmlFor="village-eavesdrop-radius" className="group relative inline-flex cursor-pointer items-center" aria-label="Eavesdrop distance">
+              <span className="group relative inline-flex items-center" aria-label="Eavesdrop distance">
                 <span className={settings.proximityRadiusTiles > 0 ? '' : 'opacity-45'}>
                   <Glyph name="eavesdrop" size={16} />
                 </span>
                 <GlyphTip>Eavesdrop distance</GlyphTip>
-              </label>
-              <select
-                id="village-eavesdrop-radius"
+              </span>
+              <StitchSelect
                 value={String(
                   isWholeMapEavesdrop(settings.proximityRadiusTiles)
                     ? EAVESDROP_WHOLE_MAP_RADIUS
                     : [0, 3, 6, 9, 12, 18, 24].reduce((best, r) => (Math.abs(r - settings.proximityRadiusTiles) < Math.abs(best - settings.proximityRadiusTiles) ? r : best), 9),
                 )}
-                onChange={(e) => {
-                  const nextRadius = Number(e.target.value);
+                onChange={(v) => {
+                  const nextRadius = Number(v);
                   if (nextRadius <= 0) brainRouter.stopSpeech();
                   onUpdateSettings({ proximityRadiusTiles: nextRadius });
                 }}
-                title="How far you can hear: off, a number of cells around you, or the whole map"
-                aria-label="Hearing range"
-                className={`h-6 cursor-pointer rounded border-0 px-1 font-mono text-[11px] ${stitchHud ? 'glyph-button bg-transparent' : ''}`}
-              >
-                <option value="0">Off</option>
-                {[3, 6, 9, 12, 18, 24].map((r) => (
-                  <option key={r} value={String(r)}>
-                    {r} cells
-                  </option>
-                ))}
-                <option value={String(EAVESDROP_WHOLE_MAP_RADIUS)}>All</option>
-              </select>
+                label="Hearing range: off, cells around you, or the whole map"
+                options={[
+                  { value: '0', label: 'Off' },
+                  ...[3, 6, 9, 12, 18, 24].map((r) => ({ value: String(r), label: `${r} cells` })),
+                  { value: String(EAVESDROP_WHOLE_MAP_RADIUS), label: 'All' },
+                ]}
+              />
               <GlyphButton glyph="flush" label="Flush queued speech audio" size={15} onClick={() => brainRouter.flushAudioQueue()} />
             </div>
           </div>
@@ -2167,6 +2216,43 @@ export const VillageView: React.FC<VillageViewProps> = ({
           onWheel={handleWheel}
           className="pixel-canvas h-full w-full cursor-grab active:cursor-grabbing touch-none"
         />
+
+        {quickSay ? (
+          <StitchScope look={hudLook}>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void sendQuickSay();
+              }}
+              className={`${stitchHud ? 'stitch-panel' : 'rounded border border-borderFolk bg-surface shadow'} fixed z-50 px-3 py-2`}
+              style={{
+                left: Math.max(8, Math.min(quickSay.x - 12, window.innerWidth - 340)),
+                top: Math.max(8, Math.min(quickSay.y + 14, window.innerHeight - 70)),
+                width: 320,
+              }}
+            >
+              <input
+                autoFocus
+                value={quickText}
+                onChange={(e) => setQuickText(e.target.value)}
+                onFocus={(e) => {
+                  const end = e.currentTarget.value.length;
+                  e.currentTarget.setSelectionRange(end, end);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setQuickSay(null);
+                  }
+                }}
+                onBlur={() => setQuickSay(null)}
+                aria-label={`Say something to ${isScribeSelected ? narratorName : selectedCfg?.name ?? 'the village'}`}
+                placeholder={isScribeSelected ? `Tell ${narratorName}, or @someone…` : `Say to ${selectedCfg?.name ?? 'the village'}, or @someone…`}
+                className="w-full bg-transparent text-xs leading-relaxed text-ink placeholder:text-muted focus:outline-none"
+              />
+            </form>
+          </StitchScope>
+        ) : null}
 
         {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
         {toolbarSlot ? (

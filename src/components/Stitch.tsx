@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import type { PaletteName } from '../art/looks';
 import { stitchKit, stitchVars, type StitchKit } from '../art/uiChrome';
-import { GlyphLookContext } from './Glyph';
+import { GlyphLookContext, GlyphTip } from './Glyph';
 
 const StitchKitContext = createContext<StitchKit | null>(null);
 
@@ -57,3 +57,51 @@ export const StitchSlider = React.forwardRef<HTMLInputElement, React.InputHTMLAt
     return <input ref={ref} type="range" {...rest} className={`stitch-range ${className ?? ''}`} />;
   },
 );
+
+/**
+ * A dropdown dressed like a glyph button: the chosen option in the look's own type, a small
+ * chevron, and the stitched frame on hover and focus. The browser's menu opens over it.
+ */
+export function StitchSelect({
+  value,
+  options,
+  onChange,
+  label,
+  tipSide = 'below',
+  className,
+  style,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  label: string;
+  tipSide?: React.ComponentProps<typeof GlyphTip>['side'];
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const shown = options.find((o) => o.value === value)?.label ?? value;
+  return (
+    <span
+      style={style}
+      className={`glyph-button stitch-select group relative inline-flex h-7 items-center gap-0.5 rounded-sm pl-1.5 pr-1 font-mono text-[11px] ${className ?? ''}`}
+    >
+      <span className="whitespace-nowrap">{shown}</span>
+      <svg aria-hidden viewBox="0 0 8 5" className="h-1.5 w-2 shrink-0 opacity-60">
+        <path d="M0.5 0.5 L4 4 L7.5 0.5" fill="none" stroke="currentColor" strokeWidth="1.2" strokeDasharray="1.6 0.9" />
+      </svg>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <GlyphTip side={tipSide}>{label}</GlyphTip>
+    </span>
+  );
+}
