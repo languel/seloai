@@ -419,6 +419,15 @@ export function paintLinen(ctx: CanvasRenderingContext2D, width: number, height:
   }
 }
 
+/** Where the light comes from: the upper left, as on a cloth by a window. */
+const LIGHT: Pt = [-0.6, -0.8];
+
+/**
+ * One thread, lit as a rounded strand: its body, a shadow along the side away from the
+ * light and a highlight along the side toward it. Both grow as the thread turns square to
+ * the light, so a fill swept one way takes a satin sheen and an outline's stitches catch
+ * the light differently as it turns.
+ */
 function threadStroke(
   ctx: CanvasRenderingContext2D,
   x0: number,
@@ -436,13 +445,38 @@ function threadStroke(
   ctx.moveTo(x0, y0);
   ctx.lineTo(x1, y1);
   ctx.stroke();
-  // Sheen: a thin lighter line along the middle of the thread.
-  ctx.strokeStyle = 'rgba(255, 244, 225, 0.22)';
-  ctx.lineWidth = Math.max(0.6, width * 0.28);
+  const length = Math.hypot(x1 - x0, y1 - y0);
+  if (length < 0.01) return;
+  // The thread's side that faces the light, and how squarely it faces it.
+  let nx = -(y1 - y0) / length;
+  let ny = (x1 - x0) / length;
+  const dot = nx * LIGHT[0] + ny * LIGHT[1];
+  if (dot < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const facing = Math.abs(dot);
+  const alpha = ctx.globalAlpha;
+  const a = 0.14;
+  const b = 0.86;
+  // Shadow: a darker strand along the far side.
+  const off = width * 0.24;
+  ctx.strokeStyle = shade(colour, 0.58);
+  ctx.globalAlpha = alpha * (0.22 + 0.33 * facing);
+  ctx.lineWidth = width * 0.4;
   ctx.beginPath();
-  ctx.moveTo(x0 + (x1 - x0) * 0.18, y0 + (y1 - y0) * 0.18);
-  ctx.lineTo(x0 + (x1 - x0) * 0.82, y0 + (y1 - y0) * 0.82);
+  ctx.moveTo(x0 - nx * off, y0 - ny * off);
+  ctx.lineTo(x1 - nx * off, y1 - ny * off);
   ctx.stroke();
+  // Highlight: a light strand along the near side, inset from the ends.
+  ctx.strokeStyle = 'rgb(255, 247, 230)';
+  ctx.globalAlpha = alpha * (0.14 + 0.36 * facing);
+  ctx.lineWidth = Math.max(0.5, width * 0.28);
+  ctx.beginPath();
+  ctx.moveTo(x0 + (x1 - x0) * a + nx * off, y0 + (y1 - y0) * a + ny * off);
+  ctx.lineTo(x0 + (x1 - x0) * b + nx * off, y0 + (y1 - y0) * b + ny * off);
+  ctx.stroke();
+  ctx.globalAlpha = alpha;
 }
 
 export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[], o: LookOptions) {
@@ -488,9 +522,22 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
       ctx.clip();
       ctx.fillStyle = shade(colour, 0.7);
       ctx.fill();
-      sweep(pixelBox(points, o), shape.grain, thread * 0.92, (x0, y0, x1, y1) => {
+      const box = pixelBox(points, o);
+      sweep(box, shape.grain, thread * 0.92, (x0, y0, x1, y1) => {
         threadStroke(ctx, x0, y0, x1, y1, colour, thread * 1.05, rng);
       });
+      // Padded work: the whole fill a little lighter toward the light, darker away from it.
+      const { minX: bx0, minY: by0, maxX: bx1, maxY: by1 } = box;
+      const cx = (bx0 + bx1) / 2;
+      const cy = (by0 + by1) / 2;
+      const reach = Math.hypot(bx1 - bx0, by1 - by0) / 2;
+      const form = ctx.createLinearGradient(cx + LIGHT[0] * reach, cy + LIGHT[1] * reach, cx - LIGHT[0] * reach, cy - LIGHT[1] * reach);
+      form.addColorStop(0, 'rgba(255, 247, 230, 0.16)');
+      form.addColorStop(0.5, 'rgba(255, 247, 230, 0)');
+      form.addColorStop(0.5, 'rgba(40, 26, 12, 0)');
+      form.addColorStop(1, 'rgba(40, 26, 12, 0.2)');
+      ctx.fillStyle = form;
+      ctx.fillRect(bx0, by0, bx1 - bx0, by1 - by0);
       ctx.restore();
     } else if (shape.kind === 'line') {
       // Stem stitch: short slanted stitches that overlap along the path.
