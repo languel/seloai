@@ -41,6 +41,8 @@ export type SceneEdit =
   | { op: 'title'; title: string }
   /** How the world's houses are worked: drawn or stitched. */
   | { op: 'houseLook'; look: HouseLook }
+  /** How large houses are drawn against people (1 = the old size, 2 = the default). */
+  | { op: 'houseScale'; scale: number }
   /** The world's own threads (an id from WORLD_PALETTES). */
   | { op: 'palette'; palette: string }
   /** How strongly the world is drawn behind the people, and whether the paths are quiet. */
@@ -172,6 +174,9 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
       }
       case 'houseLook':
         model.houseLook = edit.look;
+        return;
+      case 'houseScale':
+        model.houseScale = edit.scale;
         return;
       case 'palette':
         model.palette = edit.palette;

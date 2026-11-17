@@ -114,6 +114,8 @@ export interface FigureRig {
   density: number;
   build: FigureBuild;
   view: FigureView;
+  /** The arms raised, as in the khoro, for when the figure dances. */
+  danceArms?: { left: PartSprite; right: PartSprite };
 }
 
 export interface FigureLooks {
@@ -178,7 +180,8 @@ export function getFigureRig(
   const size = Math.max(16, Math.round(heightPx));
   const seed = chosenSeed ?? hashString(id);
   const who = `${id}|${seed}|${traits ? JSON.stringify(traits) : ''}`;
-  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits });
+  // Everyday arms are down; the raised arms are kept apart for dancing.
+  const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits, stance: 'everyday' });
   const mood = expression ?? resting.restingExpression;
   const key = `${who}|${look}:${activeWorldThreadsId()}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|${mood}`;
   const cached = rigCache.get(key);
@@ -190,6 +193,8 @@ export function getFigureRig(
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
     for (const name of PART_ORDER) parts[name] = renderPart(resting[name], look, unit, seed);
+    const dancing = view === 'side' ? null : figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits, stance: 'dancing' });
+    const danceArms = dancing ? { left: renderPart(dancing.armLeft, look, unit, seed), right: renderPart(dancing.armRight, look, unit, seed) } : undefined;
     const toPx = (p: Pt): Pt => [(p[0] * size) / FIGURE_UNITS, (p[1] * size) / FIGURE_UNITS];
     body = {
       parts,
@@ -206,6 +211,7 @@ export function getFigureRig(
       density: DENSITY,
       build,
       view,
+      danceArms,
     };
     rigCache.set(bodyKey, body);
   }
@@ -216,7 +222,7 @@ export function getFigureRig(
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks, traits }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks, traits, stance: 'everyday' }).head, look, unit, seed),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
@@ -247,6 +253,8 @@ export interface FigureMotion {
   /** Advances while walking; one stride is about two units. */
   animFrame: number;
   state?: string;
+  /** Dancing (in the khoro, at a celebration): arms up, a bounce in the step. */
+  dancing?: boolean;
   /** Seconds, any clock that runs steadily. */
   time: number;
 }
@@ -256,6 +264,7 @@ interface MotionMemory {
   flip: number;
   talk: number;
   think: number;
+  dance: number;
   time: number;
   view: FigureView;
   /** When the view last changed, for the quick squash that sells the turn. */
@@ -363,7 +372,7 @@ export function paintRig(
 ) {
   const memory =
     motionMemory.get(motion.id) ??
-    { move: 0, flip: 1, talk: 0, think: 0, time: motion.time, view: rig.view, viewChangedAt: -10, lastMovedAt: -10 };
+    { move: 0, flip: 1, talk: 0, think: 0, dance: 0, time: motion.time, view: rig.view, viewChangedAt: -10, lastMovedAt: -10 };
   const dt = Math.max(0, Math.min(0.1, motion.time - memory.time));
   memory.time = motion.time;
   if (motion.moving) memory.lastMovedAt = motion.time;
@@ -378,6 +387,7 @@ export function paintRig(
   memory.flip = approach(memory.flip, flipTarget, 9, dt);
   memory.talk = approach(memory.talk, motion.state === 'speaking' ? 1 : 0, 4, dt);
   memory.think = approach(memory.think, motion.state === 'thinking' ? 1 : 0, 3, dt);
+  memory.dance = approach(memory.dance ?? 0, motion.dancing ? 1 : 0, 3, dt);
   motionMemory.set(motion.id, memory);
   if (motionMemory.size > 300) motionMemory.clear();
 
@@ -392,7 +402,10 @@ export function paintRig(
   const contact = 1 - Math.abs(step);
   const breath = Math.sin(t * 1.9 + phase);
 
-  const lift = move * Math.abs(step) * h * 0.05;
+  // Dancing: a springy bounce on the beat (about two steps a second).
+  const dance = memory.dance * memory.dance * (3 - 2 * memory.dance);
+  const beat = t * 4.2 + phase;
+  const lift = move * Math.abs(step) * h * 0.05 + dance * Math.abs(Math.sin(beat)) * h * 0.035;
   const squashY = 1 - move * 0.06 * contact + still * 0.01 * breath;
   const squashX = 1 + move * 0.05 * contact - still * 0.006 * breath;
   const facingSign = memory.flip >= 0 ? 1 : -1;
@@ -473,21 +486,27 @@ export function paintRig(
 
   // Side-on, the near arm swings against the near (right) leg. Head-on an arm swinging
   // forward foreshortens, so it shortens a little and turns in rather than flapping out.
-  const swing = move * step * (side ? 0.55 : 0.16);
+  // Walking, the arms swing with the stride; standing, they hang and drift a little.
+  const swing = move * step * (side ? 0.55 : 0.22);
   const reachL = side ? 1 : 1 - move * Math.max(0, -step) * 0.14;
   const reachR = side ? 1 : 1 - move * Math.max(0, step) * 0.14;
-  const drift = still * Math.sin(t * 1.1 + phase) * 0.045;
+  const drift = still * Math.sin(t * 1.1 + phase) * 0.035;
+  // Dancing, the raised arms take over and sway with the beat.
+  const raised = rig.danceArms && dance > 0.5 ? rig.danceArms : null;
+  const sway = raised ? Math.sin(beat) * 0.12 : 0;
+  // Talking, the speaking hand comes up and moves with the words, now and then both.
+  const gesture = raised ? 0 : talk * (-0.55 - 0.3 * Math.sin(t * 4.6 + phase));
+  const otherHand = raised ? 0 : talk * Math.max(0, Math.sin(t * 1.3 + phase * 2)) * (0.35 + 0.2 * Math.sin(t * 5.1));
   ctx.save();
   ctx.translate(0, neckRise);
-  aboutPivot(ctx, shoulderLeft, -swing + drift, 1, reachL);
-  drawPart(ctx, rig.parts.armLeft, density);
+  aboutPivot(ctx, shoulderLeft, raised ? sway : -swing + drift + otherHand, 1, raised ? 1 : reachL);
+  drawPart(ctx, raised ? raised.left : rig.parts.armLeft, density);
   ctx.restore();
 
   ctx.save();
   ctx.translate(0, neckRise);
-  const gesture = talk * (-0.3 - 0.18 * Math.sin(t * 4.6 + phase));
-  aboutPivot(ctx, shoulderRight, swing - drift + gesture, 1, reachR);
-  drawPart(ctx, rig.parts.armRight, density);
+  aboutPivot(ctx, shoulderRight, raised ? sway : swing - drift + gesture, 1, raised ? 1 : reachR);
+  drawPart(ctx, raised ? raised.right : rig.parts.armRight, density);
   ctx.restore();
 
   ctx.restore();

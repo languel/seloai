@@ -252,7 +252,7 @@ export function patchworkShapes(model: SceneModel, U: number, hidden?: ReadonlyS
     const fr = frameOf(pts, p.front ?? 0);
     switch (p.kind) {
       case 'house':
-        houseRow(buildings, p, pts, fr, rng, U, model.houseLook === 'stitched');
+        houseRow(buildings, p, pts, fr, rng, U, model.houseLook === 'stitched', model.houseScale ?? 2);
         break;
       case 'garden':
       case 'vineyard':
@@ -370,9 +370,12 @@ function bridgeShapes(shapes: Shape[], br: Bridge, U: number) {
 }
 
 /** The houses of a house plot: a row along the street, sometimes overlapping, sometimes a corner house on the side street. */
-function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: number, stitched = false) {
+function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: number, stitched = false, scale = 2) {
   const special = p.special;
-  const room = Math.min(fr.depth, U * 4.2);
+  // Houses may stand taller than their plot is deep (they overlap what is behind, as on an
+  // old map), so the room is set by the house size, not only by the plot.
+  const s = scale;
+  const room = Math.max(Math.min(fr.depth, U * 4.2 * s), U * 2.4 * s);
   const mid = pts.reduce<Pt>((acc, q) => [acc[0] + q[0] / pts.length, acc[1] + q[1] / pts.length], [0, 0]);
   const place = (ra: Pt, ru: Pt, rn: Pt, along: number, w: number, h: number, kind: HouseKind | SpecialBuilding) => {
     const tilt = (rng() - 0.5) * 0.3; // a Chagall lean
@@ -391,24 +394,28 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
   };
   if (special) {
     // A named building fills the front of its plot.
-    const w = Math.min(fr.len * 0.85, U * (special === 'church' ? 3.4 : 3));
-    const h = Math.min(room * 0.95, U * (special === 'church' ? 3.6 : 3.2));
+    const w = Math.min(Math.max(fr.len * 0.95, U * 2.4 * s), U * (special === 'church' ? 3.4 : 3) * s);
+    const h = Math.min(room * 0.95, U * (special === 'church' ? 3.6 : 3.2) * s);
     place(fr.a, fr.u, fr.n, (fr.len - w) / 2, w, h, special);
     return;
   }
   let along = U * 0.1;
   const kinds: HouseKind[] = ['cottage', 'cottage', 'tall', 'long', 'barn'];
-  while (along < fr.len - U * 1.3) {
+  let built = 0;
+  // At least one house on every house plot, even a narrow one.
+  while (along < fr.len - U * 1.3 * s || built === 0) {
     const kind = kinds[Math.floor(rng() * kinds.length)];
-    const w = Math.min(fr.len - along - U * 0.1, U * (kind === 'long' || kind === 'barn' ? 2.6 + rng() * 0.8 : kind === 'tall' ? 1.6 + rng() * 0.4 : 1.9 + rng() * 0.6));
-    if (w < U * 1.3) break;
-    const h = Math.min(room * 0.95, U * (kind === 'tall' ? 3.4 + rng() * 0.5 : kind === 'long' ? 2.4 + rng() * 0.4 : 2.7 + rng() * 0.7));
-    place(fr.a, fr.u, fr.n, along, w, h, kind);
+    const want = U * s * (kind === 'long' || kind === 'barn' ? 2.6 + rng() * 0.8 : kind === 'tall' ? 1.6 + rng() * 0.4 : 1.9 + rng() * 0.6);
+    const w = built === 0 ? Math.min(want, Math.max(fr.len * 0.95, U * 1.6 * s)) : Math.min(fr.len - along - U * 0.1, want);
+    if (w < U * 1.3 * s) break;
+    const h = Math.min(room * 0.95, U * s * (kind === 'tall' ? 3.4 + rng() * 0.5 : kind === 'long' ? 2.4 + rng() * 0.4 : 2.7 + rng() * 0.7));
+    place(fr.a, fr.u, fr.n, built === 0 && w > fr.len ? (fr.len - w) / 2 : along, w, h, kind);
+    built++;
     // Neighbours sometimes overlap a little, sometimes leave a gap.
     along += w + U * (rng() < 0.35 ? -0.25 : 0.05 + rng() * 0.2);
   }
   // A corner house on the side street, turned to face it.
-  if (fr.depth > U * 3.2 && rng() < 0.6) {
+  if (fr.depth > U * 3.2 * s && rng() < 0.6) {
     const side = (p.front ?? 0) + 1;
     const sa = pts[side % pts.length];
     const sb = pts[(side + 1) % pts.length];
@@ -416,7 +423,7 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
     const su: Pt = [(sb[0] - sa[0]) / sl, (sb[1] - sa[1]) / sl];
     let sn: Pt = [-su[1], su[0]];
     if ((mid[0] - sa[0]) * sn[0] + (mid[1] - sa[1]) * sn[1] < 0) sn = [-sn[0], -sn[1]];
-    const w = Math.min(sl * 0.5, U * 2);
-    if (w > U * 1.2) place(sa, su, sn, sl * 0.45, w, Math.min(room * 0.8, U * 2.8), 'cottage');
+    const w = Math.min(sl * 0.5, U * 2 * s);
+    if (w > U * 1.2 * s) place(sa, su, sn, sl * 0.45, w, Math.min(room * 0.8, U * 2.8 * s), 'cottage');
   }
 }

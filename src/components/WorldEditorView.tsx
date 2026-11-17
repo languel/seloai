@@ -86,6 +86,8 @@ function describeEdit(edit: SceneEdit): string {
       return `Scattered ${edit.features.length} ${FEATURE_NAMES[edit.features[0]?.kind] ?? edit.features[0]?.kind ?? ''}`;
     case 'houseLook':
       return `Houses ${edit.look}`;
+    case 'houseScale':
+      return `Houses ${edit.scale}× size`;
     case 'backdrop':
       return edit.quietPaths !== undefined ? (edit.quietPaths ? 'Quiet paths' : 'Busy paths') : `Backdrop ${edit.strength}`;
     case 'palette':
@@ -800,6 +802,19 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                 <option value="drawn">Drawn</option>
                 <option value="stitched">Stitched (cross-stitch)</option>
               </select>
+              <span className="mt-0.5 flex gap-1" title="How large houses are drawn against people">
+                {(
+                  [
+                    [1, 'Small'],
+                    [2, 'Large'],
+                    [3, 'Huge'],
+                  ] as const
+                ).map(([v, label]) => (
+                  <Chip key={v} on={(baked?.model.houseScale ?? 2) === v} onClick={() => edit({ op: 'houseScale', scale: v }, `Houses ${label.toLowerCase()}`)}>
+                    {label}
+                  </Chip>
+                ))}
+              </span>
             </label>
           </>
         ) : (

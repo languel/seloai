@@ -219,6 +219,11 @@ export interface SceneModel {
   streamFlow?: number;
   /** How the world's houses are worked (default `drawn`). */
   houseLook?: HouseLook;
+  /**
+   * How large houses are drawn against people, as a multiple of the old size (default 2:
+   * twice as wide and tall, so a door is a person's height).
+   */
+  houseScale?: number;
   /** Patterns laid with the brush, on the patterns layer. */
   patternMarks?: PatternMark[];
   /** The world's own threads (see WORLD_PALETTES), used under the full-colour look. */

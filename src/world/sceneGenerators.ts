@@ -279,7 +279,7 @@ export const wangValley: SceneGenerator = {
 
 const PATCHWORK_PARAMS: readonly SceneParamSpec[] = [
   { key: 'rings', label: 'Size', hint: 'How far the village spreads from its square', type: 'int', min: 2, max: 6, default: 3 },
-  { key: 'side', label: 'Plot size', hint: 'Larger plots, fewer of them', type: 'int', min: 6, max: 14, default: 10 },
+  { key: 'side', label: 'Plot size', hint: 'Larger plots, fewer of them', type: 'int', min: 6, max: 22, default: 14 },
   { key: 'houses', label: 'Houses', hint: 'How built-up the village is', type: 'float', min: 0, max: 1, step: 0.05, default: 0.55 },
   { key: 'stream', label: 'Stream', hint: 'A stream across the village', type: 'bool', default: true },
 ];

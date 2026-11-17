@@ -325,6 +325,9 @@ function checkEdit(edit: SceneEdit) {
       if (edit.strength !== undefined && !(edit.strength >= 0.3 && edit.strength <= 1)) fail('backdrop strength is 0.3 to 1.');
       if (edit.quietPaths !== undefined && typeof edit.quietPaths !== 'boolean') fail('quietPaths is true or false.');
       return;
+    case 'houseScale':
+      if (!(edit.scale >= 0.75 && edit.scale <= 4)) fail('houseScale is 0.75 to 4.');
+      return;
     case 'houseLook':
       if (edit.look !== 'drawn' && edit.look !== 'stitched') fail('houseLook is "drawn" or "stitched".');
       return;

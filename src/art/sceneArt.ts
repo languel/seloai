@@ -21,11 +21,11 @@ const UP = -Math.PI / 2;
 const HOUSE_SCALE = 1.45;
 const TREE_SCALE = 1.4;
 
-function house(feature: SceneFeature, refs: PatternReference[]): Shape[] {
+function house(feature: SceneFeature, refs: PatternReference[], scale: number): Shape[] {
   const rng = createSeededRng(feature.seed);
   // Drawn larger than the footprint, so a house stands well above the people at its door.
-  const w = feature.w * U * 0.86 * HOUSE_SCALE;
-  const h = feature.h * U * 0.92 * HOUSE_SCALE;
+  const w = feature.w * U * 0.86 * HOUSE_SCALE * scale;
+  const h = feature.h * U * 0.92 * HOUSE_SCALE * scale;
   const wall = h * 0.46;
   const wallInk: Ink = (['accent2', 'secondary', 'primary'] as const)[Math.floor(rng() * 3)];
   const shapes: Shape[] = [
@@ -126,6 +126,11 @@ function houseFacing(feature: SceneFeature, model?: SceneModel): number {
   return Math.PI;
 }
 
+/** How large a world draws its houses against people (2 unless the world says). */
+export function houseScaleOf(model?: { houseScale?: number }): number {
+  return model?.houseScale ?? 2;
+}
+
 /** The references a feature's pattern grows from: its own, if it names one. */
 function refFor(feature: SceneFeature, refs: PatternReference[]): PatternReference[] {
   if (!feature.ref) return refs;
@@ -148,21 +153,22 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
   const centreY = (feature.y + feature.h / 2) * U;
   const rng = createSeededRng(feature.seed);
   switch (feature.kind) {
-    case 'house':
+    case 'house': {
+      const hs = houseScaleOf(model);
       if ((feature.look ?? model?.houseLook) === 'stitched') {
         // A counted house, standing upright on its footprint like a house on a sampler.
         const cell = U / STITCHES_PER_CELL;
         const tall = feature.variant === 'tall' || feature.variant === 'church';
-        const w = feature.w * U * (feature.variant ? 0.95 : 0.86 * HOUSE_SCALE);
-        const h = feature.variant ? U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) : feature.h * U * 0.92 * HOUSE_SCALE;
+        const w = feature.w * U * (feature.variant ? 0.95 : 0.86 * HOUSE_SCALE) * hs;
+        const h = (feature.variant ? U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) : feature.h * U * 0.92 * HOUSE_SCALE) * hs;
         const grid = stitchedHouseGrid(feature.variant ?? 'folk', Math.round(w / cell), Math.round(h / cell), feature.seed);
         return place([motifShape(grid, cell)], { dx: footX, dy: footY - (grid.h * cell) / 2 });
       }
       if (feature.variant) {
         // A building of a named kind, in the patchwork's style, standing on its footprint.
         const tall = feature.variant === 'tall' || feature.variant === 'church';
-        const w = feature.w * U * 0.95;
-        const h = U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) * (0.9 + rng() * 0.2);
+        const w = feature.w * U * 0.95 * hs;
+        const h = U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) * (0.9 + rng() * 0.2) * hs;
         return place(standingBuilding(feature.variant, w, h, feature.seed, U), { dx: footX, dy: footY });
       }
     {
@@ -173,7 +179,8 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       const halfW = (feature.w * U) / 2;
       const halfH = (feature.h * U) / 2 - U * 0.12;
       const base: Pt = rot === 0 ? [cx, cy + halfH] : rot === Math.PI ? [cx, cy - halfH] : rot < 0 ? [cx + halfW - U * 0.12, cy] : [cx - halfW + U * 0.12, cy];
-      return place(house(feature, refs), { dx: base[0], dy: base[1], rot });
+      return place(house(feature, refs, hs), { dx: base[0], dy: base[1], rot });
+    }
     }
     case 'tree':
       return place(treeOfLife(rng, feature.h * U * 0.94 * TREE_SCALE), { dx: footX, dy: footY });

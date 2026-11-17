@@ -64,6 +64,12 @@ export interface FigureOptions {
    * after every random draw, so choosing one never changes another.
    */
   traits?: FigureTraits;
+  /**
+   * How the arms are held. `everyday`: down at the sides (hands on hips for those whose
+   * pose is akimbo, a flower held out only when chosen by hand); `dancing`: raised, as in
+   * the khoro. Left out, a figure keeps the pose it was drawn with (portraits, the editor).
+   */
+  stance?: 'everyday' | 'dancing';
 }
 
 /** The traits a person's look can be set by hand in the character editor. */
@@ -826,6 +832,18 @@ export function figureParts(rng: Rng, options: FigureOptions): FigureParts {
   // traits chosen by hand override both.
   applyKind(t, kind);
   applyChosen(t, options.traits);
+  if (options.stance === 'everyday') {
+    const keep = t.pose === 'akimbo' || (t.pose === 'offering' && options.traits?.pose === 'offering');
+    if (!keep) {
+      t.pose = 'resting';
+      t.flower = null;
+      t.carriesComb = false;
+    }
+  } else if (options.stance === 'dancing' && t.pose !== 'raised') {
+    t.pose = 'raised';
+    t.flower = null;
+    t.carriesComb = t.quirk.motifSeed % 2 === 0;
+  }
   const build: FigureBuild = kind === 'kuker' ? 'trousered' : kind === 'human' ? options.build ?? 'skirted' : 'skirted';
   const view = options.view ?? 'front';
   const expression = options.expression ?? t.restingExpression;

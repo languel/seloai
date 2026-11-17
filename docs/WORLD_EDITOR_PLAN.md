@@ -83,6 +83,13 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   (`palette` edit, `WORLD_PALETTES`). The figures, their conversation threads, woven words
   and overlays are worked in the same threads (`clothPalette`), and each character's own
   colour is re-dyed to the nearest thread role (`clothAccent`).
+- **House size**: Small (the old size), Large (the default: twice as wide and tall, so a
+  door is a person's height) or Huge (`houseScale` edit). Patchwork plots default larger
+  to make room, and houses may overlap what stands behind them.
+- **Stance**: people stand with their arms down and swing them as they walk; the speaking
+  hand comes up with their words. Arms go up only to dance: when what they are doing is a
+  dance or a celebration, or when they stand still on a dancing ground (`stance` in
+  `figureParts`, `dancing` in the figure's motion).
 - **Legibility**: characters must read against the cloth. "Behind the people" (Full, Soft,
   Quiet) washes the whole world back toward the linen; "Quiet paths" washes only where
   people walk, under the houses and trees, so the plots keep their detail and people stand
