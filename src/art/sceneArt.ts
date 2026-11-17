@@ -5,20 +5,25 @@
 import { createSeededRng } from '../core/rng';
 import { ribbon } from './lettering';
 import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
-import { cellRng, type Patch, type SceneFeature, type SceneModel, type Terrain } from './scene';
+import { FLAT_KINDS, SCENE_LAYERS, cellRng, layerOf, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
+import { patchworkShapes } from './patchworkArt';
 import type { PatternReference } from './patternReferences';
 import { seedOf, transposed, worldBand, worldMedallion, worldReferences } from './worldMotifs';
 
 export const UNITS_PER_TILE = 8;
 const U = UNITS_PER_TILE;
 const UP = -Math.PI / 2;
+/** Houses and trees are drawn this much larger than their footprint, to stand over people. */
+const HOUSE_SCALE = 1.45;
+const TREE_SCALE = 1.4;
 
 function house(feature: SceneFeature, refs: PatternReference[]): Shape[] {
   const rng = createSeededRng(feature.seed);
-  const w = feature.w * U * 0.86;
-  const h = feature.h * U * 0.92;
+  // Drawn larger than the footprint, so a house stands well above the people at its door.
+  const w = feature.w * U * 0.86 * HOUSE_SCALE;
+  const h = feature.h * U * 0.92 * HOUSE_SCALE;
   const wall = h * 0.46;
   const wallInk: Ink = (['accent2', 'secondary', 'primary'] as const)[Math.floor(rng() * 3)];
   const shapes: Shape[] = [
@@ -51,11 +56,11 @@ function house(feature: SceneFeature, refs: PatternReference[]): Shape[] {
 }
 
 function pine(feature: SceneFeature): Shape[] {
-  const h = feature.h * U * 0.95;
+  const h = feature.h * U * 0.95 * TREE_SCALE;
   const shapes: Shape[] = [{ kind: 'line', points: [[0, 0], [0, -h * 0.3]], ink: 'dark', weight: 0.7 }];
   for (let i = 0; i < 3; i++) {
     const base = -h * (0.18 + i * 0.24);
-    const half = U * (0.5 - i * 0.11);
+    const half = U * (0.5 - i * 0.11) * TREE_SCALE;
     shapes.push({ kind: 'area', points: [[-half, base], [half, base], [0, base - h * 0.36]], ink: 'accent', grain: UP });
   }
   return shapes;
@@ -119,6 +124,22 @@ function houseFacing(feature: SceneFeature, model?: SceneModel): number {
   return Math.PI;
 }
 
+/** The references a feature's pattern grows from: its own, if it names one. */
+function refFor(feature: SceneFeature, refs: PatternReference[]): PatternReference[] {
+  if (!feature.ref) return refs;
+  const own = worldReferences([feature.ref]);
+  return own.length === 1 ? own : refs;
+}
+
+/** A feature's shapes, turned by its angle about the centre of its footprint. */
+function turnedFeatureShapes(feature: SceneFeature, refs: PatternReference[], model?: SceneModel): Shape[] {
+  const shapes = featureShapes(feature, refs, model);
+  if (!feature.angle) return shapes;
+  const cx = (feature.x + feature.w / 2) * U;
+  const cy = (feature.y + feature.h / 2) * U;
+  return place(place(shapes, { dx: -cx, dy: -cy }), { dx: cx, dy: cy, rot: feature.angle });
+}
+
 function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: SceneModel): Shape[] {
   const footX = (feature.x + feature.w / 2) * U;
   const footY = (feature.y + feature.h) * U - U * 0.12;
@@ -137,7 +158,7 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       return place(house(feature, refs), { dx: base[0], dy: base[1], rot });
     }
     case 'tree':
-      return place(treeOfLife(rng, feature.h * U * 0.94), { dx: footX, dy: footY });
+      return place(treeOfLife(rng, feature.h * U * 0.94 * TREE_SCALE), { dx: footX, dy: footY });
     case 'pine':
       return place(pine(feature), { dx: footX, dy: footY });
     case 'well':
@@ -146,7 +167,7 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       return place(hearth(feature), { dx: footX, dy: centreY });
     case 'star': {
       // A dancing ground: a medallion grown from the world's patterns, filling the ground.
-      const motif = worldMedallion(feature.seed, refs);
+      const motif = worldMedallion(feature.seed, refFor(feature, refs));
       const cell = (Math.min(feature.w, feature.h) * U * 0.9) / Math.max(motif.w, motif.h);
       return place([motifShape(motif, cell)], { dx: footX, dy: centreY });
     }
@@ -168,7 +189,7 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
     case 'prop':
       return place(chevronLeaf(U * 0.55, ['dark', 'gold']), { dx: footX, dy: footY });
     case 'grove':
-      return place(treeOfLife(rng, feature.h * U * 0.78), { dx: footX, dy: footY });
+      return place(treeOfLife(rng, feature.h * U * 0.78 * TREE_SCALE), { dx: footX, dy: footY });
     case 'sapling':
       return place(pine({ ...feature, h: feature.h * 0.72 }), { dx: footX, dy: footY });
     case 'fence':
@@ -474,155 +495,22 @@ function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
 }
 
 /**
- * A patchwork village seen from above, like an old drawn map. The streets are the bare linen
- * between plots; each plot is filled in its own thread and shows what it holds: a house plot
- * has a row of little houses standing on its street edge with their roofs leaning into the
- * plot (the fold-out elevations of old maps, at whatever angle the street runs), gardens
- * have beds of plants in rows, orchards round tree crowns, fields strips along their length,
- * vineyards rows of knots, meadows scattered flowers, the stream waves.
+ * The order features are drawn in: flat things first, layer by layer, then everything that
+ * stands up, front to back by where it stands (layer order breaks ties).
  */
-function patchShapes(patches: Patch[]): Shape[] {
-  const shapes: Shape[] = [];
-  for (const p of patches) {
-    if (p.kind === 'road') continue;
-    const pts = p.points.map(([x, y]): Pt => [x * U, y * U]);
-    const rng = createSeededRng(p.seed);
-    const fi = p.front ?? 0;
-    const a = pts[fi];
-    const b = pts[(fi + 1) % pts.length];
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    const u: Pt = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
-    // The inward normal: toward the plot's middle.
-    const mid = pts.reduce<Pt>((acc, q) => [acc[0] + q[0] / pts.length, acc[1] + q[1] / pts.length], [0, 0]);
-    let n: Pt = [-u[1], u[0]];
-    if ((mid[0] - a[0]) * n[0] + (mid[1] - a[1]) * n[1] < 0) n = [-n[0], -n[1]];
-    const depth = Math.max(...pts.map((q) => (q[0] - a[0]) * n[0] + (q[1] - a[1]) * n[1]));
-    const at = (along: number, into: number): Pt => [a[0] + u[0] * along + n[0] * into, a[1] + u[1] * along + n[1] * into];
-    const fill: Ink = p.kind === 'orchard' ? 'gold' : p.ink;
-    // The ground of a plot is an open, sparse stitch so what stands on it (and the people
-    // walking past) carries the colour; only water and fields are worked more densely.
-    const open = p.kind === 'water' ? 0.2 : p.kind === 'field' ? 0.45 : p.kind === 'house' ? 1 : 0.8;
-    shapes.push({ kind: 'area', points: pts, ink: fill, grain: p.grain, open: open || undefined });
-
-    if (p.kind === 'house') {
-      // Houses along the street edge, and along the back edge too in a deep plot.
-      const rows: Array<[Pt, Pt]> = [[a, b]];
-      // A back row only where the plot is deep enough for two houses of full height.
-      if (depth > U * 5.6) rows.push([pts[(fi + 2) % pts.length], pts[(fi + 3) % pts.length]]);
-      for (const [ra, rb] of rows) {
-        const rl = Math.hypot(rb[0] - ra[0], rb[1] - ra[1]);
-        const ru: Pt = [(rb[0] - ra[0]) / rl, (rb[1] - ra[1]) / rl];
-        let rn: Pt = [-ru[1], ru[0]];
-        if ((mid[0] - ra[0]) * rn[0] + (mid[1] - ra[1]) * rn[1] < 0) rn = [-rn[0], -rn[1]];
-        // Houses at a person's scale: a character stands about 1.75 cells, so a house is
-        // two to three cells tall and its door nearly a cell high.
-        const room = Math.min(depth / rows.length, U * 3.1);
-        let along = U * 0.15;
-        while (along < rl - U * 1.2) {
-          const w = Math.min(rl - along - U * 0.15, U * (1.5 + rng() * 0.8));
-          if (w < U * 1.15) break;
-          const h = Math.min(room * 0.95, U * (2.2 + rng() * 0.8));
-          const tilt = (rng() - 0.5) * 0.14; // a Chagall lean, never upright
-          const c: Pt = [ra[0] + ru[0] * (along + w / 2) + rn[0] * U * 0.04, ra[1] + ru[1] * (along + w / 2) + rn[1] * U * 0.04];
-          const cu: Pt = [ru[0] * Math.cos(tilt) - ru[1] * Math.sin(tilt), ru[0] * Math.sin(tilt) + ru[1] * Math.cos(tilt)];
-          const cn: Pt = [rn[0] * Math.cos(tilt) - rn[1] * Math.sin(tilt), rn[0] * Math.sin(tilt) + rn[1] * Math.cos(tilt)];
-          const hp = (x: number, y: number): Pt => [c[0] + cu[0] * x + cn[0] * y, c[1] + cu[1] * x + cn[1] * y];
-          const body = h * (0.52 + rng() * 0.12);
-          const bodies: Ink[] = ['primary', 'accent2', 'secondary', 'gold', 'accent'];
-          const bodyInk = bodies.filter((i) => i !== fill)[Math.floor(rng() * 4)];
-          const roofInk = (['dark', 'primary', 'accent', 'secondary'] as const).filter((i) => i !== bodyInk)[Math.floor(rng() * 3)];
-          const hw = w / 2;
-          shapes.push({ kind: 'area', points: [hp(-hw, 0), hp(hw, 0), hp(hw, body), hp(-hw, body)], ink: bodyInk, grain: Math.atan2(cn[1], cn[0]) });
-          shapes.push({ kind: 'area', points: [hp(-hw - U * 0.06, body), hp(hw + U * 0.06, body), hp((rng() - 0.5) * w * 0.3, h)], ink: roofInk, grain: Math.atan2(cu[1], cu[0]) });
-          // A door on the street, and a window or two.
-          const dw = Math.min(w * 0.17, U * 0.24);
-          const dh = Math.min(body * 0.72, U * 0.95);
-          shapes.push({ kind: 'area', points: [hp(-dw, 0), hp(dw, 0), hp(dw, dh), hp(-dw, dh)], ink: 'dark', grain: 0 });
-          const winInk: Ink = bodyInk === 'gold' ? 'dark' : 'gold';
-          const windows = w > U * 1.7 ? [-0.32, 0.32] : [rng() < 0.5 ? -0.3 : 0.3];
-          for (const wx of windows) {
-            const x = wx * w;
-            const s = U * 0.15;
-            const y0 = body * 0.5;
-            shapes.push({ kind: 'area', points: [hp(x - s, y0), hp(x + s, y0), hp(x + s, y0 + s * 2), hp(x - s, y0 + s * 2)], ink: winInk, grain: 0 });
-          }
-          along += w + U * (0.08 + rng() * 0.15);
-        }
-      }
-    } else if (p.kind === 'garden' || p.kind === 'vineyard' || p.kind === 'field') {
-      // Rows along the plot: beds of little plants, vines as knots, or the strips of a field.
-      const spacing = p.kind === 'field' ? U * 0.42 : U * 0.62;
-      const plants: Ink[] = ['primary', 'accent2', 'gold', 'dark'].filter((i) => i !== fill) as Ink[];
-      for (let into = spacing * 0.6; into < depth - spacing * 0.3; into += spacing) {
-        if (p.kind === 'field') {
-          const row: Pt[] = [];
-          for (let along = -U; along < len + U; along += U * 0.4) {
-            const q = at(along, into);
-            if (pointIn(q, pts)) row.push(q);
-          }
-          if (row.length > 1) shapes.push({ kind: 'line', points: row, ink: Math.round(into / spacing) % 2 ? 'dark' : 'gold', weight: 0.22 });
-          continue;
-        }
-        for (let along = spacing * 0.5; along < len; along += spacing * 0.9) {
-          const q = at(along + (rng() - 0.5) * U * 0.1, into);
-          if (!pointIn(q, pts)) continue;
-          if (p.kind === 'vineyard') shapes.push({ kind: 'knot', at: q, r: 0.42, ink: 'dark' });
-          else {
-            const s = U * 0.13;
-            const ink = plants[Math.floor(into / spacing) % plants.length];
-            shapes.push({ kind: 'line', points: [[q[0] - s, q[1] - s], [q[0] + s, q[1] + s]], ink, weight: 0.35 });
-            shapes.push({ kind: 'line', points: [[q[0] + s, q[1] - s], [q[0] - s, q[1] + s]], ink, weight: 0.35 });
-          }
-        }
-      }
-    } else if (p.kind === 'orchard') {
-      // Round tree crowns seen from above, with a few fruit.
-      for (let into = U * 0.8; into < depth - U * 0.5; into += U * 1.4) {
-        for (let along = U * 0.8; along < len - U * 0.4; along += U * 1.4) {
-          const q = at(along + (rng() - 0.5) * U * 0.3, into + (rng() - 0.5) * U * 0.3);
-          if (!pointIn(q, pts)) continue;
-          const r = U * (0.5 + rng() * 0.15);
-          shapes.push({ kind: 'area', points: circle(q, r, 12), ink: 'accent', grain: rng() * Math.PI });
-          shapes.push({ kind: 'line', points: circle(q, r, 12), ink: 'dark', weight: 0.25, closed: true });
-          for (let k = 0; k < 3; k++) shapes.push({ kind: 'knot', at: [q[0] + (rng() - 0.5) * r, q[1] + (rng() - 0.5) * r], r: 0.32, ink: 'primary' });
-        }
-      }
-    } else if (p.kind === 'meadow') {
-      for (let k = 0; k < 6; k++) {
-        const q = at(rng() * len, rng() * depth);
-        if (pointIn(q, pts)) shapes.push({ kind: 'knot', at: q, r: 0.4, ink: rng() < 0.5 ? 'primary' : 'gold' });
-      }
-    } else if (p.kind === 'water') {
-      for (let into = U * 0.5; into < depth - U * 0.2; into += U * 0.55) {
-        const wave: Pt[] = [];
-        for (let along = 0; along <= len; along += U * 0.12) {
-          const q = at(along, into + Math.sin(along * 0.9) * U * 0.07);
-          if (pointIn(q, pts)) wave.push(q);
-        }
-        if (wave.length > 1) shapes.push({ kind: 'line', points: wave, ink: 'dark', weight: 0.25 });
-      }
-    }
-    // The plot's edge, where it meets the street.
-    shapes.push({ kind: 'line', points: pts, ink: 'dark', weight: 0.3, closed: true });
-  }
-  return shapes;
+export function drawOrder(features: readonly SceneFeature[]): SceneFeature[] {
+  const rank = (f: SceneFeature) => SCENE_LAYERS.findIndex((l) => l.id === layerOf(f));
+  const flat = features.filter((f) => FLAT_KINDS.has(f.kind)).sort((a, b) => rank(a) - rank(b) || a.y + a.h - (b.y + b.h));
+  const upright = features.filter((f) => !FLAT_KINDS.has(f.kind)).sort((a, b) => a.y + a.h - (b.y + b.h) || rank(a) - rank(b));
+  return [...flat, ...upright];
 }
 
-function pointIn([x, y]: Pt, poly: Pt[]): boolean {
-  let hit = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
-  }
-  return hit;
-}
-
-/** Everything that does not move, in drawing order. */
-export function sceneShapes(model: SceneModel): Shape[] {
+/** Everything that does not move, in drawing order; `hidden` layers are left out. */
+export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>): Shape[] {
   const refs = worldReferences(model.motifs);
-  const ground = model.patches ? patchShapes(model.patches) : terrainShapes(model);
-  const shapes = [...ground, ...model.features.flatMap((f) => featureShapes(f, refs, model)), ...clothBorder(model, refs)];
+  const ground = model.patches ? patchworkShapes(model, U, hidden) : hidden?.has('ground') ? [] : terrainShapes(model);
+  const features = drawOrder(hidden?.size ? model.features.filter((f) => !hidden.has(layerOf(f))) : model.features);
+  const shapes = [...ground, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...clothBorder(model, refs)];
   if (model.title) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
     shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));

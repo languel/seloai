@@ -51,6 +51,20 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
 - **Tools** (glyph buttons with hover tips): select and move; paint terrain (ground, water,
   road, dry ground, wall, bridge) with a brush size; place feature (a palette of feature
   kinds drawn as small stitched thumbnails); erase; landmark; spawn point.
+- **Layers**, as in a tile map, bottom to top: Ground (terrain, or a patchwork's plots),
+  Patterns, Plantings, Works, Buildings, Animals. Each layer can be hidden or locked, and
+  one is active: the place palette shows its kinds, and picking prefers it. A feature's
+  layer comes from its kind (`layerOf`) unless an edit moves it. Flat things are drawn layer
+  by layer; upright things (trees, houses, animals) front to back by where they stand, so a
+  tree can stand before a house. A patchwork's own houses, trees, haystacks, bridges and
+  animals follow the same layers.
+- **Scatter**: a brush that sows a handful of the chosen kind on free cells as you drag,
+  committed as one `scatter` edit (one undo step). Houses lean a little, flat things lie any
+  way round.
+- **Rotate**: the selected feature turns in 15° steps (`[` and `]`, or the buttons), as a
+  `rotate` edit. Counted work (pattern medallions) stays square to the cloth.
+- **Patterns** in the palette: a dancing-ground medallion grown from a chosen reference
+  (or the world's own), sizes 1 to 4.
 - **Edits list**: every hand edit, newest first, each removable, with "clear all edits".
 - New, open bundled, import and export a world pack. Undo and redo through the world store.
 

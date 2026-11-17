@@ -92,6 +92,65 @@ export interface SceneFeature {
   w: number;
   h: number;
   seed: number;
+  /** Which layer it sits on; by default the one its kind belongs to (see `layerOf`). */
+  layer?: SceneLayer;
+  /** A turn about the centre of its footprint, radians. */
+  angle?: number;
+  /** For a pattern (a dancing ground, a rosette): the pattern reference it is grown from. */
+  ref?: string;
+}
+
+/**
+ * Layers, bottom to top, as in a tile map: the ground (terrain and plots) under flat
+ * plantings and patterns, then works, buildings and animals. Each can be hidden or locked
+ * in the editor. Flat layers are drawn in layer order; upright things (trees, houses,
+ * animals) are drawn front to back by where they stand, so a tree can stand before a house.
+ */
+export type SceneLayer = 'ground' | 'patterns' | 'plantings' | 'works' | 'buildings' | 'life';
+
+export const SCENE_LAYERS: ReadonlyArray<{ id: SceneLayer; name: string }> = [
+  { id: 'ground', name: 'Ground' },
+  { id: 'patterns', name: 'Patterns' },
+  { id: 'plantings', name: 'Plantings' },
+  { id: 'works', name: 'Works' },
+  { id: 'buildings', name: 'Buildings' },
+  { id: 'life', name: 'Animals' },
+];
+
+const KIND_LAYER: Record<FeatureKind, SceneLayer> = {
+  star: 'patterns',
+  rosette: 'patterns',
+  field: 'plantings',
+  vineyard: 'plantings',
+  tree: 'plantings',
+  pine: 'plantings',
+  grove: 'plantings',
+  sapling: 'plantings',
+  flowers: 'plantings',
+  wheat: 'plantings',
+  sunflower: 'plantings',
+  reeds: 'plantings',
+  well: 'works',
+  hearth: 'works',
+  pool: 'works',
+  prop: 'works',
+  fence: 'works',
+  haystack: 'works',
+  woodpile: 'works',
+  house: 'buildings',
+  hen: 'life',
+  duck: 'life',
+};
+
+/** Kinds that lie flat on the ground rather than standing up from it. */
+export const FLAT_KINDS: ReadonlySet<FeatureKind> = new Set(['star', 'rosette', 'field', 'vineyard', 'pool']);
+
+export function layerOf(feature: Pick<SceneFeature, 'kind' | 'layer'>): SceneLayer {
+  return feature.layer ?? KIND_LAYER[feature.kind] ?? 'works';
+}
+
+export function kindsOnLayer(layer: SceneLayer, kinds: readonly FeatureKind[]): FeatureKind[] {
+  return kinds.filter((k) => KIND_LAYER[k] === layer);
 }
 
 export interface SceneModel {
@@ -112,10 +171,29 @@ export interface SceneModel {
   patches?: Patch[];
   /** The full (undrawn-in) faces of a patchwork village: inside them, gaps are streets. */
   villageOutline?: Array<Array<[number, number]>>;
+  /** Bridges over a patchwork's stream. */
+  bridges?: Bridge[];
+  /** Which way the stream flows, radians, so its waves run one way. */
+  streamFlow?: number;
 }
 
 /** What a plot of a patchwork village holds (`road` is kept only for older saved worlds). */
-export type PatchKind = 'house' | 'road' | 'square' | 'garden' | 'field' | 'orchard' | 'meadow' | 'water' | 'vineyard';
+export type PatchKind =
+  | 'house'
+  | 'road'
+  | 'square'
+  | 'garden'
+  | 'field'
+  | 'orchard'
+  | 'meadow'
+  | 'water'
+  | 'vineyard'
+  | 'yard'
+  | 'pasture'
+  | 'wood';
+
+/** Buildings with a name and a shape of their own, near the square or by the stream. */
+export type SpecialBuilding = 'church' | 'inn' | 'smithy' | 'bakery' | 'mill';
 
 /**
  * A plot of a patchwork village, seen from above: its outline (already drawn in from the
@@ -132,6 +210,15 @@ export interface Patch {
   seed: number;
   /** Index of the edge (from point i to i+1) that fronts the widest street. */
   front?: number;
+  /** A named building standing on this plot. */
+  special?: SpecialBuilding;
+}
+
+/** A bridge carrying a street over the stream: from a to b along the street, `half` wide. */
+export interface Bridge {
+  a: [number, number];
+  b: [number, number];
+  half: number;
 }
 
 export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): SceneModel {

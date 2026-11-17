@@ -16,7 +16,7 @@
  * meadows; houses, gardens, fields, orchards, vineyards and the stream are not walked
  * through. Every choice is seeded.
  */
-import type { Patch, PatchKind, SceneFeature, SceneModel, Terrain } from '../art/scene';
+import type { Bridge, Patch, PatchKind, SceneFeature, SceneModel, SpecialBuilding, Terrain } from '../art/scene';
 import type { Ink } from '../art/shapes';
 import { faceCentre, faceNeighbours, irregularQuadGrid, type V } from '../art/irregularGrid';
 import { createSeededRng, hashString, type Rng } from '../core/rng';
@@ -41,7 +41,7 @@ const MAIN_HALF = 0.75;
 const LANE_HALF = 0.45;
 
 /** The kinds a hand edit may give a plot. */
-export const PLOT_KINDS: readonly PatchKind[] = ['house', 'garden', 'field', 'orchard', 'vineyard', 'meadow', 'square', 'water'];
+export const PLOT_KINDS: readonly PatchKind[] = ['house', 'yard', 'garden', 'field', 'orchard', 'vineyard', 'pasture', 'wood', 'meadow', 'square', 'water'];
 
 /** Plot kinds people may walk across, besides the streets. */
 const WALKABLE: ReadonlySet<PatchKind> = new Set(['square', 'meadow', 'road']);
@@ -127,6 +127,12 @@ export function plotInk(kind: PatchKind, seed: number): Ink {
       return r < 0.6 ? 'accent' : 'gold';
     case 'water':
       return 'secondary';
+    case 'yard':
+      return 'gold';
+    case 'pasture':
+      return 'accent';
+    case 'wood':
+      return 'accent';
     default:
       return 'gold';
   }
@@ -161,7 +167,16 @@ export function rasterizePatches(patches: Patch[], width: number, height: number
 
 export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneModel; spawns: SpawnPoint[] } {
   const rng = createSeededRng(o.seed * 4099 + 17);
-  const mesh = irregularQuadGrid(o.rings, o.side, o.seed, 60);
+  const mesh = irregularQuadGrid(o.rings, o.side, o.seed, 18);
+  // More hand than compass: nudge every inner vertex a little after relaxing.
+  {
+    const jr = createSeededRng(o.seed * 31 + 9);
+    mesh.vertices.forEach((v, i) => {
+      if (mesh.boundary.has(i)) return;
+      v[0] += (jr() - 0.5) * o.side * 0.22;
+      v[1] += (jr() - 0.5) * o.side * 0.22;
+    });
+  }
   const R = o.rings * o.side;
   const width = Math.ceil(R * 2) + 6;
   const height = Math.ceil(R * Math.sqrt(3)) + 8;
@@ -218,10 +233,12 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
   const heart = squareFaces[0];
 
   // A stream across the village, edge to edge, kept clear of the square.
+  let streamFlow: number | undefined;
   if (o.stream) {
     const a = rng() * Math.PI * 2;
     const from = nearestFace(a, 1, (f) => onEdge[f]);
     const to = nearestFace(a + Math.PI + (rng() - 0.5) * 1.2, 1, (f) => onEdge[f]);
+    streamFlow = Math.atan2(centres[to][1] - centres[from][1], centres[to][0] - centres[from][0]);
     for (const f of bfs<number>((g) => neighbours[g], from, to, (f) => dist[f] < 0.22)) kinds.set(f, 'water');
   }
 
@@ -259,7 +276,10 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
       ['field', Math.max(0, d - 0.42) * 5 * (1 + count('field') * 1.2) * (count('square') ? 0.05 : 1)],
       ['orchard', (d > 0.45 ? 0.8 : 0.15) * (1 + count('orchard') * 1.6)],
       ['vineyard', (d > 0.6 ? 0.5 : 0.05) * (1 + count('vineyard') * 1.5)],
-      ['meadow', 0.4 + (count('water') ? 1.2 : 0) + (onEdge[f] ? 0.6 : 0)],
+      ['meadow', 0.3 + (count('water') ? 1 : 0) + (onEdge[f] ? 0.4 : 0)],
+      ['yard', (d < 0.75 ? 0.5 : 0.15) * (1 + count('house') * 0.8)],
+      ['pasture', (d > 0.55 ? 0.7 : 0.05) * (1 + count('pasture') * 1.2)],
+      ['wood', (d > 0.7 ? 0.9 : 0) * (1 + count('wood') * 2) * (onEdge[f] ? 1.6 : 1)],
     ];
   };
   const left = new Set(mesh.faces.map((_, f) => f).filter((f) => !kinds.has(f)));
@@ -282,8 +302,12 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
   // cloth instead of ending in a hard hexagon; none is left stranded.
   const bare = new Set<number>();
   mesh.faces.forEach((_, f) => {
-    if (onEdge[f] && kinds.get(f) !== 'water' && rng() < 0.5) bare.add(f);
+    const kind = kinds.get(f);
+    if (kind === 'water' || kind === 'square') return;
+    // The edge frays a lot; inside, the odd plot is left open too, more toward the outside.
+    if ((onEdge[f] && rng() < 0.7) || (kind !== 'house' && rng() < dist[f] * 0.35)) bare.add(f);
   });
+  for (const f of [...bare]) for (const n of neighbours[f]) if (!bare.has(n) && onEdge[n] === false && dist[n] > 0.7 && kinds.get(n) !== 'water' && rng() < 0.35) bare.add(n);
   for (let pass = 0; pass < 2; pass++) {
     for (const f of mesh.faces.keys()) if (!bare.has(f) && neighbours[f].every((n) => bare.has(n))) bare.add(f);
   }
@@ -331,6 +355,22 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
     patches.push({ id: f, kind, points: outline, ink: plotInk(kind, seed), grain: Math.atan2(by - ay, bx - ax), seed, front });
   });
 
+  // Bridges: where a main street runs along a seam between two stretches of the stream.
+  const bridges: Bridge[] = [];
+  for (const [e, faces] of facesOfEdge) {
+    if (faces.length !== 2 || !main.has(e) || faces.some((g) => kinds.get(g) !== 'water' || bare.has(g))) continue;
+    const [p, q] = e.split('-').map(Number);
+    bridges.push({ a: toMap(mesh.vertices[p]), b: toMap(mesh.vertices[q]), half: MAIN_HALF });
+  }
+
+  // Named buildings: a church, an inn, a smithy and a bakery on the house plots nearest the
+  // square, and a mill on a house plot by the stream.
+  const housePlots = patches.filter((p) => p.kind === 'house').sort((a, b) => dist[a.id!] - dist[b.id!]);
+  const SPECIALS: SpecialBuilding[] = ['church', 'inn', 'smithy', 'bakery'];
+  housePlots.slice(0, SPECIALS.length).forEach((p, i) => (p.special = SPECIALS[i]));
+  const mill = housePlots.find((p) => !p.special && neighbours[p.id!].some((n) => kinds.get(n) === 'water'));
+  if (mill) mill.special = 'mill';
+
   // The village's own outline: inside it, the gaps between plots are streets.
   const village = mesh.faces.filter((_, f) => !bare.has(f)).map((face) => face.map((v) => toMap(mesh.vertices[v])));
   const inVillage = (x: number, y: number) => village.some((poly) => pointInPolygon([x, y], poly));
@@ -344,23 +384,35 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
   const [wx, wy] = toMap(centres[wellFace]);
   features.push({ id: 'square-well', kind: 'well', x: Math.round(wx - 1), y: Math.round(wy - 1), w: 2, h: 2, seed: hashString(`well:${o.seed}`) });
 
-  // Named places: the square, the well, the stream, the orchard, the fields.
+  // Named places in the heart of the village: the square and its well, the named buildings
+  // (at their doors, on the street), and the bridges. People gather where these are.
   const name = NAMES[Math.floor(rng() * NAMES.length)];
   const landmarks: PointOfInterest[] = [];
   const add = (id: string, label: string, [x, y]: V, description: string) =>
     landmarks.push({ id: `poi-${id}`, tag: label.replace(/[^A-Za-z]+/g, ''), label, x: Math.round(x), y: Math.round(y), description });
-  const middle = (p: Patch): V => p.points.reduce<V>((acc, q) => [acc[0] + q[0] / p.points.length, acc[1] + q[1] / p.points.length], [0, 0]);
   add('square', `${name} square`, [hx, hy + 1.5], 'The heart of the village, where the khoro is danced.');
   add('well', `${name} well`, [wx, wy + 1.5], 'Where water is drawn and news is traded.');
-  const stream = patches.find((p) => p.kind === 'water');
-  if (stream) add('stream', 'The stream', middle(stream), 'A cold stream between the plots, crossed by the lanes.');
-  const orchard = patches.find((p) => p.kind === 'orchard');
-  if (orchard) add('orchard', 'The orchard', middle(orchard), 'Old fruit trees, and the shade beneath them.');
-  const field = patches.find((p) => p.kind === 'field' && dist[p.id!] > 0.7);
-  if (field) add('fields', 'The far fields', middle(field), 'Strips of crop at the edge of the village.');
+  const NAMED: Record<SpecialBuilding, [string, string]> = {
+    church: ['The church', 'A whitewashed church with a bell tower over the square.'],
+    inn: ['The inn', 'Benches outside, rakia within, and every rumour in the village.'],
+    smithy: ['The smithy', 'The forge, hot and loud, where tools and horseshoes are made.'],
+    bakery: ['The bakery', 'Bread before dawn; the oven warms the whole lane.'],
+    mill: ['The mill', 'A water mill on the stream, its wheel turning slowly.'],
+  };
+  for (const p of patches) {
+    if (!p.special) continue;
+    // The door: the middle of the plot's street edge, stepped out into the street.
+    const a = p.points[p.front ?? 0];
+    const b = p.points[((p.front ?? 0) + 1) % p.points.length];
+    const m = p.points.reduce<V>((acc, q) => [acc[0] + q[0] / p.points.length, acc[1] + q[1] / p.points.length], [0, 0]);
+    const door: V = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const out = Math.hypot(door[0] - m[0], door[1] - m[1]) || 1;
+    add(p.special, NAMED[p.special][0], [door[0] + ((door[0] - m[0]) / out) * 0.8, door[1] + ((door[1] - m[1]) / out) * 0.8], NAMED[p.special][1]);
+  }
+  bridges.slice(0, 2).forEach((br, i) => add(`bridge-${i}`, i ? 'The lower bridge' : 'The bridge', [(br.a[0] + br.b[0]) / 2, (br.a[1] + br.b[1]) / 2], 'A plank bridge where the street crosses the stream.'));
 
   return {
-    model: { width, height, terrain, features, landmarks, title: name, patches, villageOutline: village },
+    model: { width, height, terrain, features, landmarks, title: name, patches, villageOutline: village, bridges, streamFlow },
     spawns: landmarks.map((l) => ({ id: `spawn-${l.id}`, label: l.label, x: l.x, y: l.y })),
   };
 }

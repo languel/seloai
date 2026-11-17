@@ -12,7 +12,7 @@ import type { WorldDocument } from './document';
 import { findGenerator, generatedFromTileMap, type SceneParams } from './sceneGenerators';
 import { PLOT_KINDS } from './patchworkVillage';
 import { mapFromScene, type SceneEdit, type SceneRecipe, type WorldScene } from './worldScene';
-import type { FeatureKind, Terrain } from '../art/scene';
+import { SCENE_LAYERS, type FeatureKind, type Terrain } from '../art/scene';
 import type { WorldContext } from './worldContext';
 
 export type MapLayerId = 'bg0' | 'bg1' | 'obj0' | 'obj1';
@@ -278,14 +278,28 @@ function checkEdit(edit: SceneEdit) {
       if (!TERRAINS.includes(edit.terrain)) fail(`"${edit.terrain}" is not a terrain (${TERRAINS.join(', ')}).`);
       if (!Array.isArray(edit.cells)) fail('cells must be a list of [x, y].');
       return;
-    case 'place': {
-      const f = edit.feature;
-      if (!f?.id || !f.kind) fail('A placed feature needs an id and a kind.');
-      requireInt(f.x, 'feature.x');
-      requireInt(f.y, 'feature.y');
-      if (!(f.w >= 1 && f.h >= 1)) fail('A placed feature needs a size of at least 1×1.');
+    case 'place':
+    case 'scatter': {
+      const list = edit.op === 'place' ? [edit.feature] : edit.features;
+      if (!Array.isArray(list) || list.length === 0) fail('scatter needs a list of features.');
+      for (const f of list) {
+        if (!f?.id || !f.kind) fail('A placed feature needs an id and a kind.');
+        requireInt(f.x, 'feature.x');
+        requireInt(f.y, 'feature.y');
+        if (!(f.w >= 1 && f.h >= 1)) fail('A placed feature needs a size of at least 1×1.');
+        if (f.layer !== undefined && !SCENE_LAYERS.some((l) => l.id === f.layer)) fail(`"${f.layer}" is not a layer.`);
+        if (f.angle !== undefined && !Number.isFinite(f.angle)) fail('angle must be a number of radians.');
+      }
       return;
     }
+    case 'rotate':
+      if (!edit.id) fail('rotate needs an id.');
+      if (!Number.isFinite(edit.angle)) fail('angle must be a number of radians.');
+      return;
+    case 'layer':
+      if (!edit.id) fail('layer needs an id.');
+      if (!SCENE_LAYERS.some((l) => l.id === edit.layer)) fail(`"${edit.layer}" is not a layer (${SCENE_LAYERS.map((l) => l.id).join(', ')}).`);
+      return;
     case 'move':
     case 'remove':
     case 'removeLandmark':
@@ -356,7 +370,30 @@ function applySceneCommand(map: VillageMap, command: WorldCommand): VillageMap |
 }
 
 /** Feature kinds a hand edit may place. */
-export const PLACEABLE_FEATURES: readonly FeatureKind[] = ['house', 'tree', 'pine', 'well', 'hearth', 'star', 'pool', 'wheat', 'flowers', 'prop', 'field', 'vineyard', 'haystack', 'woodpile', 'sunflower'];
+export const PLACEABLE_FEATURES: readonly FeatureKind[] = [
+  'house',
+  'tree',
+  'pine',
+  'grove',
+  'sapling',
+  'flowers',
+  'wheat',
+  'sunflower',
+  'reeds',
+  'field',
+  'vineyard',
+  'star',
+  'rosette',
+  'well',
+  'hearth',
+  'pool',
+  'prop',
+  'fence',
+  'haystack',
+  'woodpile',
+  'hen',
+  'duck',
+];
 
 /**
  * Pure: returns the document that results from a command, or throws WorldCommandError

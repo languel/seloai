@@ -9,7 +9,7 @@
  * the new seed did not build) is skipped and reported, not lost.
  */
 import { withAmbience } from '../art/ambient';
-import type { FeatureKind, PatchKind, SceneFeature, SceneModel, Terrain } from '../art/scene';
+import type { FeatureKind, PatchKind, SceneFeature, SceneLayer, SceneModel, Terrain } from '../art/scene';
 import { plotInk, pointInPolygon, rasterizePatches } from './patchworkVillage';
 import { hashString } from '../core/rng';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
@@ -23,8 +23,14 @@ export interface SceneRecipe {
 
 export type SceneEdit =
   | { op: 'terrain'; cells: Array<[number, number]>; terrain: Terrain }
-  | { op: 'place'; feature: { id: string; kind: FeatureKind; x: number; y: number; w: number; h: number } }
+  | { op: 'place'; feature: PlacedFeature }
+  /** Many features at once (a scattered grove, a flock), as one step. */
+  | { op: 'scatter'; features: PlacedFeature[] }
   | { op: 'move'; id: string; x: number; y: number }
+  /** Turn a feature about the centre of its footprint (radians, absolute). */
+  | { op: 'rotate'; id: string; angle: number }
+  /** Move a feature to another layer. */
+  | { op: 'layer'; id: string; layer: SceneLayer }
   | { op: 'remove'; id: string }
   | { op: 'landmark'; landmark: PointOfInterest }
   | { op: 'removeLandmark'; id: string }
@@ -33,6 +39,18 @@ export type SceneEdit =
   | { op: 'title'; title: string }
   /** In a patchwork village: what a plot holds (house, garden, field, …). */
   | { op: 'plot'; id: number; kind: PatchKind };
+
+export interface PlacedFeature {
+  id: string;
+  kind: FeatureKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  layer?: SceneLayer;
+  angle?: number;
+  ref?: string;
+}
 
 export interface WorldScene {
   recipe: SceneRecipe;
@@ -100,12 +118,25 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
           touched.add(cellKey(x, y));
         }
         return;
-      case 'place': {
-        const f = edit.feature;
-        if (!inside(f.x, f.y)) return void skipped.push({ index, reason: `${f.kind} is outside the world` });
-        model.features = model.features.filter((g) => g.id !== f.id);
-        model.features.push({ ...f, seed: hashString(`${f.kind}:${f.id}`) });
-        touchRect(touched, f.x, f.y, f.w, f.h);
+      case 'place':
+      case 'scatter': {
+        const list = edit.op === 'place' ? [edit.feature] : edit.features;
+        const placed = list.filter((f) => inside(f.x, f.y));
+        if (placed.length === 0) return void skipped.push({ index, reason: `${list[0]?.kind ?? 'it'} is outside the world` });
+        const ids = new Set(placed.map((f) => f.id));
+        model.features = model.features.filter((g) => !g.id || !ids.has(g.id));
+        for (const f of placed) {
+          model.features.push({ ...f, seed: hashString(`${f.kind}:${f.id}`) });
+          touchRect(touched, f.x, f.y, f.w, f.h);
+        }
+        return;
+      }
+      case 'rotate':
+      case 'layer': {
+        const f = model.features.find((g) => g.id === edit.id);
+        if (!f) return void skipped.push({ index, reason: `nothing called ${edit.id} to ${edit.op === 'rotate' ? 'turn' : 'move'}` });
+        if (edit.op === 'rotate') f.angle = edit.angle;
+        else f.layer = edit.layer;
         return;
       }
       case 'move': {

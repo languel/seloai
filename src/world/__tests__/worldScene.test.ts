@@ -39,6 +39,21 @@ describe('worlds authored as scenes', () => {
     }
   });
 
+  it('scatters, turns and moves features between layers, one undoable edit each', () => {
+    let map = mapFromScene(valley(4));
+    const doc = () => ({ map, cast: [], context: GENERIC_WORLD_CONTEXT });
+    const trees = [0, 1, 2].map((i) => ({ id: `my-tree-s${i}`, kind: 'tree' as const, x: 4 + i * 2, y: 20, w: 1, h: 2 }));
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'scatter', features: trees } }).map;
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'rotate', id: 'my-tree-s1', angle: 0.5 } }).map;
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'layer', id: 'my-tree-s2', layer: 'works' } }).map;
+    const baked = bakeScene(map.scene!);
+    expect(map.scene!.edits.length).toBe(3);
+    expect(baked.model.features.filter((f) => f.id?.startsWith('my-tree-s')).length).toBe(3);
+    expect(baked.model.features.find((f) => f.id === 'my-tree-s1')!.angle).toBe(0.5);
+    expect(baked.model.features.find((f) => f.id === 'my-tree-s2')!.layer).toBe('works');
+    expect(() => applyCommand(doc(), { type: 'scene.edit', edit: { op: 'layer', id: 'my-tree-s2', layer: 'sky' as never } })).toThrow(/not a layer/);
+  });
+
   it('keeps hand edits when the seed changes, and reports the ones that no longer apply', () => {
     let map = mapFromScene(valley(4));
     const doc = () => ({ map, cast: [], context: GENERIC_WORLD_CONTEXT });

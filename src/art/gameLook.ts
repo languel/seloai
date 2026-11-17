@@ -8,7 +8,7 @@ import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureTraits, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
-import { buildSceneModel, semanticsFromTable, type TileSemantics } from './scene';
+import { buildSceneModel, semanticsFromTable, type SceneLayer, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { bounds, type Pt, type Shape } from './shapes';
 
@@ -33,7 +33,7 @@ function isThread(look: PaletteName): boolean {
 }
 
 /** Renders the whole static world into a canvas of map pixel size. */
-export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?: TileSemantics): HTMLCanvasElement {
+export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?: TileSemantics, hidden?: ReadonlySet<SceneLayer>): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, map.width * map.tileDim);
   canvas.height = Math.max(1, map.height * map.tileDim);
@@ -47,7 +47,7 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
   const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
   const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
-  const shapes = sceneShapes(model);
+  const shapes = sceneShapes(model, hidden);
   if (isThread(look)) {
     paintLinen(ctx, canvas.width, canvas.height, options);
     renderEmbroidery(ctx, shapes, options);

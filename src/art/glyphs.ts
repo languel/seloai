@@ -46,7 +46,11 @@ export type GlyphName =
   | 'spawn'
   | 'dice'
   | 'walkable'
-  | 'story';
+  | 'story'
+  | 'rotate'
+  | 'layers'
+  | 'eye'
+  | 'lock';
 
 const W = 1.1; // the usual stroke weight
 const line = (points: Pt[], ink: Ink = 'dark', weight = W, closed = false): Shape => ({ kind: 'line', points, ink, weight, closed });
@@ -289,6 +293,24 @@ const GLYPHS: Record<GlyphName, () => Shape[]> = {
     knot([2, 0.5], 1, 'accent'),
     line(quadCurve([-1.5, 0], [0.2, -2], [2, 0.5], 5), 'secondary', 0.6),
   ],
+  // A square turning about its centre, with an arrow round it.
+  rotate: () => [
+    line([[-2.6, -3.6], [3.6, -2.6], [2.6, 3.6], [-3.6, 2.6]], 'primary', 0.9, true),
+    line(arc([0, 0], 6.4, Math.PI * 1.15, Math.PI * 1.85, 14)),
+    arrowHead(arc([0, 0], 6.4, Math.PI * 1.85, Math.PI * 1.85, 1)[0], Math.PI * 0.35, 2.4),
+  ],
+  // Three cloths stacked, the top one stitched.
+  layers: () => [
+    line([[-6.5, 3], [0, 6], [6.5, 3]], 'dark', 0.9),
+    line([[-6.5, 0], [0, 3], [6.5, 0]], 'dark', 0.9),
+    area([[-6.5, -3], [0, -6], [6.5, -3], [0, 0]], 'primary', 0),
+    line([[-6.5, -3], [0, -6], [6.5, -3], [0, 0]], 'dark', 0.9, true),
+  ],
+  eye: () => [
+    line([...arc([0, 4], 8.5, Math.PI * 1.22, Math.PI * 1.78, 12), ...arc([0, -4], 8.5, Math.PI * 0.22, Math.PI * 0.78, 12)], 'dark', 1, true),
+    knot([0, 0], 1.9, 'primary'),
+  ],
+  lock: () => [line(rect(-4.5, -0.5, 4.5, 6), 'dark', 1.1, true), line(arc([0, -0.5], 3.2, Math.PI, Math.PI * 2, 10), 'dark', 1.1), knot([0, 2.8], 0.9, 'primary')],
   // A grid with crossed-out cells: where one can and cannot walk.
   walkable: () => [
     line(rect(-6.5, -6.5, 6.5, 6.5), 'dark', 0.8, true),

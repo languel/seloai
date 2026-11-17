@@ -792,7 +792,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
     };
 
     const renderWorld = (ctx: CanvasRenderingContext2D, viewW: number, viewH: number, timeSec: number) => {
-      ctx.fillStyle = '#18211b';
+      // Beyond the edge of the map: the cloth's own colour in the art looks, so nothing drawn
+      // over the view (the Scribe's band) ever sits on a dark void.
+      {
+        const look = aestheticSettings.worldLook;
+        ctx.fillStyle = look === 'tiles' ? '#18211b' : deepen(PALETTES[look as PaletteName].ground, 0.06);
+      }
       ctx.fillRect(0, 0, viewW, viewH);
 
       const cam = cameraRef.current;
