@@ -3,7 +3,7 @@
  * map is drawn by whichever look is active. Units: `UNITS_PER_TILE` per map cell.
  */
 import { createSeededRng } from '../core/rng';
-import { ribbon } from './lettering';
+import { lettering, letteringWidth } from './lettering';
 import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
 import { FLAT_KINDS, SCENE_LAYERS, cellRng, layerOf, type PatternMark, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
@@ -584,34 +584,53 @@ function edgeLines(model: SceneModel): Shape[] {
 }
 
 /**
- * The cloth's own border: a double rule around the whole world with a running chevron of
- * the main thread between, and a knot rosette at each corner, like the edge of a towel.
+ * The cloth's own border: a double rule around the whole world with a band of the world's
+ * pattern between, and a medallion at each corner, like the edge of a towel. A titled
+ * world's top band is deeper and carries the place name in its middle, the band running
+ * either side of it to a knot, like the heading of a sampler.
  */
 function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
   const w = model.width * U;
   const h = model.height * U;
   const outer = U * 0.3;
   const inner = U * 0.95;
+  const titled = Boolean(model.title);
+  const innerTop = titled ? U * 1.55 : inner;
   const mid = (outer + inner) / 2;
-  const rect = (d: number): Pt[] => [[d, d], [w - d, d], [w - d, h - d], [d, h - d]];
+  const midTop = (outer + innerTop) / 2;
   const shapes: Shape[] = [
-    { kind: 'line', points: rect(outer), ink: 'dark', weight: 0.6, closed: true },
-    { kind: 'line', points: rect(inner), ink: 'dark', weight: 0.45, closed: true },
+    { kind: 'line', points: [[outer, outer], [w - outer, outer], [w - outer, h - outer], [outer, h - outer]], ink: 'dark', weight: 0.6, closed: true },
+    { kind: 'line', points: [[inner, innerTop], [w - inner, innerTop], [w - inner, h - inner], [inner, h - inner]], ink: 'dark', weight: 0.45, closed: true },
   ];
-  // A band of the world's pattern between the rules, run round all four sides, with a
-  // medallion at each corner.
   const seed = seedOf(model.title ?? 'cloth');
   const bandH = 5;
   const cell = ((inner - outer) * 0.86) / bandH;
-  const across = worldBand(seed, refs, (w - inner * 2) / cell, bandH);
-  const down = transposed(worldBand(seed, refs, (h - inner * 2) / cell, bandH));
-  shapes.push(...place([motifShape(across, cell)], { dx: w / 2, dy: mid }));
-  shapes.push(...place([motifShape(across, cell)], { dx: w / 2, dy: h - mid }));
-  shapes.push(...place([motifShape(down, cell)], { dx: mid, dy: h / 2 }));
-  shapes.push(...place([motifShape(down, cell)], { dx: w - mid, dy: h / 2 }));
+  const band = (length: number) => worldBand(seed, refs, length / cell, bandH);
+  const span = w - inner * 2;
+  if (titled) {
+    // The name, sized to the deep top band, and the band broken round it.
+    const titleCell = ((innerTop - outer) * 0.62) / 7;
+    const name = lettering(model.title!, { cell: titleCell, ink: 'primary', align: 'centre' });
+    const nameW = letteringWidth(model.title!, titleCell) + titleCell * 8;
+    shapes.push(...place(name, { dx: w / 2, dy: midTop - 3.5 * titleCell }));
+    const side = (span - nameW) / 2;
+    if (side > cell * 4) {
+      for (const dir of [-1, 1]) {
+        const cx = w / 2 + dir * (nameW / 2 + side / 2);
+        shapes.push(...place([motifShape(band(side - cell * 3), cell)], { dx: cx, dy: midTop }));
+        shapes.push({ kind: 'knot', at: [w / 2 + dir * (nameW / 2 - titleCell * 1.5), midTop], r: titleCell * 0.9, ink: 'gold' });
+      }
+    }
+  } else {
+    shapes.push(...place([motifShape(band(span), cell)], { dx: w / 2, dy: mid }));
+  }
+  shapes.push(...place([motifShape(band(span), cell)], { dx: w / 2, dy: h - mid }));
+  const down = transposed(worldBand(seed, refs, (h - inner - innerTop) / cell, bandH));
+  shapes.push(...place([motifShape(down, cell)], { dx: mid, dy: (innerTop + h - inner) / 2 }));
+  shapes.push(...place([motifShape(down, cell)], { dx: w - mid, dy: (innerTop + h - inner) / 2 }));
   const corner = worldMedallion(seed + 3, refs, 3);
   const cornerCell = ((inner - outer) * 1.1) / Math.max(corner.w, corner.h);
-  for (const [cx, cy] of [[mid, mid], [w - mid, mid], [w - mid, h - mid], [mid, h - mid]] as const) {
+  for (const [cx, cy] of [[mid, midTop], [w - mid, midTop], [w - mid, h - mid], [mid, h - mid]] as const) {
     shapes.push(...place([motifShape(corner, cornerCell)], { dx: cx, dy: cy }));
   }
   return shapes;
@@ -700,9 +719,6 @@ export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>,
   const features = drawOrder(hidden?.size ? model.features.filter((f) => !hidden.has(layerOf(f))) : model.features);
   const marks = hidden?.has('patterns') ? [] : patternMarkShapes(model.patternMarks ?? [], refs);
   const shapes = [...ground, ...marks, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...(frame ? clothBorder(model, refs) : [])];
-  if (model.title && frame) {
-    // The place name, stitched into the top of the cloth like the heading of a sampler.
-    shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));
-  }
+
   return shapes;
 }
