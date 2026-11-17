@@ -9,6 +9,7 @@ import {
   getFigureRig,
   paintRig,
   createWorldArt,
+  paintLiveWorld,
   type WorldArt,
   type WorldLook,
 } from '../art/gameLook';
@@ -956,7 +957,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       if (worldLook !== 'tiles') {
         // Art looks draw the world from its meaning, not from tile images.
         if (!artLayer || artLayer.map !== map || artLayer.look !== worldLook || artLayer.well !== sim.wellWater) {
-          const art = createWorldArt(map, worldLook, tileSemanticsForMap(map), undefined, sim.wellWater);
+          const art = createWorldArt(map, worldLook, tileSemanticsForMap(map), undefined, sim.wellWater, true);
           const canvas = document.createElement('canvas');
           canvas.width = art.width;
           canvas.height = art.height;
@@ -966,6 +967,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(artLayer.canvas, 0, 0);
         drawSharpTiles(ctx, artLayer, map.tileDim);
+        {
+          // The living things: swaying plants, idle animals and the river's glints.
+          const inv = ctx.getTransform().inverse();
+          const a = inv.transformPoint(new DOMPoint(0, 0));
+          const b = inv.transformPoint(new DOMPoint(ctx.canvas.width, ctx.canvas.height));
+          paintLiveWorld(ctx, artLayer.art, timeSec, { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) }, map.tileDim);
+        }
         ctx.imageSmoothingEnabled = false;
       } else if (tilesetImg) {
         const needsRebuild =

@@ -346,6 +346,16 @@ function refFor(feature: SceneFeature, refs: PatternReference[]): PatternReferen
 }
 
 /** A feature's shapes, turned by its angle about the centre of its footprint. */
+/** One feature's shapes, as the scene would draw it, for drawing it apart (a swaying reed). */
+export function featureShapesOf(feature: SceneFeature, model: SceneModel): Shape[] {
+  return turnedFeatureShapes(feature, worldReferences(model.motifs), model);
+}
+
+/** Where a feature stands: the middle of its foot, in scene units. */
+export function featureFoot(feature: SceneFeature): Pt {
+  return [(feature.x + feature.w / 2) * U, (feature.y + feature.h) * U - U * 0.12];
+}
+
 function turnedFeatureShapes(feature: SceneFeature, refs: PatternReference[], model?: SceneModel): Shape[] {
   const shapes = featureShapes(feature, refs, model);
   if (!feature.angle) return shapes;

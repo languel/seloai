@@ -8,8 +8,8 @@ import { activeWorldThreadsId, clothPalette, paintLinenRegion, worldPalette, ren
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureTraits, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
-import { buildSceneModel, semanticsFromTable, type SceneLayer, type TileSemantics } from './scene';
-import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
+import { buildSceneModel, layerOf, semanticsFromTable, type SceneFeature, type SceneLayer, type TileSemantics } from './scene';
+import { UNITS_PER_TILE, featureFoot, featureShapesOf, sceneShapes } from './sceneArt';
 import { restitch } from './stitchStyles';
 import { STITCHES_PER_CELL } from './stitchedHouse';
 import { bounds, type Pt, type Shape } from './shapes';
@@ -45,7 +45,46 @@ export interface WorldArt {
   width: number;
   height: number;
   drawRegion(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number): void;
+  /**
+   * The living things, when asked for apart (reeds, flowers, sunflowers, wheat, hens, ducks):
+   * each drawn once into its own sprite, to be swayed or moved each frame. Empty otherwise.
+   */
+  live: LiveSprite[];
+  /** Water cells, for the river's drifting glints, and whether the water runs mostly down. */
+  water: Array<[number, number]>;
+  waterRunsDown: boolean;
+  /** The light thread's colour, for glints on the water. */
+  glint: string;
 }
+
+/** A living thing drawn apart from the still cloth. Positions in world pixels. */
+export interface LiveSprite {
+  kind: 'sway' | 'hen' | 'duck';
+  /** How far it bends in a gust (radians at full gust). */
+  bend: number;
+  canvas: HTMLCanvasElement;
+  /** Its foot, where it is pinned to the ground. */
+  footX: number;
+  footY: number;
+  /** Where the foot sits in the sprite, and the sprite's size, in world pixels. */
+  ox: number;
+  oy: number;
+  w: number;
+  h: number;
+  seed: number;
+}
+
+/** Feature kinds drawn alive, and how far a gust bends each. */
+const LIVE_KINDS: Partial<Record<SceneFeature['kind'], { kind: LiveSprite['kind']; bend: number }>> = {
+  reeds: { kind: 'sway', bend: 0.2 },
+  flowers: { kind: 'sway', bend: 0.13 },
+  wheat: { kind: 'sway', bend: 0.08 },
+  sunflower: { kind: 'sway', bend: 0.06 },
+  hen: { kind: 'hen', bend: 0 },
+  duck: { kind: 'duck', bend: 0 },
+};
+/** Live sprites are drawn this many times sharper than the world, so they hold up when zoomed. */
+const LIVE_SCALE = 3;
 
 interface PreparedShape {
   shape: Shape;
@@ -60,13 +99,17 @@ export function createWorldArt(
   hidden?: ReadonlySet<SceneLayer>,
   /** The well's water as the story has made it, over what the world says. */
   wellState?: 'dry' | 'flowing' | null,
+  /** Draw the living things apart, as `live` sprites, instead of into the still cloth. */
+  splitLive = false,
 ): WorldArt {
   const width = Math.max(1, map.width * map.tileDim);
   const height = Math.max(1, map.height * map.tileDim);
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
   const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
   const baked = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
-  const model = wellState ? { ...baked, features: baked.features.map((f) => (f.kind === 'well' ? { ...f, state: wellState } : f)) } : baked;
+  const withWell = wellState ? { ...baked, features: baked.features.map((f) => (f.kind === 'well' ? { ...f, state: wellState } : f)) } : baked;
+  const liveFeatures = splitLive ? withWell.features.filter((f) => LIVE_KINDS[f.kind] && !hidden?.has(layerOf(f))) : [];
+  const model = liveFeatures.length ? { ...withWell, features: withWell.features.filter((f) => !liveFeatures.includes(f)) } : withWell;
   // Behind the people: quieter work in thinner, sparser thread rather than a faded cloth.
   const strength = Math.max(0.3, Math.min(1, model.backdrop ?? 1));
   const options: LookOptions = {
@@ -106,9 +149,44 @@ export function createWorldArt(
     }
   };
 
+  const live: LiveSprite[] = liveFeatures.map((f) => {
+    const spec = LIVE_KINDS[f.kind]!;
+    const shapes = restitch(featureShapesOf(f, withWell), model.stitch, stitchCell);
+    const b = bounds(shapes);
+    const u = options.unit;
+    const padU = 1.5;
+    const minX = (b.minX - padU) * u;
+    const minY = (b.minY - padU) * u;
+    const w = (b.maxX - b.minX + padU * 2) * u;
+    const h = (b.maxY - b.minY + padU * 2) * u;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(w * LIVE_SCALE));
+    canvas.height = Math.max(1, Math.ceil(h * LIVE_SCALE));
+    const cctx = canvas.getContext('2d')!;
+    cctx.scale(LIVE_SCALE, LIVE_SCALE);
+    cctx.translate(-minX, -minY);
+    const seed = hashString(`${f.id ?? f.kind}:${f.x}:${f.y}`);
+    shapes.forEach((shape, i) => {
+      const o = { ...options, seed: seed + i * 7919 };
+      if (thread) renderEmbroidery(cctx, [shape], o);
+      else renderLineArt(cctx, [shape], o);
+    });
+    const [fx, fy] = featureFoot(f);
+    return { kind: spec.kind, bend: spec.bend, canvas, footX: fx * u, footY: fy * u, ox: fx * u - minX, oy: fy * u - minY, w, h, seed };
+  });
+  const water: Array<[number, number]> = [];
+  for (let x = 0; x < model.width; x++) for (let y = 0; y < model.height; y++) if (model.terrain[x]?.[y] === 'water') water.push([x, y]);
+  const xs = water.map((c) => c[0]);
+  const ys = water.map((c) => c[1]);
+  const waterRunsDown = water.length > 0 && Math.max(...ys) - Math.min(...ys) >= Math.max(...xs) - Math.min(...xs);
+
   return {
     width,
     height,
+    live,
+    water: splitLive ? water : [],
+    waterRunsDown,
+    glint: options.palette.inks.light ?? '#ffffff',
     drawRegion(ctx, x0, y0, w, h) {
       ctx.save();
       ctx.beginPath();
@@ -133,6 +211,102 @@ export function createWorldArt(
       ctx.restore();
     },
   };
+}
+
+/** 0..1 hash of two integers and a seed, for steady per-thing variety. */
+function hash01(a: number, b: number, seed = 0): number {
+  let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(seed | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * The wind at a point, 0 (still) to about 1 (a full gust): broad waves rolling across the
+ * village in a slowly turning direction, gathered into gusts by a slower pattern, so some
+ * places bend while others are still and the gust can be seen travelling.
+ */
+function windAt(x: number, y: number, t: number): number {
+  const dir = 0.6 + Math.sin(t * 0.031) * 0.5;
+  const along = x * Math.cos(dir) + y * Math.sin(dir);
+  const wave = 0.5 + 0.5 * Math.sin(along * 0.012 - t * 1.1);
+  const gusts = 0.5 + 0.5 * Math.sin(x * 0.0041 + y * 0.0027 - t * 0.23) * Math.sin(x * 0.0023 - y * 0.0035 + t * 0.17 + 1.3);
+  return wave * wave * gusts;
+}
+
+/**
+ * Draws the world's living things for this moment, over the still cloth: reeds, flowers,
+ * sunflowers and wheat swaying in the gusts; hens pecking, shuffling and turning; ducks
+ * bobbing and drifting; and light glints drifting down the river. `view` is the part of
+ * the world in sight, in world pixels; `cell` is the size of a map cell.
+ */
+export function paintLiveWorld(
+  ctx: CanvasRenderingContext2D,
+  art: WorldArt,
+  t: number,
+  view: { x0: number; y0: number; x1: number; y1: number },
+  cell: number,
+) {
+  // River glints: short light strokes drifting with the current, each cell its own pace.
+  if (art.water.length) {
+    ctx.save();
+    ctx.strokeStyle = art.glint;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(1, cell * 0.05);
+    for (const [cx, cy] of art.water) {
+      const px = cx * cell;
+      const py = cy * cell;
+      if (px + cell < view.x0 || px > view.x1 || py + cell < view.y0 || py > view.y1) continue;
+      for (let k = 0; k < 2; k++) {
+        const r = hash01(cx, cy, k + 11);
+        const phase = (t * (0.22 + r * 0.1) + r) % 1;
+        const fade = Math.sin(phase * Math.PI);
+        ctx.globalAlpha = 0.32 * fade * fade;
+        const across = (0.2 + 0.6 * hash01(cx, cy, k + 23)) * cell;
+        const len = cell * (0.16 + 0.12 * r);
+        ctx.beginPath();
+        if (art.waterRunsDown) {
+          const y = py + phase * cell;
+          ctx.moveTo(px + across - len / 2, y);
+          ctx.lineTo(px + across + len / 2, y + len * 0.15);
+        } else {
+          const x = px + phase * cell;
+          ctx.moveTo(x, py + across - len / 2);
+          ctx.lineTo(x + len * 0.15, py + across + len / 2);
+        }
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  const margin = cell * 3;
+  for (const s of art.live) {
+    if (s.footX + margin < view.x0 || s.footX - margin > view.x1 || s.footY + margin < view.y0 || s.footY - margin > view.y1) continue;
+    const r = (s.seed % 1000) / 1000;
+    ctx.save();
+    ctx.translate(s.footX, s.footY);
+    if (s.kind === 'sway') {
+      // Bend about the foot: a little in any breeze, a lot in a gust, each at its own phase.
+      const g = windAt(s.footX, s.footY, t);
+      const flutter = Math.sin(t * (2.1 + r) + r * 20) * 0.18 + Math.sin(t * (3.7 + r * 2) + r * 7) * 0.08;
+      ctx.rotate(s.bend * (g * 1.1 + 0.12) * (1 + flutter));
+    } else if (s.kind === 'hen') {
+      // Pecks now and then, shuffles a step, turns round once in a while.
+      const cycle = (t / (7 + r * 5) + r) % 1;
+      const peck = cycle > 0.55 && cycle < 0.75 ? Math.sin(((cycle - 0.55) / 0.2) * Math.PI * 3) : 0;
+      const step = Math.sin(t / (11 + r * 6) + r * 9) * cell * 0.22;
+      const facing = Math.sin(t / (13 + r * 8) + r * 4) >= 0 ? 1 : -1;
+      ctx.translate(step, Math.max(0, peck) * cell * 0.05);
+      ctx.rotate(Math.max(0, peck) * 0.25 * facing);
+      ctx.scale(facing, 1);
+    } else {
+      // A duck rides the water: bobbing, drifting a little, turning with the drift.
+      const drift = Math.sin(t / (9 + r * 6) + r * 5);
+      ctx.translate(drift * cell * 0.3, Math.sin(t * (1.4 + r * 0.4) + r * 8) * cell * 0.035);
+      ctx.scale(Math.cos(t / (9 + r * 6) + r * 5) >= 0 ? 1 : -1, 1);
+    }
+    ctx.drawImage(s.canvas, -s.ox, -s.oy, s.w, s.h);
+    ctx.restore();
+  }
 }
 
 /** Renders the whole static world into a canvas of map pixel size. */
