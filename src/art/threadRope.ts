@@ -24,7 +24,7 @@ export interface RopeOptions {
   damping: number;
 }
 
-export const DEFAULT_ROPE: RopeOptions = { segments: 18, slack: 0.42, gravity: 520, damping: 0.982 };
+export const DEFAULT_ROPE: RopeOptions = { segments: 18, slack: 0.42, gravity: 520, damping: 0.966 };
 
 export class ThreadRope {
   knots: Knot[] = [];
@@ -58,7 +58,8 @@ export class ThreadRope {
     if (dt === 0) return;
     const { segments: n, slack, gravity, damping } = this.options;
     const k = this.knots;
-    const breeze = Math.sin(t * 1.1 + wind) * 40 + Math.sin(t * 2.7 + wind * 1.7) * 22 + Math.sin(t * 5.3 + wind * 0.6) * 8;
+    // A slow sway with a little flutter; the quick parts kept small so the thread never jitters.
+    const breeze = Math.sin(t * 1.1 + wind) * 32 + Math.sin(t * 2.7 + wind * 1.7) * 15 + Math.sin(t * 5.3 + wind * 0.6) * 4;
     for (let i = 1; i < n; i++) {
       const p = k[i];
       const vx = (p.x - p.px) * damping;

@@ -16,7 +16,7 @@ export const ZMEYOVO_CONTEXT: WorldContext = {
   settingName: 'Zmeyovo',
   settingKind: 'village',
   playerName: 'Traveler',
-  fallbackLandmark: 'Well of the Lamia',
+  fallbackLandmark: 'the Well',
   premise:
     'Drought grips Zmeyovo: the serpent Lamia Zmeitsa has coiled around the village well and demands a sacrifice before she releases the water.',
   themeId: 'balkan-myth',

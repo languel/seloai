@@ -90,7 +90,7 @@ export function shortName(cfg: Pick<VillagerConfig, 'name' | 'callNames'>): stri
 
 /**
  * The text with its @-mentions and the listener's own name taken out: "@Lamia, go to the river"
- * becomes ", go to the river", so the name is not read as a place (the Well of the Lamia).
+ * becomes ", go to the river", so the name is not read as a place (the Lamia's well).
  */
 export function withoutAddress(text: string, listener: Pick<VillagerConfig, 'name' | 'callNames'>): string {
   const forms = nameForms(listener);

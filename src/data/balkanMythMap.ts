@@ -428,7 +428,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
     {
       id: 'poi-balkan-well',
       tag: 'LamiaWell',
-      label: 'Well of the Lamia',
+      label: 'Well',
       x: 23,
       y: 16,
       description: 'Octagonal drought-parched stone well bound under Lamia Zmeitsa’s emerald coils, fronted by the offering altar.',

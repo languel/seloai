@@ -305,7 +305,7 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
     language: 'Greek',
     pitchSemitones: -1.5,
     speakingRate: 0.94,
-    warmthDb: 2.5,
+    warmthDb: 4,
   },
   playerName: '',
   playerVoice: {
