@@ -8,7 +8,7 @@ export type Pt = [number, number];
 /** A role, not a colour: each look's palette decides what a role looks like. */
 export type Ink = 'primary' | 'secondary' | 'accent' | 'accent2' | 'gold' | 'dark' | 'skin';
 
-export type Shape =
+export type Shape = (
   /**
    * A filled region. `grain` is the direction (radians) threads or hatching run. `tone`
    * picks a variant of the role where a look offers several (skin tones, for example).
@@ -31,7 +31,14 @@ export type Shape =
   | { kind: 'knot'; at: Pt; r: number; ink: Ink }
   /** Counted-thread work: cells on a square grid, each one stitch. */
   /** Counted-thread work: cells on a square grid, each one stitch; `rot` turns the grid about its origin. */
-  | { kind: 'counted'; origin: Pt; cell: number; cells: Array<[number, number, Ink]>; rot?: number };
+  | { kind: 'counted'; origin: Pt; cell: number; cells: Array<[number, number, Ink]>; rot?: number }
+) & {
+  /**
+   * 0 (default) is the thread's own colour; up to 1 blends it toward the ground, for work
+   * that should sit quietly under people (roads, a dancing ground).
+   */
+  fade?: number;
+};
 
 export interface Transform {
   dx?: number;

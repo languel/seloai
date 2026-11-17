@@ -99,7 +99,7 @@ function satinBars(shape: Extract<Shape, { kind: 'counted' }>): Shape[] {
       const y0 = cy * c - c * 0.42;
       const y1 = cy * c + c * 0.42;
       // Short satin stitches across the bar, as a satin band is worked.
-      out.push({ kind: 'area', points: [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)], ink: row[start][1], grain: Math.PI / 2 + (shape.rot ?? 0) });
+      out.push({ kind: 'area', points: [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)], ink: row[start][1], grain: Math.PI / 2 + (shape.rot ?? 0), ...(shape.fade ? { fade: shape.fade } : {}) });
       start = i;
     }
   }

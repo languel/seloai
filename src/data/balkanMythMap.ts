@@ -149,8 +149,8 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
 
   const brookMask = Array.from({ length: safeW }, () => Array(safeH).fill(false));
   // The brook runs from the frame at the top to the frame at the bottom: right up to the
-  // cloth's border on both ends, never across it (row 0 and the last row are the frame).
-  for (let y = 1; y < safeH - 1; y++) {
+  // cloth's border band on both ends (about two cells deep), never across it.
+  for (let y = 2; y < safeH - 2; y++) {
     // Anchor gently at bridge latitudes (y = 10 & y = 23) so oak bridges span x = 13..14 squarely
     const pinch10 = 1 - Math.exp(-((y - 10) * (y - 10)) / 9);
     const pinch23 = 1 - Math.exp(-((y - 23) * (y - 23)) / 9);

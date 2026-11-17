@@ -162,6 +162,20 @@ function tracePath(ctx: CanvasRenderingContext2D, points: Pt[], o: LookOptions, 
   if (closed) ctx.closePath();
 }
 
+/** `colour` blended toward `ground` by `t` (0 to 1), as hex. */
+function towardGround(colour: string, ground: string, t: number): string {
+  const a = parseInt(colour.slice(1), 16);
+  const b = parseInt(ground.slice(1), 16);
+  const ch = (shift: number) => Math.round(((a >> shift) & 255) * (1 - t) + ((b >> shift) & 255) * t);
+  return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0')}`;
+}
+
+/** A shape's ink colour, faded toward the ground if the shape asks. */
+function shapeColour(o: LookOptions, shape: Shape, ink: Ink, tone?: number): string {
+  const colour = inkColour(o.palette, ink, tone);
+  return shape.fade && /^#[0-9a-f]{6}$/i.test(colour) && /^#[0-9a-f]{6}$/i.test(o.palette.ground) ? towardGround(colour, o.palette.ground, Math.min(1, shape.fade)) : colour;
+}
+
 function shade(hex: string, factor: number): string {
   const n = parseInt(hex.slice(1), 16);
   const ch = (v: number) => Math.max(0, Math.min(255, Math.round(v * factor)));
@@ -232,8 +246,8 @@ export function renderLineArt(ctx: CanvasRenderingContext2D, shapes: Shape[], o:
   for (const shape of shapes) {
     const colour =
       shape.kind === 'counted'
-        ? o.palette.inks.dark
-        : inkColour(o.palette, shape.ink, shape.kind === 'area' ? shape.tone : undefined);
+        ? shapeColour(o, shape, 'dark')
+        : shapeColour(o, shape, shape.ink, shape.kind === 'area' ? shape.tone : undefined);
     ctx.strokeStyle = colour;
     ctx.fillStyle = colour;
     if (shape.kind === 'area') {
@@ -599,7 +613,7 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
       }
       for (const [cx, cy, ink] of shape.cells) {
         const [x, y] = turned ? [cx * size, cy * size] : toPx([shape.origin[0] + cx * shape.cell, shape.origin[1] + cy * shape.cell], o);
-        const cellColour = o.palette.inks[ink];
+        const cellColour = shapeColour(o, shape, ink);
         ctx.strokeStyle = 'rgba(40, 26, 12, 0.2)';
         ctx.lineWidth = width;
         ctx.beginPath();

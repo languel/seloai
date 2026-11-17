@@ -263,8 +263,8 @@ function houseExtent(f: SceneFeature, model: SceneModel, scale: number, facing?:
 }
 
 const fittedCache = new WeakMap<SceneModel, Map<SceneFeature, { scale: number; facing?: number }>>();
-/** Cells along each side kept clear for the cloth's frame. */
-const FRAME = 1;
+/** Cells along each side kept clear for the cloth's frame (its border band is about two deep). */
+const FRAME = 2;
 
 /**
  * How large each house of a grid world can be drawn without crowding: from the world's
@@ -416,7 +416,8 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       const span = Math.min(feature.w, feature.h) * 0.9 * STITCHES_PER_CELL;
       const motif = worldMedallion(feature.seed, refFor(feature, refs), Math.max(5, Math.min(14, Math.round((span - 1) / 2))));
       const cell = (Math.min(feature.w, feature.h) * U * 0.9) / Math.max(motif.w, motif.h);
-      return place([motifShape(motif, cell)], { dx: footX, dy: centreY });
+      // Faded toward the linen: a ground people dance on, never louder than the dancers.
+      return place([{ ...motifShape(motif, cell), fade: 0.5 }], { dx: footX, dy: centreY });
     }
     case 'pool':
       return place(
@@ -675,7 +676,8 @@ function terrainShapes(model: SceneModel): Shape[] {
     }
   }
   shapes.push(...edgeLines(model));
-  if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: roadCells });
+  // Roads sit close to the linen, so the people on them read first.
+  if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: roadCells, fade: 0.55 });
   if (wallCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: wallCells });
   return shapes;
 }
@@ -690,8 +692,8 @@ function edgeLines(model: SceneModel): Shape[] {
   const kindAt = (x: number, y: number) => model.terrain[x]?.[y];
   const roadish = (t: Terrain | undefined) => t === 'road' || t === 'bridge';
   const waterish = (t: Terrain | undefined) => t === 'water' || t === 'bridge';
-  const edges: Array<{ test: (t: Terrain | undefined) => boolean; ink: Ink; weight: number; inset: number }> = [
-    { test: roadish, ink: 'dark', weight: 0.45, inset: 0.06 },
+  const edges: Array<{ test: (t: Terrain | undefined) => boolean; ink: Ink; weight: number; inset: number; fade?: number }> = [
+    { test: roadish, ink: 'dark', weight: 0.45, inset: 0.06, fade: 0.6 },
     { test: waterish, ink: 'secondary', weight: 0.55, inset: -0.04 },
   ];
   for (const edge of edges) {
@@ -704,7 +706,7 @@ function edgeLines(model: SceneModel): Shape[] {
           if (on && start < 0) start = x;
           if (!on && start >= 0) {
             const ey = (side < 0 ? y : y + 1) * U - side * edge.inset * U;
-            shapes.push({ kind: 'line', points: [[start * U, ey], [x * U, ey]], ink: edge.ink, weight: edge.weight });
+            shapes.push({ kind: 'line', points: [[start * U, ey], [x * U, ey]], ink: edge.ink, weight: edge.weight, ...(edge.fade ? { fade: edge.fade } : {}) });
             start = -1;
           }
         }
@@ -716,7 +718,7 @@ function edgeLines(model: SceneModel): Shape[] {
           if (on && start < 0) start = y;
           if (!on && start >= 0) {
             const ex = (side < 0 ? x : x + 1) * U - side * edge.inset * U;
-            shapes.push({ kind: 'line', points: [[ex, start * U], [ex, y * U]], ink: edge.ink, weight: edge.weight });
+            shapes.push({ kind: 'line', points: [[ex, start * U], [ex, y * U]], ink: edge.ink, weight: edge.weight, ...(edge.fade ? { fade: edge.fade } : {}) });
             start = -1;
           }
         }
