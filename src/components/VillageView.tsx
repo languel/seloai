@@ -851,7 +851,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
         const threads = sim.map.scene ? bakeScene(sim.map.scene).model.palette : undefined;
         // Everything drawn on this cloth this frame is worked in the world's own threads.
         setActiveWorldThreads(threads);
-        ctx.fillStyle = look === 'tiles' ? '#18211b' : deepen(worldPalette(look as PaletteName, threads).ground, 0.06);
+        // Classic tiles has no cloth of its own: use the festive linen, close to its parchment
+        // tiles, rather than a dark void.
+        ctx.fillStyle = deepen(worldPalette((look === 'tiles' ? 'festive' : look) as PaletteName, threads).ground, 0.06);
       }
       ctx.fillRect(0, 0, viewW, viewH);
 
@@ -1732,7 +1734,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       }
     >
       {/* Left: Interactive Village World */}
-      <section className="relative flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-neutral-900" aria-label="Village Canvas">
+      <section className="relative flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-linen" aria-label="Village Canvas">
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
