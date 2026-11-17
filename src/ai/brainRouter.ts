@@ -35,6 +35,9 @@ import {
 
 export { isTextTooSimilar, parseDialogueAndNarration, type ParsedDialogue };
 
+/** Write and speak a reply in one Omni pass (faster, but ignores the voice instruction). */
+const ONE_PASS_OMNI_VOICE = false;
+
 function pushRing(arr: string[] | undefined, value: string, max = 6): string[] {
   const clean = value.trim();
   if (!clean) return arr ?? [];
@@ -534,8 +537,11 @@ class BrainRouter {
       if (omniEngine.isReady()) {
         const voice = getEffectiveVoice(villager, settings.worldLanguage);
         const mix = params.speakSpatialResolver?.();
+        // Speaking in the same pass buries the voice instruction under the whole persona prompt,
+        // so accents were lost. The reply is written here and voiced afterwards by speakLine,
+        // which gives the voice only the instruction template, exactly as Test Voice does.
         const wantVoice = Boolean(
-          params.speakSpatialResolver && settings.enableOmniTts && mix?.inRange,
+          ONE_PASS_OMNI_VOICE && params.speakSpatialResolver && settings.enableOmniTts && mix?.inRange,
         );
 
         // The voice gets the user's instruction template and nothing else about how to speak.
