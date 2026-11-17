@@ -86,6 +86,8 @@ function describeEdit(edit: SceneEdit): string {
       return `Scattered ${edit.features.length} ${FEATURE_NAMES[edit.features[0]?.kind] ?? edit.features[0]?.kind ?? ''}`;
     case 'houseLook':
       return `Houses ${edit.look}`;
+    case 'backdrop':
+      return edit.quietPaths !== undefined ? (edit.quietPaths ? 'Quiet paths' : 'Busy paths') : `Backdrop ${edit.strength}`;
     case 'palette':
       return `Threads: ${WORLD_PALETTES[edit.palette]?.name ?? edit.palette}`;
     case 'patternMark':
@@ -768,6 +770,26 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               </span>
               {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
             </label>
+            <div className="flex flex-col gap-0.5">
+              <span className="stitch-muted text-[10px]">Behind the people</span>
+              <span className="flex gap-1">
+                {(
+                  [
+                    [1, 'Full'],
+                    [0.7, 'Soft'],
+                    [0.45, 'Quiet'],
+                  ] as const
+                ).map(([v, label]) => (
+                  <Chip key={v} on={(baked?.model.backdrop ?? 1) === v} onClick={() => edit({ op: 'backdrop', strength: v }, `Backdrop ${label.toLowerCase()}`)}>
+                    {label}
+                  </Chip>
+                ))}
+              </span>
+              <label className="flex items-center justify-between gap-2" title="Wash the streets, square and meadows back to plain linen, so people stand on calm ground">
+                <span>Quiet paths</span>
+                <input type="checkbox" checked={Boolean(baked?.model.quietPaths)} onChange={(e) => edit({ op: 'backdrop', quietPaths: e.target.checked }, e.target.checked ? 'Quiet paths' : 'Busy paths')} />
+              </label>
+            </div>
             <label className="flex flex-col gap-0.5">
               <span className="stitch-muted text-[10px]">Houses</span>
               <select

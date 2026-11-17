@@ -321,6 +321,10 @@ function checkEdit(edit: SceneEdit) {
     case 'palette':
       if (!WORLD_PALETTES[edit.palette]) fail(`"${edit.palette}" is not a palette (${Object.keys(WORLD_PALETTES).join(', ')}).`);
       return;
+    case 'backdrop':
+      if (edit.strength !== undefined && !(edit.strength >= 0.3 && edit.strength <= 1)) fail('backdrop strength is 0.3 to 1.');
+      if (edit.quietPaths !== undefined && typeof edit.quietPaths !== 'boolean') fail('quietPaths is true or false.');
+      return;
     case 'houseLook':
       if (edit.look !== 'drawn' && edit.look !== 'stitched') fail('houseLook is "drawn" or "stitched".');
       return;

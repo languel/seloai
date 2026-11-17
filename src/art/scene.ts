@@ -223,6 +223,13 @@ export interface SceneModel {
   patternMarks?: PatternMark[];
   /** The world's own threads (see WORLD_PALETTES), used under the full-colour look. */
   palette?: string;
+  /**
+   * How strongly the world is drawn behind the people, 0.3 to 1 (default 1): the rest is a
+   * wash of linen, so characters stay legible over a busy cloth.
+   */
+  backdrop?: number;
+  /** Wash the places people walk (streets, square, meadows) back to near-plain linen. */
+  quietPaths?: boolean;
 }
 
 /** What a plot of a patchwork village holds (`road` is kept only for older saved worlds). */

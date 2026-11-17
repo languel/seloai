@@ -26,7 +26,7 @@ import { ScribeBand, type ScribeLine } from '../art/scribeBand';
 import { ThreadRope, drawThread } from '../art/threadRope';
 import { seededFigureTraits } from '../art/figures';
 import { createSeededRng, hashString } from '../core/rng';
-import { PALETTES, worldPalette, type PaletteName } from '../art/looks';
+import { clothAccent, clothPalette, setActiveWorldThreads, worldPalette, type PaletteName } from '../art/looks';
 import { bakeScene } from '../world/worldScene';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
@@ -778,7 +778,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             // The Scribe's narration, sewn along the bottom of the view in gold.
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const look = (aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName;
-            const pal = PALETTES[look];
+            const pal = clothPalette(look);
             const oneInk = look === 'ink' || look === 'night';
             // A deeper gold than the world's, so it reads against the linen.
             const gold = oneInk ? pal.inks.dark : deepen(pal.inks.gold, 0.32);
@@ -797,7 +797,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
       // over the view (the Scribe's band) ever sits on a dark void.
       {
         const look = aestheticSettings.worldLook;
-        ctx.fillStyle = look === 'tiles' ? '#18211b' : deepen(worldPalette(look as PaletteName, sim.map.scene ? bakeScene(sim.map.scene).model.palette : undefined).ground, 0.06);
+        const threads = sim.map.scene ? bakeScene(sim.map.scene).model.palette : undefined;
+        // Everything drawn on this cloth this frame is worked in the world's own threads.
+        setActiveWorldThreads(threads);
+        ctx.fillStyle = look === 'tiles' ? '#18211b' : deepen(worldPalette(look as PaletteName, threads).ground, 0.06);
       }
       ctx.fillRect(0, 0, viewW, viewH);
 
@@ -914,7 +917,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         for (const rt of sim.runtimes.values()) {
           if (rt.path.length === 0) continue;
           const cfg = sim.configs.get(rt.id);
-          ctx.strokeStyle = cfg?.accentColor || '#e6a945';
+          ctx.strokeStyle = clothAccent(cfg?.accentColor, worldLook === 'tiles' ? undefined : (worldLook as PaletteName)) || '#e6a945';
           ctx.lineWidth = 2;
           ctx.setLineDash([4, 4]);
           ctx.beginPath();
@@ -1032,12 +1035,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
         const td = map.tileDim;
         const bodyH = td * aestheticTokens.canvasTheme.characterScale * FIGURE_HEIGHT_SCALE;
         const look = (worldLook === 'tiles' ? 'festive' : worldLook) as PaletteName;
-        const palette = PALETTES[look];
+        const palette = clothPalette(look);
         const lineLook = look === 'ink' || look === 'night';
         const colourFor = (id: string): string => {
           const cfg = sim.configs.get(id);
           // A character's words are sewn in their own colour, the one their dot shows.
-          if (cfg?.accentColor && !lineLook) return cfg.accentColor;
+          if (cfg?.accentColor && !lineLook) return clothAccent(cfg.accentColor, look)!;
           const key = `${id}|${look}|${cfg?.figure?.seed ?? ''}|${JSON.stringify(cfg?.figure?.traits ?? {})}`;
           const hit = threadColourRef.current.get(key);
           if (hit) return hit;

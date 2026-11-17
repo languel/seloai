@@ -75,6 +75,56 @@ export const WORLD_PALETTES: Record<string, { name: string; palette: Palette }> 
   winter: { name: 'Winter linen', palette: threads('#e9e4da', '#8c5a55', '#5d6f80', '#6f7d6f', '#9b8790', '#a99a76', '#3b3a38') },
 };
 
+/**
+ * The threads of the world now on show. The village view sets it from the map, so the
+ * figures, their threads, woven words and overlays on the cloth are worked in the same
+ * palette as the world under them. Interface chrome keeps the look's own colours.
+ */
+let activeWorldThreads: string | undefined;
+
+export function setActiveWorldThreads(id: string | undefined) {
+  activeWorldThreads = id && WORLD_PALETTES[id] ? id : undefined;
+}
+
+export function activeWorldThreadsId(): string {
+  return activeWorldThreads ?? 'festive';
+}
+
+/** The palette for things drawn on the world's cloth (figures, threads, woven words). */
+export function clothPalette(look: PaletteName): Palette {
+  return worldPalette(look, activeWorldThreads);
+}
+
+const rgb = (hex: string): [number, number, number] => {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+
+/**
+ * A character's own colour, re-dyed for the world's threads: the festive thread role it is
+ * nearest to (red, blue, green, rose, gold), in the world's palette. Unchanged under the
+ * festive threads, and for anything that is not a #rrggbb colour.
+ */
+export function clothAccent(hex: string | undefined, look: PaletteName | undefined): string | undefined {
+  if (!hex || !look || !/^#[0-9a-f]{3,8}$/i.test(hex)) return hex;
+  const palette = clothPalette(look);
+  if (palette === PALETTES.festive) return hex;
+  const [r, g, b] = rgb(hex);
+  const roles = ['primary', 'secondary', 'accent', 'accent2', 'gold'] as const;
+  let best: (typeof roles)[number] = 'primary';
+  let score = Infinity;
+  for (const role of roles) {
+    const [fr, fg, fb] = rgb(PALETTES.festive.inks[role]);
+    const d = (fr - r) ** 2 + (fg - g) ** 2 + (fb - b) ** 2;
+    if (d < score) {
+      score = d;
+      best = role;
+    }
+  }
+  return palette.inks[best];
+}
+
 /** The palette a world is drawn in: its own threads under the full-colour look, else the look's. */
 export function worldPalette(look: PaletteName, own?: string): Palette {
   if (look === 'festive' && own && WORLD_PALETTES[own]) return WORLD_PALETTES[own].palette;

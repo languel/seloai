@@ -43,6 +43,8 @@ export type SceneEdit =
   | { op: 'houseLook'; look: HouseLook }
   /** The world's own threads (an id from WORLD_PALETTES). */
   | { op: 'palette'; palette: string }
+  /** How strongly the world is drawn behind the people, and whether the paths are quiet. */
+  | { op: 'backdrop'; strength?: number; quietPaths?: boolean }
   /** A pattern stroke or fill laid with the brush. */
   | { op: 'patternMark'; mark: PatternMark }
   /** In a patchwork village: what a plot holds (house, garden, field, …). */
@@ -173,6 +175,10 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         return;
       case 'palette':
         model.palette = edit.palette;
+        return;
+      case 'backdrop':
+        if (edit.strength !== undefined) model.backdrop = edit.strength;
+        if (edit.quietPaths !== undefined) model.quietPaths = edit.quietPaths;
         return;
       case 'patternMark':
         model.patternMarks = [...(model.patternMarks ?? []).filter((m) => m.id !== edit.mark.id), { ...edit.mark, points: edit.mark.points.map(([x, y]) => [x, y]) }];

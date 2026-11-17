@@ -80,7 +80,13 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   (`houseLook` edit); a placed house can take its own look.
 - **Threads**: a world can be worked in its own palette (natural dyes, faded heirloom,
   indigo and rust, Rhodope wool, harvest, winter linen) under the full-colour look
-  (`palette` edit, `WORLD_PALETTES`). The figures keep the look's own threads for now.
+  (`palette` edit, `WORLD_PALETTES`). The figures, their conversation threads, woven words
+  and overlays are worked in the same threads (`clothPalette`), and each character's own
+  colour is re-dyed to the nearest thread role (`clothAccent`).
+- **Legibility**: characters must read against the cloth. "Behind the people" (Full, Soft,
+  Quiet) washes the whole world back toward the linen; "Quiet paths" washes only where
+  people walk, under the houses and trees, so the plots keep their detail and people stand
+  on calm ground (`backdrop` edit).
 - **Rotate**: the selected feature turns in 15° steps (`[` and `]`, or the buttons), as a
   `rotate` edit. Counted work (pattern medallions) stays square to the cloth.
 - **Patterns** in the palette: a dancing-ground medallion grown from a chosen reference

@@ -4,7 +4,7 @@
  */
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
-import { PALETTES, paintLinen, worldPalette, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
+import { activeWorldThreadsId, clothPalette, paintLinen, worldPalette, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureTraits, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
@@ -47,16 +47,51 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
     palette: worldPalette(look, model.palette),
     seed: hashString(map.name),
   };
-  const shapes = sceneShapes(model, hidden);
-  if (isThread(look)) {
-    paintLinen(ctx, canvas.width, canvas.height, options);
-    renderEmbroidery(ctx, shapes, options);
-  } else {
+  const draw = (shapes: Shape[]) => (isThread(look) ? renderEmbroidery(ctx, shapes, options) : renderLineArt(ctx, shapes, options));
+  if (isThread(look)) paintLinen(ctx, canvas.width, canvas.height, options);
+  else {
     ctx.fillStyle = options.palette.ground;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    renderLineArt(ctx, shapes, options);
   }
+  if (model.quietPaths) {
+    // The ground first, then the paths washed quiet, then what stands on it, untouched.
+    const upright: SceneLayer[] = ['plantings', 'works', 'buildings', 'life'];
+    draw(sceneShapes(model, new Set([...(hidden ?? []), ...upright]), false));
+    quietPaths(ctx, canvas, map, options.palette.ground);
+    draw(sceneShapes(model, new Set([...(hidden ?? []), 'ground', 'patterns'])));
+  } else {
+    draw(sceneShapes(model, hidden));
+  }
+  quietBackdrop(ctx, canvas, model, options.palette.ground);
   return canvas;
+}
+
+/** Keeps the people legible: a wash of linen over the whole cloth (the backdrop strength). */
+function quietBackdrop(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, model: { backdrop?: number }, ground: string) {
+  const strength = Math.max(0.3, Math.min(1, model.backdrop ?? 1));
+  if (strength >= 1) return;
+  ctx.save();
+  ctx.globalAlpha = 1 - strength;
+  ctx.fillStyle = ground;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+/** Washes the places people walk back to near-plain linen, with soft edges. */
+function quietPaths(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, map: VillageMap, ground: string) {
+  // One pixel per cell, scaled up with smoothing: soft edges for free.
+  const mask = document.createElement('canvas');
+  mask.width = map.width;
+  mask.height = map.height;
+  const m = mask.getContext('2d')!;
+  m.fillStyle = ground;
+  for (let x = 0; x < map.width; x++) for (let y = 0; y < map.height; y++) if (!map.collisionGrid[x]?.[y]) m.fillRect(x, y, 1, 1);
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
 }
 
 type PartName = 'legLeft' | 'legRight' | 'skirt' | 'torso' | 'head' | 'armLeft' | 'armRight';
@@ -123,7 +158,7 @@ function renderPart(shapes: Shape[], look: PaletteName, unit: number, seed: numb
   canvas.height = Math.max(1, Math.ceil((box.maxY - box.minY + pad * 2) * unit));
   const origin: [number, number] = [(-box.minX + pad) * unit, (-box.minY + pad) * unit];
   const ctx = canvas.getContext('2d')!;
-  const options: LookOptions = { unit, origin, palette: PALETTES[look], seed };
+  const options: LookOptions = { unit, origin, palette: clothPalette(look), seed };
   if (isThread(look)) renderEmbroidery(ctx, shapes, options);
   else renderLineArt(ctx, shapes, options);
   return { canvas, ox: origin[0], oy: origin[1] };
@@ -145,12 +180,12 @@ export function getFigureRig(
   const who = `${id}|${seed}|${traits ? JSON.stringify(traits) : ''}`;
   const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits });
   const mood = expression ?? resting.restingExpression;
-  const key = `${who}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|${mood}`;
+  const key = `${who}|${look}:${activeWorldThreadsId()}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|${mood}`;
   const cached = rigCache.get(key);
   if (cached) return cached;
 
   const unit = (size / FIGURE_UNITS) * DENSITY;
-  const bodyKey = `${who}|${look}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|body`;
+  const bodyKey = `${who}|${look}:${activeWorldThreadsId()}|${size}|${kind}|${build}|${view}|${detail}|${quirks}|body`;
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
@@ -475,7 +510,7 @@ function mix(a: string, b: string, t: number): string {
  * stitched borders and ink text, taken from the active look instead of a fixed dark theme.
  */
 export function clothOverlayColours(look: PaletteName) {
-  const palette = PALETTES[look];
+  const palette = clothPalette(look);
   const { ground } = palette;
   const { dark, primary, gold, secondary } = palette.inks;
   const lineLook = look === 'ink' || look === 'night';
@@ -549,7 +584,7 @@ export function figurePortrait(
   if (typeof document === 'undefined') return null;
   const px = Math.max(8, Math.round(sizePx * pixelRatio));
   const seed = person.seed ?? hashString(id);
-  const key = `${id}|${seed}|${person.traits ? JSON.stringify(person.traits) : ''}|${person.expression ?? ''}|${look}|${px}|${kind}|${build}|${framing}`;
+  const key = `${id}|${seed}|${person.traits ? JSON.stringify(person.traits) : ''}|${person.expression ?? ''}|${look}:${activeWorldThreadsId()}|${px}|${kind}|${build}|${framing}`;
   const hit = portraitCache.get(key);
   if (hit) return hit;
   const parts = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, kind, quirks: true, traits: person.traits, expression: person.expression });
@@ -563,7 +598,7 @@ export function figurePortrait(
   canvas.width = px;
   canvas.height = px;
   const ctx = canvas.getContext('2d')!;
-  const options: LookOptions = { unit, origin: [px / 2, -top * unit], palette: PALETTES[look], seed };
+  const options: LookOptions = { unit, origin: [px / 2, -top * unit], palette: clothPalette(look), seed };
   if (isThread(look)) renderEmbroidery(ctx, shapes, options);
   else renderLineArt(ctx, shapes, options);
   if (portraitCache.size > 120) portraitCache.clear();

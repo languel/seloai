@@ -5,7 +5,7 @@
  * drawn separately as real text so it stays crisp.
  */
 import { createSeededRng } from '../core/rng';
-import { PALETTES, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
+import { clothPalette, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
 import type { Ink, Pt, Shape } from './shapes';
 
 /** Pixels per shape unit for overlay chrome; fixes stitch length relative to the text. */
@@ -90,7 +90,7 @@ function isThreadLook(look: PaletteName): boolean {
 }
 
 function draw(ctx: CanvasRenderingContext2D, look: PaletteName, shapes: Shape[], originPx: Pt, seed: number) {
-  const options: LookOptions = { unit: UNIT, origin: originPx, palette: PALETTES[look], seed };
+  const options: LookOptions = { unit: UNIT, origin: originPx, palette: clothPalette(look), seed };
   if (isThreadLook(look)) renderEmbroidery(ctx, shapes, options);
   else renderLineArt(ctx, shapes, options);
 }
@@ -296,7 +296,7 @@ export function drawBubbleThread(
   const end: Pt = [anchor[0] - ux * 3, anchor[1] - uy * 3];
   ctx.save();
   ctx.globalAlpha = 0.75;
-  ctx.strokeStyle = PALETTES[look].inks[ink];
+  ctx.strokeStyle = clothPalette(look).inks[ink];
   ctx.lineWidth = 1.1;
   ctx.lineCap = 'round';
   ctx.setLineDash(kind === 'thought' ? [1, 4] : [4, 3]);
@@ -342,5 +342,5 @@ export function drawRibbon(
 
 /** A colour for a role in a look, for drawing text and small marks to match the chrome. */
 export function inkHex(look: PaletteName, ink: Ink): string {
-  return PALETTES[look].inks[ink];
+  return clothPalette(look).inks[ink];
 }

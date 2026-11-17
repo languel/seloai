@@ -589,13 +589,13 @@ export function drawOrder(features: readonly SceneFeature[]): SceneFeature[] {
 }
 
 /** Everything that does not move, in drawing order; `hidden` layers are left out. */
-export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>): Shape[] {
+export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>, frame = true): Shape[] {
   const refs = worldReferences(model.motifs);
   const ground = model.patches ? patchworkShapes(model, U, hidden) : hidden?.has('ground') ? [] : terrainShapes(model);
   const features = drawOrder(hidden?.size ? model.features.filter((f) => !hidden.has(layerOf(f))) : model.features);
   const marks = hidden?.has('patterns') ? [] : patternMarkShapes(model.patternMarks ?? [], refs);
-  const shapes = [...ground, ...marks, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...clothBorder(model, refs)];
-  if (model.title) {
+  const shapes = [...ground, ...marks, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...(frame ? clothBorder(model, refs) : [])];
+  if (model.title && frame) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
     shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));
   }

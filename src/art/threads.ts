@@ -4,7 +4,7 @@
  * speaker toward the listener and a small knot travels along it, so who is talking to whom
  * reads at a glance. A first step toward thread as a mechanic (section 9 of the art notes).
  */
-import { PALETTES, type PaletteName } from './looks';
+import { clothPalette, type PaletteName } from './looks';
 
 export interface ThreadEnd {
   id: string;
@@ -42,7 +42,7 @@ export function threadPoint(a: { x: number; y: number }, b: { x: number; y: numb
 }
 
 export function drawConversationThreads(ctx: CanvasRenderingContext2D, ends: ThreadEnd[], look: PaletteName, timeSec: number) {
-  const palette = PALETTES[look];
+  const palette = clothPalette(look);
   const thread = look === 'ink' || look === 'night' ? palette.inks.dark : palette.inks.primary;
   const lineLook = look === 'ink' || look === 'night';
   ctx.save();

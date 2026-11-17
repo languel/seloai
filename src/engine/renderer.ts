@@ -1,5 +1,5 @@
 import { ANIMATION_CATALOG } from '../data/defaultData';
-import { PALETTES } from '../art/looks';
+import { PALETTES, clothAccent } from '../art/looks';
 import { drawBubbleBox, drawBubbleTail, drawBubbleThread, drawRibbon } from '../art/overlayChrome';
 import {
   DEFAULT_AESTHETIC_SETTINGS,
@@ -683,7 +683,7 @@ export function drawVillager(
 
     // Embroidered diamond selection ring
     if (selected) {
-      ctx.strokeStyle = cfg.accentColor || '#b42828';
+      ctx.strokeStyle = clothAccent(cfg.accentColor, theme.artLook) || '#b42828';
       ctx.lineWidth = 2;
       const cx = px + tileDim / 2;
       const cy = py + tileDim - 3;
@@ -715,7 +715,7 @@ export function drawVillager(
       if (img) {
         drawFootAnchoredSprite(ctx, img, frame.sx, frame.sy, frame.sw, frame.sh, px, py, tileDim, charScale);
       } else {
-        ctx.fillStyle = cfg.accentColor;
+        ctx.fillStyle = clothAccent(cfg.accentColor, theme.artLook) ?? cfg.accentColor;
         ctx.fillRect(px + 6, py + 4, tileDim - 12, tileDim - 8);
       }
     }
