@@ -499,23 +499,29 @@ function patchShapes(patches: Patch[]): Shape[] {
     const depth = Math.max(...pts.map((q) => (q[0] - a[0]) * n[0] + (q[1] - a[1]) * n[1]));
     const at = (along: number, into: number): Pt => [a[0] + u[0] * along + n[0] * into, a[1] + u[1] * along + n[1] * into];
     const fill: Ink = p.kind === 'orchard' ? 'gold' : p.ink;
-    shapes.push({ kind: 'area', points: pts, ink: fill, grain: p.grain });
+    // The ground of a plot is an open, sparse stitch so what stands on it (and the people
+    // walking past) carries the colour; only water and fields are worked more densely.
+    const open = p.kind === 'water' ? 0.2 : p.kind === 'field' ? 0.45 : p.kind === 'house' ? 1 : 0.8;
+    shapes.push({ kind: 'area', points: pts, ink: fill, grain: p.grain, open: open || undefined });
 
     if (p.kind === 'house') {
       // Houses along the street edge, and along the back edge too in a deep plot.
       const rows: Array<[Pt, Pt]> = [[a, b]];
-      if (depth > U * 2.7) rows.push([pts[(fi + 2) % pts.length], pts[(fi + 3) % pts.length]]);
+      // A back row only where the plot is deep enough for two houses of full height.
+      if (depth > U * 5.6) rows.push([pts[(fi + 2) % pts.length], pts[(fi + 3) % pts.length]]);
       for (const [ra, rb] of rows) {
         const rl = Math.hypot(rb[0] - ra[0], rb[1] - ra[1]);
         const ru: Pt = [(rb[0] - ra[0]) / rl, (rb[1] - ra[1]) / rl];
         let rn: Pt = [-ru[1], ru[0]];
         if ((mid[0] - ra[0]) * rn[0] + (mid[1] - ra[1]) * rn[1] < 0) rn = [-rn[0], -rn[1]];
-        const room = Math.min(depth / rows.length, U * 1.7);
-        let along = U * 0.12;
-        while (along < rl - U * 0.7) {
-          const w = Math.min(rl - along - U * 0.1, U * (0.75 + rng() * 0.6));
-          if (w < U * 0.55) break;
-          const h = Math.min(room * 0.92, U * (0.85 + rng() * 0.8));
+        // Houses at a person's scale: a character stands about 1.75 cells, so a house is
+        // two to three cells tall and its door nearly a cell high.
+        const room = Math.min(depth / rows.length, U * 3.1);
+        let along = U * 0.15;
+        while (along < rl - U * 1.2) {
+          const w = Math.min(rl - along - U * 0.15, U * (1.5 + rng() * 0.8));
+          if (w < U * 1.15) break;
+          const h = Math.min(room * 0.95, U * (2.2 + rng() * 0.8));
           const tilt = (rng() - 0.5) * 0.14; // a Chagall lean, never upright
           const c: Pt = [ra[0] + ru[0] * (along + w / 2) + rn[0] * U * 0.04, ra[1] + ru[1] * (along + w / 2) + rn[1] * U * 0.04];
           const cu: Pt = [ru[0] * Math.cos(tilt) - ru[1] * Math.sin(tilt), ru[0] * Math.sin(tilt) + ru[1] * Math.cos(tilt)];
@@ -529,16 +535,18 @@ function patchShapes(patches: Patch[]): Shape[] {
           shapes.push({ kind: 'area', points: [hp(-hw, 0), hp(hw, 0), hp(hw, body), hp(-hw, body)], ink: bodyInk, grain: Math.atan2(cn[1], cn[0]) });
           shapes.push({ kind: 'area', points: [hp(-hw - U * 0.06, body), hp(hw + U * 0.06, body), hp((rng() - 0.5) * w * 0.3, h)], ink: roofInk, grain: Math.atan2(cu[1], cu[0]) });
           // A door on the street, and a window or two.
-          const dw = Math.min(w * 0.18, U * 0.16);
-          shapes.push({ kind: 'area', points: [hp(-dw, 0), hp(dw, 0), hp(dw, body * 0.55), hp(-dw, body * 0.55)], ink: 'dark', grain: 0 });
+          const dw = Math.min(w * 0.17, U * 0.24);
+          const dh = Math.min(body * 0.72, U * 0.95);
+          shapes.push({ kind: 'area', points: [hp(-dw, 0), hp(dw, 0), hp(dw, dh), hp(-dw, dh)], ink: 'dark', grain: 0 });
           const winInk: Ink = bodyInk === 'gold' ? 'dark' : 'gold';
-          const windows = w > U * 1.05 ? [-0.3, 0.3] : [rng() < 0.5 ? -0.3 : 0.3];
+          const windows = w > U * 1.7 ? [-0.32, 0.32] : [rng() < 0.5 ? -0.3 : 0.3];
           for (const wx of windows) {
             const x = wx * w;
-            const s = U * 0.09;
-            shapes.push({ kind: 'area', points: [hp(x - s, body * 0.55), hp(x + s, body * 0.55), hp(x + s, body * 0.55 + s * 2), hp(x - s, body * 0.55 + s * 2)], ink: winInk, grain: 0 });
+            const s = U * 0.15;
+            const y0 = body * 0.5;
+            shapes.push({ kind: 'area', points: [hp(x - s, y0), hp(x + s, y0), hp(x + s, y0 + s * 2), hp(x - s, y0 + s * 2)], ink: winInk, grain: 0 });
           }
-          along += w + U * (0.04 + rng() * 0.1);
+          along += w + U * (0.08 + rng() * 0.15);
         }
       }
     } else if (p.kind === 'garden' || p.kind === 'vineyard' || p.kind === 'field') {
@@ -569,11 +577,11 @@ function patchShapes(patches: Patch[]): Shape[] {
       }
     } else if (p.kind === 'orchard') {
       // Round tree crowns seen from above, with a few fruit.
-      for (let into = U * 0.65; into < depth - U * 0.4; into += U * 1.05) {
-        for (let along = U * 0.6; along < len - U * 0.3; along += U * 1.05) {
+      for (let into = U * 0.8; into < depth - U * 0.5; into += U * 1.4) {
+        for (let along = U * 0.8; along < len - U * 0.4; along += U * 1.4) {
           const q = at(along + (rng() - 0.5) * U * 0.3, into + (rng() - 0.5) * U * 0.3);
           if (!pointIn(q, pts)) continue;
-          const r = U * (0.36 + rng() * 0.12);
+          const r = U * (0.5 + rng() * 0.15);
           shapes.push({ kind: 'area', points: circle(q, r, 12), ink: 'accent', grain: rng() * Math.PI });
           shapes.push({ kind: 'line', points: circle(q, r, 12), ink: 'dark', weight: 0.25, closed: true });
           for (let k = 0; k < 3; k++) shapes.push({ kind: 'knot', at: [q[0] + (rng() - 0.5) * r, q[1] + (rng() - 0.5) * r], r: 0.32, ink: 'primary' });

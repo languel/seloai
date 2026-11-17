@@ -153,8 +153,22 @@ export function renderLineArt(ctx: CanvasRenderingContext2D, shapes: Shape[], o:
     ctx.fillStyle = colour;
     if (shape.kind === 'area') {
       const points = wobble(shape.points, rng, 0.12);
-      const tone = LINE_TONE[shape.ink];
-      if (tone === 'solid') {
+      const tone = shape.open ? 'sparse' : LINE_TONE[shape.ink];
+      if (tone === 'sparse') {
+        // An open fill: a few spaced lines, so the ground shows through.
+        ctx.save();
+        tracePath(ctx, points, o, true);
+        ctx.clip();
+        ctx.lineWidth = line * 0.45;
+        ctx.globalAlpha = 0.55;
+        sweep(pixelBox(points, o), shape.grain, o.unit * (0.85 + (shape.open ?? 0) * 3), (x0, y0, x1, y1) => {
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        });
+        ctx.restore();
+      } else if (tone === 'solid') {
         tracePath(ctx, points, o, true);
         ctx.fill();
       } else if (tone === 'open') {
@@ -296,6 +310,22 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
     if (shape.kind === 'area') {
       // A hand never follows the drawn edge exactly.
       const points = shape.points.map(([x, y]): Pt => [x + (rng() - 0.5) * 0.22, y + (rng() - 0.5) * 0.22]);
+      if (shape.open) {
+        // An open fill: spaced threads over a faint wash, so the linen shows through.
+        const open = Math.min(1, shape.open);
+        ctx.save();
+        tracePath(ctx, points, o, true);
+        ctx.clip();
+        ctx.globalAlpha = 0.16 * (1 - open * 0.5);
+        ctx.fillStyle = colour;
+        ctx.fill();
+        ctx.globalAlpha = 0.75;
+        sweep(pixelBox(points, o), shape.grain, thread * (1.6 + open * 4), (x0, y0, x1, y1) => {
+          threadStroke(ctx, x0, y0, x1, y1, colour, thread * 0.75, rng);
+        });
+        ctx.restore();
+        continue;
+      }
       ctx.save();
       ctx.translate(lift, lift * 1.3);
       tracePath(ctx, points, o, true);

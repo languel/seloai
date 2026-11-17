@@ -13,7 +13,18 @@ export type Shape =
    * A filled region. `grain` is the direction (radians) threads or hatching run. `tone`
    * picks a variant of the role where a look offers several (skin tones, for example).
    */
-  | { kind: 'area'; points: Pt[]; ink: Ink; grain: number; tone?: number }
+  | {
+      kind: 'area';
+      points: Pt[];
+      ink: Ink;
+      grain: number;
+      tone?: number;
+      /**
+       * 0 (default) is a solid fill; up to 1 is an open, sparse fill of spaced threads that
+       * lets the ground show through, for backgrounds that should not overwhelm what is on them.
+       */
+      open?: number;
+    }
   /** A stroke: a stem, an outline, a tendril. */
   | { kind: 'line'; points: Pt[]; ink: Ink; weight: number; closed?: boolean }
   /** A dot: a knot, a sequin, a berry. */

@@ -36,8 +36,9 @@ export interface PatchworkOptions {
 const NAMES = ['Gorno Selo', 'Dolno Pole', 'Kruševo', 'Malko Brdo', 'Slivovo', 'Bukovets', 'Cherešnitsa', 'Lozen', 'Vishnevo', 'Kamenartsi'];
 
 /** Half the width of a street, in cells: main streets and lanes. */
-const MAIN_HALF = 0.55;
-const LANE_HALF = 0.2;
+// Streets are at least as wide as a person (a character is about one cell across).
+const MAIN_HALF = 0.75;
+const LANE_HALF = 0.45;
 
 /** The kinds a hand edit may give a plot. */
 export const PLOT_KINDS: readonly PatchKind[] = ['house', 'garden', 'field', 'orchard', 'vineyard', 'meadow', 'square', 'water'];

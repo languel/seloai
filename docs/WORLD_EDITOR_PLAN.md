@@ -203,7 +203,7 @@ sources, patterns should be generated procedurally, based on references.
    little cut-paper houses standing on their street edge and leaning into the plot (the
    fold-out elevations of old maps, at the street's angle, with a slight tilt), gardens
    beds of plants, orchards round crowns, fields strips, vineyards knots, meadows flowers,
-   the stream waves. People walk the streets, the square and meadows only. The World
+   the stream waves. Scale follows the people (owner: characters must read against the backdrop and look as if they could enter the houses): houses stand two to three cells (a character is about 1.75), doors nearly a cell high, streets at least a person wide, plots big enough for a couple of houses; plot grounds use the new open fill (`area.open`), sparse threads over a faint wash, so contents and characters carry the colour. People walk the streets, the square and meadows only. The World
    Editor paints plot by plot (the `plot` scene edit). On grid worlds, houses now turn to
    face their nearest road (sideways or upside down, like an old drawn map).
 2. ~~World editor tab, replacing Level Editor and Tapestry Studio.~~ First pass done
