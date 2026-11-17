@@ -89,14 +89,53 @@ function hearth(feature: SceneFeature): Shape[] {
   return place(shapes, { dy: -r * 0.2 });
 }
 
-function featureShapes(feature: SceneFeature, refs: PatternReference[]): Shape[] {
+/**
+ * Which way a house faces: toward the side of its footprint with the most road beside it
+ * (below if none). Like the houses of an old drawn map, a house beside a road on its right
+ * lies on its side with its door to the road, one above the road stands upside down.
+ */
+function houseFacing(feature: SceneFeature, model?: SceneModel): number {
+  if (!model) return 0;
+  const road = (x: number, y: number) => {
+    const t = model.terrain[x]?.[y];
+    return t === 'road' || t === 'bridge' ? 1 : 0;
+  };
+  let below = 0;
+  let above = 0;
+  let left = 0;
+  let right = 0;
+  for (let i = feature.x; i < feature.x + feature.w; i++) {
+    below += road(i, feature.y + feature.h) + road(i, feature.y + feature.h + 1) * 0.5;
+    above += road(i, feature.y - 1) + road(i, feature.y - 2) * 0.5;
+  }
+  for (let j = feature.y; j < feature.y + feature.h; j++) {
+    right += road(feature.x + feature.w, j) + road(feature.x + feature.w + 1, j) * 0.5;
+    left += road(feature.x - 1, j) + road(feature.x - 2, j) * 0.5;
+  }
+  const best = Math.max(below, above, left, right);
+  if (best === 0 || best === below) return 0;
+  if (best === right) return -Math.PI / 2;
+  if (best === left) return Math.PI / 2;
+  return Math.PI;
+}
+
+function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: SceneModel): Shape[] {
   const footX = (feature.x + feature.w / 2) * U;
   const footY = (feature.y + feature.h) * U - U * 0.12;
   const centreY = (feature.y + feature.h / 2) * U;
   const rng = createSeededRng(feature.seed);
   switch (feature.kind) {
     case 'house':
-      return place(house(feature, refs), { dx: footX, dy: footY });
+    {
+      // Stand the house on the edge of its footprint that faces the road, turned to face it.
+      const rot = houseFacing(feature, model);
+      const cx = (feature.x + feature.w / 2) * U;
+      const cy = (feature.y + feature.h / 2) * U;
+      const halfW = (feature.w * U) / 2;
+      const halfH = (feature.h * U) / 2 - U * 0.12;
+      const base: Pt = rot === 0 ? [cx, cy + halfH] : rot === Math.PI ? [cx, cy - halfH] : rot < 0 ? [cx + halfW - U * 0.12, cy] : [cx - halfW + U * 0.12, cy];
+      return place(house(feature, refs), { dx: base[0], dy: base[1], rot });
+    }
     case 'tree':
       return place(treeOfLife(rng, feature.h * U * 0.94), { dx: footX, dy: footY });
     case 'pine':
@@ -435,50 +474,128 @@ function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
 }
 
 /**
- * A patchwork ground, in the manner of a Klee village: every patch filled in its own thread
- * and stitch direction, dark couched seams between them, houses marked with a gable and a
- * door, vineyards with rows of knots, roads left as bare linen.
+ * A patchwork village seen from above, like an old drawn map. The streets are the bare linen
+ * between plots; each plot is filled in its own thread and shows what it holds: a house plot
+ * has a row of little houses standing on its street edge with their roofs leaning into the
+ * plot (the fold-out elevations of old maps, at whatever angle the street runs), gardens
+ * have beds of plants in rows, orchards round tree crowns, fields strips along their length,
+ * vineyards rows of knots, meadows scattered flowers, the stream waves.
  */
 function patchShapes(patches: Patch[]): Shape[] {
   const shapes: Shape[] = [];
   for (const p of patches) {
+    if (p.kind === 'road') continue;
     const pts = p.points.map(([x, y]): Pt => [x * U, y * U]);
-    if (p.kind !== 'road') shapes.push({ kind: 'area', points: pts, ink: p.ink, grain: p.grain });
+    const rng = createSeededRng(p.seed);
+    const fi = p.front ?? 0;
+    const a = pts[fi];
+    const b = pts[(fi + 1) % pts.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const u: Pt = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    // The inward normal: toward the plot's middle.
+    const mid = pts.reduce<Pt>((acc, q) => [acc[0] + q[0] / pts.length, acc[1] + q[1] / pts.length], [0, 0]);
+    let n: Pt = [-u[1], u[0]];
+    if ((mid[0] - a[0]) * n[0] + (mid[1] - a[1]) * n[1] < 0) n = [-n[0], -n[1]];
+    const depth = Math.max(...pts.map((q) => (q[0] - a[0]) * n[0] + (q[1] - a[1]) * n[1]));
+    const at = (along: number, into: number): Pt => [a[0] + u[0] * along + n[0] * into, a[1] + u[1] * along + n[1] * into];
+    const fill: Ink = p.kind === 'orchard' ? 'gold' : p.ink;
+    shapes.push({ kind: 'area', points: pts, ink: fill, grain: p.grain });
+
     if (p.kind === 'house') {
-      // A gable and a door, small marks inside the patch, as Klee draws his houses.
-      const cx = pts.reduce((a, q) => a + q[0], 0) / pts.length;
-      const cy = pts.reduce((a, q) => a + q[1], 0) / pts.length;
-      const size = Math.min(...pts.map((q) => Math.hypot(q[0] - cx, q[1] - cy))) * 0.7;
-      shapes.push({ kind: 'line', points: [[cx - size, cy], [cx, cy - size * 0.8], [cx + size, cy]], ink: 'dark', weight: 0.45 });
-      shapes.push({ kind: 'line', points: [[cx, cy + size * 0.15], [cx, cy + size * 0.75]], ink: 'dark', weight: 0.55 });
-    } else if (p.kind === 'water') {
-      // Water: wavy running lines across the patch, like the river elsewhere on the cloth.
-      const xs = pts.map((q) => q[0]);
-      const ys = pts.map((q) => q[1]);
-      for (let y = Math.min(...ys) + 1.6; y < Math.max(...ys) - 0.8; y += 2.2) {
-        const wave: Pt[] = [];
-        for (let x = Math.min(...xs); x <= Math.max(...xs); x += 0.8) {
-          const q: Pt = [x, y + Math.sin(x * 0.9) * 0.55];
-          if (pointIn(q, pts)) wave.push(q);
-          else if (wave.length > 1) {
-            shapes.push({ kind: 'line', points: [...wave], ink: 'dark', weight: 0.3 });
-            wave.length = 0;
-          } else wave.length = 0;
+      // Houses along the street edge, and along the back edge too in a deep plot.
+      const rows: Array<[Pt, Pt]> = [[a, b]];
+      if (depth > U * 2.7) rows.push([pts[(fi + 2) % pts.length], pts[(fi + 3) % pts.length]]);
+      for (const [ra, rb] of rows) {
+        const rl = Math.hypot(rb[0] - ra[0], rb[1] - ra[1]);
+        const ru: Pt = [(rb[0] - ra[0]) / rl, (rb[1] - ra[1]) / rl];
+        let rn: Pt = [-ru[1], ru[0]];
+        if ((mid[0] - ra[0]) * rn[0] + (mid[1] - ra[1]) * rn[1] < 0) rn = [-rn[0], -rn[1]];
+        const room = Math.min(depth / rows.length, U * 1.7);
+        let along = U * 0.12;
+        while (along < rl - U * 0.7) {
+          const w = Math.min(rl - along - U * 0.1, U * (0.75 + rng() * 0.6));
+          if (w < U * 0.55) break;
+          const h = Math.min(room * 0.92, U * (0.85 + rng() * 0.8));
+          const tilt = (rng() - 0.5) * 0.14; // a Chagall lean, never upright
+          const c: Pt = [ra[0] + ru[0] * (along + w / 2) + rn[0] * U * 0.04, ra[1] + ru[1] * (along + w / 2) + rn[1] * U * 0.04];
+          const cu: Pt = [ru[0] * Math.cos(tilt) - ru[1] * Math.sin(tilt), ru[0] * Math.sin(tilt) + ru[1] * Math.cos(tilt)];
+          const cn: Pt = [rn[0] * Math.cos(tilt) - rn[1] * Math.sin(tilt), rn[0] * Math.sin(tilt) + rn[1] * Math.cos(tilt)];
+          const hp = (x: number, y: number): Pt => [c[0] + cu[0] * x + cn[0] * y, c[1] + cu[1] * x + cn[1] * y];
+          const body = h * (0.52 + rng() * 0.12);
+          const bodies: Ink[] = ['primary', 'accent2', 'secondary', 'gold', 'accent'];
+          const bodyInk = bodies.filter((i) => i !== fill)[Math.floor(rng() * 4)];
+          const roofInk = (['dark', 'primary', 'accent', 'secondary'] as const).filter((i) => i !== bodyInk)[Math.floor(rng() * 3)];
+          const hw = w / 2;
+          shapes.push({ kind: 'area', points: [hp(-hw, 0), hp(hw, 0), hp(hw, body), hp(-hw, body)], ink: bodyInk, grain: Math.atan2(cn[1], cn[0]) });
+          shapes.push({ kind: 'area', points: [hp(-hw - U * 0.06, body), hp(hw + U * 0.06, body), hp((rng() - 0.5) * w * 0.3, h)], ink: roofInk, grain: Math.atan2(cu[1], cu[0]) });
+          // A door on the street, and a window or two.
+          const dw = Math.min(w * 0.18, U * 0.16);
+          shapes.push({ kind: 'area', points: [hp(-dw, 0), hp(dw, 0), hp(dw, body * 0.55), hp(-dw, body * 0.55)], ink: 'dark', grain: 0 });
+          const winInk: Ink = bodyInk === 'gold' ? 'dark' : 'gold';
+          const windows = w > U * 1.05 ? [-0.3, 0.3] : [rng() < 0.5 ? -0.3 : 0.3];
+          for (const wx of windows) {
+            const x = wx * w;
+            const s = U * 0.09;
+            shapes.push({ kind: 'area', points: [hp(x - s, body * 0.55), hp(x + s, body * 0.55), hp(x + s, body * 0.55 + s * 2), hp(x - s, body * 0.55 + s * 2)], ink: winInk, grain: 0 });
+          }
+          along += w + U * (0.04 + rng() * 0.1);
         }
-        if (wave.length > 1) shapes.push({ kind: 'line', points: wave, ink: 'dark', weight: 0.3 });
       }
-    } else if (p.kind === 'vineyard') {
-      const rng = createSeededRng(p.seed);
-      const xs = pts.map((q) => q[0]);
-      const ys = pts.map((q) => q[1]);
-      for (let x = Math.min(...xs) + 2; x < Math.max(...xs) - 1; x += 2.6) {
-        for (let y = Math.min(...ys) + 2; y < Math.max(...ys) - 1; y += 2.2) {
-          if (pointIn([x, y], pts)) shapes.push({ kind: 'knot', at: [x + (rng() - 0.5) * 0.6, y], r: 0.45, ink: 'dark' });
+    } else if (p.kind === 'garden' || p.kind === 'vineyard' || p.kind === 'field') {
+      // Rows along the plot: beds of little plants, vines as knots, or the strips of a field.
+      const spacing = p.kind === 'field' ? U * 0.42 : U * 0.62;
+      const plants: Ink[] = ['primary', 'accent2', 'gold', 'dark'].filter((i) => i !== fill) as Ink[];
+      for (let into = spacing * 0.6; into < depth - spacing * 0.3; into += spacing) {
+        if (p.kind === 'field') {
+          const row: Pt[] = [];
+          for (let along = -U; along < len + U; along += U * 0.4) {
+            const q = at(along, into);
+            if (pointIn(q, pts)) row.push(q);
+          }
+          if (row.length > 1) shapes.push({ kind: 'line', points: row, ink: Math.round(into / spacing) % 2 ? 'dark' : 'gold', weight: 0.22 });
+          continue;
         }
+        for (let along = spacing * 0.5; along < len; along += spacing * 0.9) {
+          const q = at(along + (rng() - 0.5) * U * 0.1, into);
+          if (!pointIn(q, pts)) continue;
+          if (p.kind === 'vineyard') shapes.push({ kind: 'knot', at: q, r: 0.42, ink: 'dark' });
+          else {
+            const s = U * 0.13;
+            const ink = plants[Math.floor(into / spacing) % plants.length];
+            shapes.push({ kind: 'line', points: [[q[0] - s, q[1] - s], [q[0] + s, q[1] + s]], ink, weight: 0.35 });
+            shapes.push({ kind: 'line', points: [[q[0] + s, q[1] - s], [q[0] - s, q[1] + s]], ink, weight: 0.35 });
+          }
+        }
+      }
+    } else if (p.kind === 'orchard') {
+      // Round tree crowns seen from above, with a few fruit.
+      for (let into = U * 0.65; into < depth - U * 0.4; into += U * 1.05) {
+        for (let along = U * 0.6; along < len - U * 0.3; along += U * 1.05) {
+          const q = at(along + (rng() - 0.5) * U * 0.3, into + (rng() - 0.5) * U * 0.3);
+          if (!pointIn(q, pts)) continue;
+          const r = U * (0.36 + rng() * 0.12);
+          shapes.push({ kind: 'area', points: circle(q, r, 12), ink: 'accent', grain: rng() * Math.PI });
+          shapes.push({ kind: 'line', points: circle(q, r, 12), ink: 'dark', weight: 0.25, closed: true });
+          for (let k = 0; k < 3; k++) shapes.push({ kind: 'knot', at: [q[0] + (rng() - 0.5) * r, q[1] + (rng() - 0.5) * r], r: 0.32, ink: 'primary' });
+        }
+      }
+    } else if (p.kind === 'meadow') {
+      for (let k = 0; k < 6; k++) {
+        const q = at(rng() * len, rng() * depth);
+        if (pointIn(q, pts)) shapes.push({ kind: 'knot', at: q, r: 0.4, ink: rng() < 0.5 ? 'primary' : 'gold' });
+      }
+    } else if (p.kind === 'water') {
+      for (let into = U * 0.5; into < depth - U * 0.2; into += U * 0.55) {
+        const wave: Pt[] = [];
+        for (let along = 0; along <= len; along += U * 0.12) {
+          const q = at(along, into + Math.sin(along * 0.9) * U * 0.07);
+          if (pointIn(q, pts)) wave.push(q);
+        }
+        if (wave.length > 1) shapes.push({ kind: 'line', points: wave, ink: 'dark', weight: 0.25 });
       }
     }
-    // The seam: a dark running line round the patch, like the cut edges in a quilt.
-    shapes.push({ kind: 'line', points: pts, ink: 'dark', weight: 0.32, closed: true });
+    // The plot's edge, where it meets the street.
+    shapes.push({ kind: 'line', points: pts, ink: 'dark', weight: 0.3, closed: true });
   }
   return shapes;
 }
@@ -497,7 +614,7 @@ function pointIn([x, y]: Pt, poly: Pt[]): boolean {
 export function sceneShapes(model: SceneModel): Shape[] {
   const refs = worldReferences(model.motifs);
   const ground = model.patches ? patchShapes(model.patches) : terrainShapes(model);
-  const shapes = [...ground, ...model.features.flatMap((f) => featureShapes(f, refs)), ...clothBorder(model, refs)];
+  const shapes = [...ground, ...model.features.flatMap((f) => featureShapes(f, refs, model)), ...clothBorder(model, refs)];
   if (model.title) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
     shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));

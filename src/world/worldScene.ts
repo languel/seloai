@@ -9,7 +9,8 @@
  * the new seed did not build) is skipped and reported, not lost.
  */
 import { withAmbience } from '../art/ambient';
-import type { FeatureKind, SceneFeature, SceneModel, Terrain } from '../art/scene';
+import type { FeatureKind, PatchKind, SceneFeature, SceneModel, Terrain } from '../art/scene';
+import { plotInk, pointInPolygon, rasterizePatches } from './patchworkVillage';
 import { hashString } from '../core/rng';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
 import { findGenerator, type GeneratedWorld, type SceneParams } from './sceneGenerators';
@@ -29,7 +30,9 @@ export type SceneEdit =
   | { op: 'removeLandmark'; id: string }
   | { op: 'spawn'; spawn: SpawnPoint }
   | { op: 'removeSpawn'; id: string }
-  | { op: 'title'; title: string };
+  | { op: 'title'; title: string }
+  /** In a patchwork village: what a plot holds (house, garden, field, …). */
+  | { op: 'plot'; id: number; kind: PatchKind };
 
 export interface WorldScene {
   recipe: SceneRecipe;
@@ -85,6 +88,7 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
   const touched = new Set<number>();
   const skipped: BakedScene['skipped'] = [];
   const lateRemovals: Array<{ index: number; id: string }> = [];
+  let plotsChanged = false;
   const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < model.width && y < model.height;
 
   scene.edits.forEach((edit, index) => {
@@ -145,8 +149,21 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
       case 'title':
         model.title = edit.title;
         return;
+      case 'plot': {
+        const i = model.patches?.findIndex((p) => p.id === edit.id) ?? -1;
+        if (i < 0 || !model.patches) return void skipped.push({ index, reason: `no plot ${edit.id}` });
+        const plot = model.patches[i];
+        model.patches = model.patches.map((p, k) => (k === i ? { ...plot, kind: edit.kind, ink: plotInk(edit.kind, plot.seed) } : p));
+        plotsChanged = true;
+        return;
+      }
     }
   });
+  // Plots changed: where people can walk follows what the plots now hold.
+  if (plotsChanged && model.patches) {
+    const outline = model.villageOutline ?? [];
+    model.terrain = rasterizePatches(model.patches, model.width, model.height, (x, y) => outline.some((poly) => pointInPolygon([x, y], poly)));
+  }
 
   model.features.sort((a, b) => a.y + a.h - (b.y + b.h));
   const seed = scene.base ? hashString(model.title ?? 'world') : scene.recipe.seed;

@@ -136,12 +136,40 @@ describe('a patchwork village', () => {
       expect(JSON.stringify(mapFromScene(scene).collisionGrid)).toBe(JSON.stringify(map.collisionGrid));
       const model = bakeScene(map.scene!).model;
       const kinds = new Set(model.patches!.map((p) => p.kind));
-      for (const k of ['house', 'road', 'square', 'field']) expect(kinds.has(k as never)).toBe(true);
+      for (const k of ['house', 'square', 'field']) expect(kinds.has(k as never)).toBe(true);
       expect(map.pointsOfInterest!.length).toBeGreaterThanOrEqual(3);
       const [a, ...rest] = map.pointsOfInterest!;
       for (const b of rest) expect(findPath(map, { x: a.x, y: a.y }, { x: b.x, y: b.y }).length).toBeGreaterThan(0);
       // No ambient clutter on a patchwork: only the world's own features.
       expect(model.features.every((f) => !f.id?.startsWith('amb-'))).toBe(true);
+    }
+  });
+});
+
+describe('the patchwork village as a plan from above', () => {
+  it('walks the streets, square and meadows, never through houses, gardens or fields', async () => {
+    const { patchworkVillage } = await import('../sceneGenerators');
+    for (const seed of [2, 7, 1061]) {
+      const map = mapFromScene({ recipe: { generator: 'patchwork', params: patchworkVillage.resolveParams({}), seed }, edits: [] });
+      const model = bakeScene(map.scene!).model;
+      const at = (x: number, y: number) => model.patches!.find((p) => {
+        let hit = false;
+        for (let i = 0, j = p.points.length - 1; i < p.points.length; j = i++) {
+          const [xi, yi] = p.points[i];
+          const [xj, yj] = p.points[j];
+          if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+        }
+        return hit;
+      });
+      for (let x = 0; x < map.width; x++) {
+        for (let y = 0; y < map.height; y++) {
+          const p = at(x + 0.5, y + 0.5);
+          if (p && ['house', 'garden', 'field', 'orchard', 'vineyard', 'water'].includes(p.kind)) expect(map.collisionGrid[x][y]).toBe(true);
+        }
+      }
+      // Every named place can be reached from the square along the streets, across bridges.
+      const [a, ...rest] = map.pointsOfInterest!;
+      for (const b of rest) expect(findPath(map, { x: a.x, y: a.y }, { x: b.x, y: b.y }).length).toBeGreaterThan(0);
     }
   });
 });

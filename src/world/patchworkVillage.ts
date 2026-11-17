@@ -1,14 +1,20 @@
 /**
- * A patchwork village: an irregular quad grid (Townscaper's way of cutting a hexagon into
- * wonky, nearly square patches) filled like a Klee village, a quilt of houses, gardens,
- * fields, orchards and meadows around a square, crossed by roads and perhaps a stream.
+ * A patchwork village, seen from above like an old drawn map. An irregular quad grid (the
+ * Townscaper way of cutting a hexagon into wonky, nearly square patches) is the plan: its
+ * seams are the streets and its patches are plots: house plots, gardens, fields, orchards,
+ * vineyards, meadows, the square, the stream.
  *
- * The large shapes are planned first: the square at the heart, roads running out from it and
- * round it, a stream across. Then the remaining patches are decided one at a time, the patch
- * with the most decided neighbours first (the least uncertain, as in wave function
- * collapse), each choice weighted by its distance from the square and by its neighbours:
- * houses gather along roads and beside each other, fields keep to the outside and share a
- * crop with the fields next to them, gardens sit in between. Every choice is seeded.
+ * The large shapes come first: the square at the heart, main streets run along the seams
+ * from the square to the edge (and round it, in some villages), a stream across. Then every
+ * other plot is decided, the plot with the most decided neighbours first (the least
+ * uncertain, as in wave function collapse), each choice weighted by its distance from the
+ * square and by its neighbours: houses gather near the centre and along main streets,
+ * fields keep to the outside and share a crop with their neighbours, gardens sit between.
+ *
+ * Each plot is drawn in from its edges by half the width of the street beside it, so the
+ * streets are the bare linen between the plots. People walk the streets, the square and the
+ * meadows; houses, gardens, fields, orchards, vineyards and the stream are not walked
+ * through. Every choice is seeded.
  */
 import type { Patch, PatchKind, SceneFeature, SceneModel, Terrain } from '../art/scene';
 import type { Ink } from '../art/shapes';
@@ -19,7 +25,7 @@ import type { PointOfInterest, SpawnPoint } from '../engine/types';
 export interface PatchworkOptions {
   /** Size of the village: triangles from the centre to the edge of the hexagon. */
   rings: number;
-  /** Map cells per triangle side (patches are about half this across). */
+  /** Map cells per triangle side (plots are about half this across). */
   side: number;
   /** How built-up the village is, 0 to 1. */
   houses: number;
@@ -29,9 +35,15 @@ export interface PatchworkOptions {
 
 const NAMES = ['Gorno Selo', 'Dolno Pole', 'Kruševo', 'Malko Brdo', 'Slivovo', 'Bukovets', 'Cherešnitsa', 'Lozen', 'Vishnevo', 'Kamenartsi'];
 
-interface Decision {
-  kind: PatchKind;
-}
+/** Half the width of a street, in cells: main streets and lanes. */
+const MAIN_HALF = 0.55;
+const LANE_HALF = 0.2;
+
+/** The kinds a hand edit may give a plot. */
+export const PLOT_KINDS: readonly PatchKind[] = ['house', 'garden', 'field', 'orchard', 'vineyard', 'meadow', 'square', 'water'];
+
+/** Plot kinds people may walk across, besides the streets. */
+const WALKABLE: ReadonlySet<PatchKind> = new Set(['square', 'meadow', 'road']);
 
 function pickWeighted<T extends string>(weights: Array<[T, number]>, rng: Rng): T {
   const total = weights.reduce((s, [, w]) => s + Math.max(0, w), 0);
@@ -43,7 +55,7 @@ function pickWeighted<T extends string>(weights: Array<[T, number]>, rng: Rng): 
   return weights[weights.length - 1][0];
 }
 
-function inside(pt: V, poly: V[]): boolean {
+export function pointInPolygon(pt: V, poly: V[]): boolean {
   let hit = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const [xi, yi] = poly[i];
@@ -53,43 +65,97 @@ function inside(pt: V, poly: V[]): boolean {
   return hit;
 }
 
-/** Two faces that share one edge, as one outline (or null if they do not share exactly one). */
-function mergeLoops(a: number[], b: number[]): number[] | null {
-  const shared = a.filter((v) => b.includes(v));
-  if (shared.length !== 2) return null;
-  const [p, q] = shared;
-  // Find the edge in a's order (from -> to), then walk a from `to` round to `from`,
-  // and b from `from` round to `to`, leaving out the shared edge.
-  const ia = a.indexOf(p);
-  const from = a[(ia + 1) % a.length] === q ? p : q;
-  const to = from === p ? q : p;
-  const startA = a.indexOf(to);
-  const walkA: number[] = [];
-  for (let k = 0; k < a.length; k++) walkA.push(a[(startA + k) % a.length]);
-  const startB = b.indexOf(from);
-  const walkB: number[] = [];
-  for (let k = 0; k < b.length; k++) walkB.push(b[(startB + k) % b.length]);
-  if (walkA[walkA.length - 1] !== from || walkB[walkB.length - 1] !== to) return null;
-  return [...walkA, ...walkB.slice(1, -1)];
+/** Draws a polygon in from each edge by its own distance (positive is inward). */
+function inset(poly: V[], distances: number[]): V[] {
+  const n = poly.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) area += poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1];
+  const s = area >= 0 ? 1 : -1;
+  const lines = poly.map((a, i) => {
+    const b = poly[(i + 1) % n];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const dx = (b[0] - a[0]) / len;
+    const dy = (b[1] - a[1]) / len;
+    const nx = -dy * s;
+    const ny = dx * s;
+    return { px: a[0] + nx * distances[i], py: a[1] + ny * distances[i], dx, dy };
+  });
+  return poly.map((_, i) => {
+    const l1 = lines[(i + n - 1) % n];
+    const l2 = lines[i];
+    const det = l1.dx * l2.dy - l1.dy * l2.dx;
+    if (Math.abs(det) < 1e-6) return [l2.px, l2.py];
+    const t = ((l2.px - l1.px) * l2.dy - (l2.py - l1.py) * l2.dx) / det;
+    return [l1.px + l1.dx * t, l1.py + l1.dy * t];
+  });
 }
 
-/** Shortest path between faces over the face graph, avoiding faces `blocked` rejects. */
-function path(neighbours: number[][], from: number, to: number, blocked: (f: number) => boolean): number[] {
-  const prev = new Map<number, number>([[from, -1]]);
-  const queue = [from];
+function bfs<T extends number>(next: (v: T) => T[], from: T, to: T, blocked: (v: T) => boolean): T[] {
+  const prev = new Map<T, T | -1>([[from, -1]]);
+  const queue: T[] = [from];
   for (let q = 0; q < queue.length; q++) {
-    const f = queue[q];
-    if (f === to) break;
-    for (const n of neighbours[f]) {
+    const v = queue[q];
+    if (v === to) break;
+    for (const n of next(v)) {
       if (prev.has(n) || (n !== to && blocked(n))) continue;
-      prev.set(n, f);
+      prev.set(n, v);
       queue.push(n);
     }
   }
   if (!prev.has(to)) return [];
-  const out: number[] = [];
-  for (let f = to; f !== -1; f = prev.get(f)!) out.push(f);
+  const out: T[] = [];
+  for (let v: T | -1 = to; v !== -1; v = prev.get(v as T)!) out.push(v as T);
   return out.reverse();
+}
+
+/** The thread a plot of this kind is worked in, chosen from a seed. */
+export function plotInk(kind: PatchKind, seed: number): Ink {
+  const r = createSeededRng(seed)();
+  switch (kind) {
+    case 'house':
+      return r < 0.5 ? 'gold' : 'accent';
+    case 'garden':
+      return r < 0.6 ? 'accent' : 'gold';
+    case 'field':
+      return (['gold', 'gold', 'primary', 'accent2', 'accent'] as const)[Math.floor(r * 5)];
+    case 'orchard':
+      return 'accent';
+    case 'vineyard':
+      return r < 0.5 ? 'accent2' : 'accent';
+    case 'meadow':
+      return r < 0.6 ? 'accent' : 'gold';
+    case 'water':
+      return 'secondary';
+    default:
+      return 'gold';
+  }
+}
+
+/**
+ * Walkability for a patchwork: the streets (the gaps between plots inside the village), the
+ * square and meadows are open; houses, gardens, fields, orchards, vineyards and water are
+ * not walked through. Outside the village is open meadow.
+ */
+export function rasterizePatches(patches: Patch[], width: number, height: number, inVillage: (x: number, y: number) => boolean): Terrain[][] {
+  const terrain: Terrain[][] = Array.from({ length: width }, () => Array<Terrain>(height).fill('ground'));
+  const boxes = patches.map((p) => {
+    const xs = p.points.map((q) => q[0]);
+    const ys = p.points.map((q) => q[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  });
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      const pt: V = [x + 0.5, y + 0.5];
+      const i = patches.findIndex((p, k) => pt[0] >= boxes[k][0] && pt[0] <= boxes[k][2] && pt[1] >= boxes[k][1] && pt[1] <= boxes[k][3] && pointInPolygon(pt, p.points));
+      if (i < 0) {
+        if (inVillage(pt[0], pt[1])) terrain[x][y] = 'road';
+        continue;
+      }
+      const kind = patches[i].kind;
+      terrain[x][y] = kind === 'water' ? 'water' : kind === 'square' || kind === 'road' ? 'road' : WALKABLE.has(kind) ? 'ground' : 'wall';
+    }
+  }
+  return terrain;
 }
 
 export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneModel; spawns: SpawnPoint[] } {
@@ -104,9 +170,33 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
   const centres = mesh.faces.map((f) => faceCentre(mesh, f));
   const dist = centres.map(([x, y]) => Math.hypot(x, y) / R);
   const onEdge = mesh.faces.map((f) => f.some((v) => mesh.boundary.has(v)));
-  const decided = new Map<number, Decision>();
+  const kinds = new Map<number, PatchKind>();
+  const edgeKey = (p: number, q: number) => (p < q ? `${p}-${q}` : `${q}-${p}`);
 
-  const nearestTo = (a: number, d: number, pool: (f: number) => boolean) => {
+  // The vertex graph, for streets along the seams.
+  const adj = new Map<number, number[]>();
+  for (const f of mesh.faces) {
+    for (let k = 0; k < 4; k++) {
+      const a = f[k];
+      const b = f[(k + 1) % 4];
+      if (!adj.get(a)?.includes(b)) adj.set(a, [...(adj.get(a) ?? []), b]);
+      if (!adj.get(b)?.includes(a)) adj.set(b, [...(adj.get(b) ?? []), a]);
+    }
+  }
+  const nearestVertex = (x: number, y: number, pool: (v: number) => boolean) => {
+    let best = -1;
+    let score = Infinity;
+    mesh.vertices.forEach(([vx, vy], v) => {
+      if (!pool(v)) return;
+      const s = Math.hypot(vx - x, vy - y);
+      if (s < score) {
+        score = s;
+        best = v;
+      }
+    });
+    return best;
+  };
+  const nearestFace = (a: number, d: number, pool: (f: number) => boolean) => {
     let best = -1;
     let score = Infinity;
     centres.forEach(([x, y], f) => {
@@ -120,243 +210,156 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
     return best;
   };
 
-  // The square: the few patches nearest the middle.
-  const bySquare = centres.map((_, f) => f).sort((a, b) => dist[a] - dist[b]);
-  const squareFaces = bySquare.slice(0, 4);
-  for (const f of squareFaces) decided.set(f, { kind: 'square' });
+  // The square: the few plots nearest the middle.
+  const byCentre = centres.map((_, f) => f).sort((a, b) => dist[a] - dist[b]);
+  const squareFaces = byCentre.slice(0, 4);
+  for (const f of squareFaces) kinds.set(f, 'square');
   const heart = squareFaces[0];
 
   // A stream across the village, edge to edge, kept clear of the square.
-  const water = new Set<number>();
   if (o.stream) {
     const a = rng() * Math.PI * 2;
-    const from = nearestTo(a, 1, (f) => onEdge[f]);
-    const to = nearestTo(a + Math.PI + (rng() - 0.5) * 1.2, 1, (f) => onEdge[f]);
-    for (const f of path(neighbours, from, to, (f) => dist[f] < 0.22)) water.add(f);
+    const from = nearestFace(a, 1, (f) => onEdge[f]);
+    const to = nearestFace(a + Math.PI + (rng() - 0.5) * 1.2, 1, (f) => onEdge[f]);
+    for (const f of bfs<number>((g) => neighbours[g], from, to, (f) => dist[f] < 0.22)) kinds.set(f, 'water');
   }
 
-  // Roads: spokes from the square to the edge, and a ring between them.
-  const roads = new Set<number>();
+  // Main streets along the seams: from the square out to the edge, and round in some villages.
+  const main = new Set<string>();
+  const squareVerts = new Set(squareFaces.flatMap((f) => mesh.faces[f]));
   const spokeCount = 3 + Math.floor(rng() * 2);
   const base = rng() * Math.PI * 2;
-  // Roads keep off the stream, crossing it only where they must (those patches are bridges).
-  const roadPath = (from: number, to: number) => {
-    const isSquare = (f: number) => decided.get(f)?.kind === 'square' && f !== heart && f !== from;
-    const dry = path(neighbours, from, to, (f) => isSquare(f) || water.has(f));
-    return dry.length ? dry : path(neighbours, from, to, isSquare);
+  const markPath = (vs: number[]) => {
+    for (let k = 1; k < vs.length; k++) main.add(edgeKey(vs[k - 1], vs[k]));
   };
   for (let k = 0; k < spokeCount; k++) {
     const a = base + (k / spokeCount) * Math.PI * 2 + (rng() - 0.5) * 0.5;
-    const end = nearestTo(a, 1, (f) => onEdge[f]);
-    for (const f of roadPath(heart, end)) if (!decided.has(f)) roads.add(f);
+    const end = nearestVertex(Math.cos(a) * R, Math.sin(a) * R, (v) => mesh.boundary.has(v));
+    const start = nearestVertex(Math.cos(a) * R * 0.15, Math.sin(a) * R * 0.15, (v) => squareVerts.has(v));
+    markPath(bfs<number>((v) => adj.get(v) ?? [], start, end, () => false));
   }
-  // A ring road in some villages, joining the spokes part-way out.
-  if (rng() < 0.55) {
-    const ringR = 0.5 + rng() * 0.08;
-    const ringPoints = Array.from({ length: 7 }, (_, k) => nearestTo(base + (k / 6) * Math.PI * 2, ringR, (f) => !decided.has(f)));
-    for (let k = 0; k < 6; k++) for (const f of roadPath(ringPoints[k], ringPoints[k + 1])) if (!decided.has(f)) roads.add(f);
+  if (rng() < 0.6) {
+    const ringR = (0.5 + rng() * 0.08) * R;
+    const ring = Array.from({ length: 9 }, (_, k) => nearestVertex(Math.cos(base + (k / 8) * Math.PI * 2) * ringR, Math.sin(base + (k / 8) * Math.PI * 2) * ringR, () => true));
+    for (let k = 0; k < 8; k++) markPath(bfs<number>((v) => adj.get(v) ?? [], ring[k], ring[k + 1], (v) => squareVerts.has(v)));
   }
-  for (const f of water) if (!roads.has(f)) decided.set(f, { kind: 'water' });
-  for (const f of roads) decided.set(f, { kind: 'road' });
+  // The square is ringed by a wide street.
+  for (const f of squareFaces) for (let k = 0; k < 4; k++) main.add(edgeKey(mesh.faces[f][k], mesh.faces[f][(k + 1) % 4]));
+  const onMain = (f: number) => mesh.faces[f].some((v, k) => main.has(edgeKey(v, mesh.faces[f][(k + 1) % 4])));
 
-  // The collapse fill: the least uncertain patch (most decided neighbours) first.
+  // The collapse fill: the least uncertain plot (most decided neighbours) first.
   const weightsFor = (f: number): Array<[PatchKind, number]> => {
     const d = dist[f];
-    const near = neighbours[f].map((n) => decided.get(n)?.kind).filter(Boolean) as PatchKind[];
+    const near = neighbours[f].map((n) => kinds.get(n)).filter(Boolean) as PatchKind[];
     const count = (k: PatchKind) => near.filter((x) => x === k).length;
-    const touchesWay = count('road') + count('square') > 0;
-    const w: Array<[PatchKind, number]> = [
-      ['house', (d < 0.7 ? 2.6 * (1 - d / 0.7) + 0.2 : 0.05) * (0.4 + o.houses * 1.6) * (touchesWay ? 3 : 0.5) * (1 + count('house') * 0.6) * (count('water') ? 0.4 : 1)],
+    return [
+      ['house', (d < 0.72 ? 2.6 * (1 - d / 0.72) + 0.25 : 0.05) * (0.4 + o.houses * 1.6) * (onMain(f) ? 2.4 : 1) * (1 + count('house') * 0.5) * (count('water') ? 0.5 : 1)],
       ['garden', (0.5 + Math.exp(-(((d - 0.5) / 0.2) ** 2))) * (1 + count('house') * 0.4)],
-      ['field', Math.max(0, d - 0.4) * 5 * (1 + count('field') * 1.2) * (count('square') ? 0.05 : 1)],
-      ['orchard', (d > 0.45 ? 0.7 : 0.15) * (1 + count('orchard') * 1.5)],
+      ['field', Math.max(0, d - 0.42) * 5 * (1 + count('field') * 1.2) * (count('square') ? 0.05 : 1)],
+      ['orchard', (d > 0.45 ? 0.8 : 0.15) * (1 + count('orchard') * 1.6)],
       ['vineyard', (d > 0.6 ? 0.5 : 0.05) * (1 + count('vineyard') * 1.5)],
-      ['meadow', 0.35 + (count('water') ? 1.2 : 0) + (onEdge[f] ? 0.6 : 0)],
+      ['meadow', 0.4 + (count('water') ? 1.2 : 0) + (onEdge[f] ? 0.6 : 0)],
     ];
-    return w;
   };
-  const left = new Set(mesh.faces.map((_, f) => f).filter((f) => !decided.has(f)));
+  const left = new Set(mesh.faces.map((_, f) => f).filter((f) => !kinds.has(f)));
   const jitter = mesh.faces.map(() => rng());
   while (left.size) {
     let best = -1;
     let bestScore = -1;
     for (const f of left) {
-      const score = neighbours[f].filter((n) => decided.has(n)).length + jitter[f] * 0.5;
+      const score = neighbours[f].filter((n) => kinds.has(n)).length + jitter[f] * 0.5;
       if (score > bestScore) {
         bestScore = score;
         best = f;
       }
     }
-    decided.set(best, { kind: pickWeighted(weightsFor(best), rng) });
+    kinds.set(best, pickWeighted(weightsFor(best), rng));
     left.delete(best);
   }
-  // Houses must front a road or the square, or stand beside a house that does.
-  const fronts = (f: number) => neighbours[f].some((n) => ['road', 'square'].includes(decided.get(n)!.kind));
-  for (const [f, dcs] of decided) {
-    if (dcs.kind !== 'house' || fronts(f)) continue;
-    if (!neighbours[f].some((n) => decided.get(n)!.kind === 'house' && fronts(n))) dcs.kind = 'garden';
-  }
 
-  // Colours: fields and orchards share a crop with their neighbours (one thread per field
-  // block); houses take warm threads that differ from the house next door.
-  const ink = new Map<number, Ink>();
-  // The stream keeps the blue thread to itself, so it never reads as a field.
-  // Warm, autumnal crops in the main, a little green.
-  const CROPS: Ink[] = ['gold', 'gold', 'primary', 'primary', 'accent2', 'accent'];
-  const HOUSE_INKS: Ink[] = ['primary', 'accent2', 'gold', 'accent'];
-  const block = new Map<number, number>();
-  let blocks = 0;
-  for (const f of mesh.faces.keys()) {
-    const kind = decided.get(f)!.kind;
-    if (!['field', 'orchard', 'vineyard'].includes(kind) || block.has(f)) continue;
-    const stack = [f];
-    block.set(f, blocks);
-    while (stack.length) {
-      const g = stack.pop()!;
-      for (const n of neighbours[g]) {
-        if (!block.has(n) && decided.get(n)!.kind === kind && rng() < 0.82) {
-          block.set(n, blocks);
-          stack.push(n);
-        }
-      }
-    }
-    blocks++;
-  }
-  const blockInk = Array.from({ length: blocks }, () => CROPS[Math.floor(rng() * CROPS.length)]);
-  for (const f of mesh.faces.keys()) {
-    const kind = decided.get(f)!.kind;
-    if (kind === 'house') {
-      const taken = new Set(neighbours[f].map((n) => ink.get(n)));
-      const options = HOUSE_INKS.filter((i) => !taken.has(i));
-      ink.set(f, (options.length ? options : HOUSE_INKS)[Math.floor(rng() * (options.length || HOUSE_INKS.length))]);
-    } else if (kind === 'field' || kind === 'vineyard') ink.set(f, blockInk[block.get(f)!]);
-    else if (kind === 'orchard') ink.set(f, 'accent');
-    else if (kind === 'garden') ink.set(f, rng() < 0.6 ? 'accent' : 'accent2');
-    else if (kind === 'meadow') ink.set(f, rng() < 0.6 ? 'gold' : 'accent');
-    else if (kind === 'water') ink.set(f, 'secondary');
-    else if (kind === 'square') ink.set(f, 'gold');
-    else ink.set(f, 'gold');
-  }
-
-  // A ragged edge: some outer patches are left as bare linen, so the village frays into the
-  // cloth instead of ending in a hard hexagon.
+  // A ragged edge: some outer plots are left as bare linen, so the village frays into the
+  // cloth instead of ending in a hard hexagon; none is left stranded.
   const bare = new Set<number>();
   mesh.faces.forEach((_, f) => {
-    const kind = decided.get(f)!.kind;
-    if (onEdge[f] && kind !== 'road' && kind !== 'water' && rng() < 0.55) bare.add(f);
+    if (onEdge[f] && kinds.get(f) !== 'water' && rng() < 0.5) bare.add(f);
   });
-  for (const f of [...bare]) {
-    for (const n of neighbours[f]) {
-      const kind = decided.get(n)!.kind;
-      if (!bare.has(n) && kind !== 'road' && kind !== 'water' && kind !== 'house' && dist[n] > 0.75 && rng() < 0.3) bare.add(n);
-    }
-  }
-
-  // No stranded patches: one with no drawn neighbour goes bare too.
   for (let pass = 0; pass < 2; pass++) {
-    for (const f of mesh.faces.keys()) {
-      if (bare.has(f) || decided.get(f)!.kind === 'road') continue;
-      if (neighbours[f].every((n) => bare.has(n))) bare.add(f);
-    }
+    for (const f of mesh.faces.keys()) if (!bare.has(f) && neighbours[f].every((n) => bare.has(n))) bare.add(f);
   }
 
-  const toMap = ([x, y]: V): [number, number] => [x + ox, y + oy];
-  const allPatches: Patch[] = mesh.faces.map((face, f) => {
+  // Plots: each face drawn in by half the width of the street along each of its edges.
+  const toMap = ([x, y]: V): V => [x + ox, y + oy];
+  // Which faces meet along each edge, so the stream and the square run on without a street.
+  const facesOfEdge = new Map<string, number[]>();
+  mesh.faces.forEach((face, f) => face.forEach((v, k) => {
+    const e = edgeKey(v, face[(k + 1) % 4]);
+    facesOfEdge.set(e, [...(facesOfEdge.get(e) ?? []), f]);
+  }));
+  const joined = (f: number, e: string) => {
+    const other = facesOfEdge.get(e)?.find((g) => g !== f);
+    if (other === undefined || bare.has(other)) return false;
+    const a = kinds.get(f);
+    // A main street crossing the stream keeps its gap: that is the bridge.
+    if (a === 'water' && main.has(e)) return false;
+    return a === kinds.get(other) && (a === 'water' || a === 'square');
+  };
+  const patches: Patch[] = [];
+  mesh.faces.forEach((face, f) => {
+    if (bare.has(f)) return;
     const pts = face.map((v) => toMap(mesh.vertices[v]));
-    // Fields are stitched along their longest side; other patches every which way.
-    let grain = rng() * Math.PI;
-    if (decided.get(f)!.kind === 'field' || decided.get(f)!.kind === 'vineyard') {
-      let longest = 0;
-      for (let k = 0; k < pts.length; k++) {
-        const [ax, ay] = pts[k];
-        const [bx, by] = pts[(k + 1) % pts.length];
-        const len = Math.hypot(bx - ax, by - ay);
-        if (len > longest) {
-          longest = len;
-          grain = Math.atan2(by - ay, bx - ax);
-        }
+    const halves = face.map((v, k) => {
+      const e = edgeKey(v, face[(k + 1) % 4]);
+      return joined(f, e) ? 0 : main.has(e) ? MAIN_HALF : LANE_HALF;
+    });
+    const outline = inset(pts, halves);
+    // The front: the longest edge, favouring main streets.
+    let front = 0;
+    let bestLen = -1;
+    outline.forEach((a, k) => {
+      const b = outline[(k + 1) % outline.length];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) * (halves[k] === MAIN_HALF ? 1.6 : 1);
+      if (len > bestLen) {
+        bestLen = len;
+        front = k;
       }
-    }
-    return { kind: decided.get(f)!.kind, points: pts, ink: ink.get(f)!, grain, seed: hashString(`patch:${o.seed}:${f}`) };
-  });
-  // Bare patches are not drawn; their ground is open meadow for walking.
-  const patches = allPatches.map((p, f) => (bare.has(f) ? null : p));
-  // Neighbouring houses sometimes join into one larger building of an odd shape.
-  const drawn: Patch[] = [];
-  const joined = new Set<number>();
-  patches.forEach((p, f) => {
-    if (!p || joined.has(f)) return;
-    if (p.kind === 'house' && rng() < 0.55) {
-      const mate = neighbours[f].find((n) => !joined.has(n) && patches[n]?.kind === 'house');
-      if (mate !== undefined) {
-        const merged = mergeLoops(mesh.faces[f], mesh.faces[mate]);
-        if (merged) {
-          joined.add(f);
-          joined.add(mate);
-          drawn.push({ ...p, points: merged.map((v) => toMap(mesh.vertices[v])) });
-          return;
-        }
-      }
-    }
-    joined.add(f);
-    drawn.push(p);
+    });
+    const [ax, ay] = outline[front];
+    const [bx, by] = outline[(front + 1) % 4];
+    const kind = kinds.get(f)!;
+    const seed = hashString(`plot:${o.seed}:${f}`);
+    patches.push({ id: f, kind, points: outline, ink: plotInk(kind, seed), grain: Math.atan2(by - ay, bx - ax), seed, front });
   });
 
-  // Terrain, for walking: houses block, water blocks, roads and the square are roads.
-  const terrain: Terrain[][] = Array.from({ length: width }, () => Array<Terrain>(height).fill('ground'));
-  const boxes = allPatches.map((p) => {
-    const xs = p.points.map((q) => q[0]);
-    const ys = p.points.map((q) => q[1]);
-    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-  });
-  for (let x = 0; x < width; x++) {
-    for (let y = 0; y < height; y++) {
-      const pt: V = [x + 0.5, y + 0.5];
-      const i = patches.findIndex((p, k) => p !== null && pt[0] >= boxes[k][0] && pt[0] <= boxes[k][2] && pt[1] >= boxes[k][1] && pt[1] <= boxes[k][3] && inside(pt, p.points));
-      if (i < 0) continue;
-      const kind = patches[i]!.kind;
-      terrain[x][y] = kind === 'house' ? 'wall' : kind === 'water' ? 'water' : kind === 'road' && water.has(i) ? 'bridge' : kind === 'road' || kind === 'square' ? 'road' : 'ground';
-    }
-  }
+  // The village's own outline: inside it, the gaps between plots are streets.
+  const village = mesh.faces.filter((_, f) => !bare.has(f)).map((face) => face.map((v) => toMap(mesh.vertices[v])));
+  const inVillage = (x: number, y: number) => village.some((poly) => pointInPolygon([x, y], poly));
+  const terrain = rasterizePatches(patches, width, height, inVillage);
 
-  // Features: a dancing ground and a well on the square, trees in the orchards.
+  // A dancing ground and a well on the square.
   const features: SceneFeature[] = [];
   const [hx, hy] = toMap(centres[heart]);
   features.push({ id: 'square-ground', kind: 'star', x: Math.round(hx - 1), y: Math.round(hy - 1), w: 2, h: 2, seed: hashString(`star:${o.seed}`) });
   const wellFace = squareFaces[1] ?? heart;
   const [wx, wy] = toMap(centres[wellFace]);
   features.push({ id: 'square-well', kind: 'well', x: Math.round(wx - 1), y: Math.round(wy - 1), w: 2, h: 2, seed: hashString(`well:${o.seed}`) });
-  patches.forEach((p, f) => {
-    if (!p || p.kind !== 'orchard') return;
-    const [cx, cy] = toMap(centres[f]);
-    features.push({ id: `orchard-tree-${f}`, kind: 'tree', x: Math.round(cx - 0.5), y: Math.round(cy - 1.5), w: 1, h: 2, seed: p.seed });
-  });
 
-  // Named places: the square, the well, a bridge, the orchard, the fields.
+  // Named places: the square, the well, the stream, the orchard, the fields.
   const name = NAMES[Math.floor(rng() * NAMES.length)];
   const landmarks: PointOfInterest[] = [];
-  const add = (id: string, label: string, x: number, y: number, description: string) =>
+  const add = (id: string, label: string, [x, y]: V, description: string) =>
     landmarks.push({ id: `poi-${id}`, tag: label.replace(/[^A-Za-z]+/g, ''), label, x: Math.round(x), y: Math.round(y), description });
-  add('square', `${name} square`, hx, hy + 1.5, 'The heart of the village, where the khoro is danced.');
-  add('well', `${name} well`, wx, wy + 1.5, 'Where water is drawn and news is traded.');
-  const bridge = [...roads].find((f) => water.has(f));
-  if (bridge !== undefined) {
-    const [bx, by] = toMap(centres[bridge]);
-    add('bridge', 'The stream crossing', bx, by, 'Where the road crosses the stream.');
-  }
-  const orchard = patches.findIndex((p) => p?.kind === 'orchard');
-  if (orchard >= 0) {
-    const [cx, cy] = toMap(centres[orchard]);
-    add('orchard', 'The orchard', cx, cy, 'Old fruit trees, and the shade beneath them.');
-  }
-  const field = patches.findIndex((p, f) => p?.kind === 'field' && dist[f] > 0.7);
-  if (field >= 0) {
-    const [cx, cy] = toMap(centres[field]);
-    add('fields', 'The far fields', cx, cy, 'Strips of crop at the edge of the village.');
-  }
+  const middle = (p: Patch): V => p.points.reduce<V>((acc, q) => [acc[0] + q[0] / p.points.length, acc[1] + q[1] / p.points.length], [0, 0]);
+  add('square', `${name} square`, [hx, hy + 1.5], 'The heart of the village, where the khoro is danced.');
+  add('well', `${name} well`, [wx, wy + 1.5], 'Where water is drawn and news is traded.');
+  const stream = patches.find((p) => p.kind === 'water');
+  if (stream) add('stream', 'The stream', middle(stream), 'A cold stream between the plots, crossed by the lanes.');
+  const orchard = patches.find((p) => p.kind === 'orchard');
+  if (orchard) add('orchard', 'The orchard', middle(orchard), 'Old fruit trees, and the shade beneath them.');
+  const field = patches.find((p) => p.kind === 'field' && dist[p.id!] > 0.7);
+  if (field) add('fields', 'The far fields', middle(field), 'Strips of crop at the edge of the village.');
 
   return {
-    model: { width, height, terrain, features, landmarks, title: name, patches: drawn },
+    model: { width, height, terrain, features, landmarks, title: name, patches, villageOutline: village },
     spawns: landmarks.map((l) => ({ id: `spawn-${l.id}`, label: l.label, x: l.x, y: l.y })),
   };
 }

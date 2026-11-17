@@ -10,6 +10,7 @@ import type {
 import { paintWangCornerCell, paintWangEdgeCell } from '../engine/wangTiling';
 import type { WorldDocument } from './document';
 import { findGenerator, generatedFromTileMap, type SceneParams } from './sceneGenerators';
+import { PLOT_KINDS } from './patchworkVillage';
 import { mapFromScene, type SceneEdit, type SceneRecipe, type WorldScene } from './worldScene';
 import type { FeatureKind, Terrain } from '../art/scene';
 import type { WorldContext } from './worldContext';
@@ -299,6 +300,10 @@ function checkEdit(edit: SceneEdit) {
       return;
     case 'title':
       if (!edit.title?.trim()) fail('A title cannot be empty.');
+      return;
+    case 'plot':
+      requireInt(edit.id, 'plot id');
+      if (!PLOT_KINDS.includes(edit.kind)) fail(`"${edit.kind}" is not a plot kind (${PLOT_KINDS.join(', ')}).`);
       return;
     default:
       fail(`Unknown scene edit "${(edit as { op: string }).op}".`);

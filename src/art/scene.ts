@@ -110,17 +110,28 @@ export interface SceneModel {
    * the manner of a Klee village, drawn instead of the cell terrain. Points are in cells.
    */
   patches?: Patch[];
+  /** The full (undrawn-in) faces of a patchwork village: inside them, gaps are streets. */
+  villageOutline?: Array<Array<[number, number]>>;
 }
 
+/** What a plot of a patchwork village holds (`road` is kept only for older saved worlds). */
 export type PatchKind = 'house' | 'road' | 'square' | 'garden' | 'field' | 'orchard' | 'meadow' | 'water' | 'vineyard';
 
+/**
+ * A plot of a patchwork village, seen from above: its outline (already drawn in from the
+ * streets around it), what it holds, its thread, and the direction it is stitched in.
+ */
 export interface Patch {
+  /** Stable index within its world, for hand edits. */
+  id?: number;
   kind: PatchKind;
   points: Array<[number, number]>;
   ink: Ink;
   /** Direction the patch is stitched in, radians. */
   grain: number;
   seed: number;
+  /** Index of the edge (from point i to i+1) that fronts the widest street. */
+  front?: number;
 }
 
 export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): SceneModel {

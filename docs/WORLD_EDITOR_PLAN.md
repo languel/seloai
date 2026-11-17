@@ -188,20 +188,24 @@ sources, patterns should be generated procedurally, based on references.
    (neighbouring house chunks are one hamlet), gathering places, bridges and the deepest
    wood, and is titled after its first hamlet. "Valley (procedural)" is a world pack. The
    bundled packs still load as tile maps until the editor opens them as scenes.
-1b. **Patchwork village** generator (owner request: wave function collapse, a Klee
-   patchwork, the Wang work): `src/art/irregularGrid.ts` cuts an irregular quad grid the
-   Townscaper way (a hexagon of triangles paired at random into quads, every face split
-   into quads, relaxed toward squares); `src/world/patchworkVillage.ts` plans a square,
-   spokes and sometimes a ring road, and a stream the roads avoid and cross on bridges, then
-   decides the remaining patches least uncertain first (most decided neighbours), weighted
-   by distance from the square and by neighbours (houses front roads and cluster, fields
-   keep to the outside and share a crop, gardens in between, orchards, vineyards, meadows).
-   Neighbouring houses sometimes join into odd-shaped buildings, the outer patches fray into
-   bare linen, and blue is kept for water. `SceneModel.patches` draws as a Klee quilt in
-   thread (each patch its own colour and stitch direction, dark seams, gables and doors on
-   houses, waves on water, knots in vineyards); walkability comes from the patches. In the
-   World Editor as "Patchwork village" and as the world pack "Patchwork village
-   (procedural)".
+1b. **Patchwork village** generator (owner requests: wave function collapse, a Klee
+   patchwork, Townscaper's grid, Chagall; "the patchwork is the map on which the world is
+   built: the black lines are streets, the patches are plots; bird's-eye, not eye level").
+   `src/art/irregularGrid.ts` cuts the irregular quad grid (a hexagon of triangles paired
+   into quads, split into quads, relaxed toward squares). `src/world/patchworkVillage.ts`
+   makes the square, main streets along the seams (spokes, sometimes a ring), and a stream,
+   then decides every other plot least uncertain first (most decided neighbours), weighted
+   by distance and neighbours: house plots near the centre and on main streets, gardens,
+   fields outside sharing crops, orchards, vineyards, meadows. Each plot is drawn in from
+   its edges by half the street beside it, so the streets are the linen between plots
+   (main streets wider); the stream and the square run on without streets, except where a
+   main street crosses the stream (a bridge). Drawn from above: house plots carry a row of
+   little cut-paper houses standing on their street edge and leaning into the plot (the
+   fold-out elevations of old maps, at the street's angle, with a slight tilt), gardens
+   beds of plants, orchards round crowns, fields strips, vineyards knots, meadows flowers,
+   the stream waves. People walk the streets, the square and meadows only. The World
+   Editor paints plot by plot (the `plot` scene edit). On grid worlds, houses now turn to
+   face their nearest road (sideways or upside down, like an old drawn map).
 2. ~~World editor tab, replacing Level Editor and Tapestry Studio.~~ First pass done
    (`src/components/WorldEditorView.tsx`, the "World Editor" tab; the two old tabs are gone
    from the bar, their code stays until step 7). Recipe panel built from the generator's

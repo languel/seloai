@@ -5,6 +5,8 @@ import type { FeatureKind, SceneFeature, Terrain } from '../art/scene';
 import type { VillageMap } from '../engine/types';
 import { PLACEABLE_FEATURES, type WorldCommand } from '../world/commands';
 import { SCENE_GENERATORS, findGenerator, type SceneParamSpec, type SceneParams } from '../world/sceneGenerators';
+import { PLOT_KINDS, pointInPolygon } from '../world/patchworkVillage';
+import type { PatchKind } from '../art/scene';
 import { bakeScene, type SceneEdit } from '../world/worldScene';
 import { GlyphButton } from './Glyph';
 import { KnotDivider, StitchPanel, StitchSlider } from './Stitch';
@@ -80,6 +82,8 @@ function describeEdit(edit: SceneEdit): string {
       return `Removed start ${edit.id}`;
     case 'title':
       return `Renamed to ${edit.title}`;
+    case 'plot':
+      return `Plot ${edit.id} became ${edit.kind}`;
   }
 }
 
@@ -98,6 +102,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
 
   const [tool, setTool] = useState<Tool>('select');
   const [terrain, setTerrain] = useState<Terrain>('road');
+  const [plotKind, setPlotKind] = useState<PatchKind>('garden');
   const [brush, setBrush] = useState(1);
   const [featureKind, setFeatureKind] = useState<FeatureKind>('house');
   const [showWalk, setShowWalk] = useState(false);
@@ -211,7 +216,14 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     if (h && !d) {
       ctx.strokeStyle = 'rgba(30, 30, 30, 0.7)';
       ctx.lineWidth = 1.2 * lineW;
-      if (tool === 'paint') {
+      const hovered = tool === 'paint' ? baked?.model.patches?.find((p) => pointInPolygon([h[0] + 0.5, h[1] + 0.5], p.points)) : undefined;
+      if (hovered) {
+        ctx.lineWidth = 2.4 * lineW;
+        ctx.beginPath();
+        hovered.points.forEach(([px, py], k) => (k ? ctx.lineTo(px * CELL, py * CELL) : ctx.moveTo(px * CELL, py * CELL)));
+        ctx.closePath();
+        ctx.stroke();
+      } else if (tool === 'paint') {
         const r = brush - 1;
         ctx.strokeRect((h[0] - r) * CELL, (h[1] - r) * CELL, (2 * r + 1) * CELL, (2 * r + 1) * CELL);
       } else if (tool === 'place') {
@@ -259,6 +271,14 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     }
     if (!inside(cell)) return;
     const [x, y] = cell;
+    const plots = baked?.model.patches;
+    if (tool === 'paint' && plots) {
+      // A patchwork village is painted plot by plot: the plot under the pointer takes the kind.
+      const plot = plots.find((p) => pointInPolygon([x + 0.5, y + 0.5], p.points));
+      if (plot?.id !== undefined && plot.kind !== plotKind) edit({ op: 'plot', id: plot.id, kind: plotKind }, `Plot becomes ${plotKind}`);
+      redraw();
+      return;
+    }
     if (tool === 'paint') {
       const cells = new Map<number, [number, number]>();
       addBrush(cells, cell);
@@ -501,7 +521,18 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
             />
           ))}
           <KnotDivider className="mx-1 h-5" />
-          {tool === 'paint' && (
+          {tool === 'paint' && baked?.model.patches && (
+            <>
+              <span className="stitch-muted">Plot</span>
+              {PLOT_KINDS.map((k) => (
+                <button key={k} type="button" aria-pressed={plotKind === k} onClick={() => setPlotKind(k)} className={`glyph-button rounded-sm px-1.5 py-0.5 capitalize ${plotKind === k ? 'glyph-on' : ''}`}>
+                  {k}
+                </button>
+              ))}
+              <span className="stitch-muted">click a plot</span>
+            </>
+          )}
+          {tool === 'paint' && !baked?.model.patches && (
             <>
               {TERRAIN_CHOICES.map(([t, label]) => (
                 <button key={t} type="button" aria-pressed={terrain === t} onClick={() => setTerrain(t)} className={`glyph-button rounded-sm px-1.5 py-0.5 ${terrain === t ? 'glyph-on' : ''}`}>
