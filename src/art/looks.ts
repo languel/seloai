@@ -54,6 +54,33 @@ export const PALETTES = {
 
 export type PaletteName = keyof typeof PALETTES;
 
+const SKIN = ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'];
+const threads = (ground: string, primary: string, secondary: string, accent: string, accent2: string, gold: string, dark: string): Palette => ({
+  ground,
+  inks: { primary, secondary, accent, accent2, gold, dark, skin: '#d2a679' },
+  skinTones: SKIN,
+});
+
+/**
+ * A world's own threads: what the full-colour look is worked in for that world. The same
+ * ink roles, dyed differently, so a village can be quiet and faded or bright and festive.
+ */
+export const WORLD_PALETTES: Record<string, { name: string; palette: Palette }> = {
+  festive: { name: 'Festive (museum pieces)', palette: PALETTES.festive },
+  madder: { name: 'Natural dyes', palette: threads('#e6dccb', '#9a3b2c', '#3f5470', '#6b7046', '#a8676a', '#b58f4a', '#2e2620') },
+  faded: { name: 'Faded heirloom', palette: threads('#e8e0d0', '#b0675a', '#6f8093', '#7f9277', '#b48a92', '#c4a76a', '#4a423a') },
+  indigo: { name: 'Indigo and rust', palette: threads('#e5ddcd', '#a4502f', '#2c3e66', '#4f6c8a', '#7d93ad', '#c9a865', '#1f2433') },
+  rhodope: { name: 'Rhodope wool', palette: threads('#e4d9c5', '#8e2b3a', '#4b3f63', '#5d6b3a', '#c2577a', '#c98f3c', '#2a1f24') },
+  harvest: { name: 'Harvest', palette: threads('#e7dcc6', '#a34a28', '#5c5a3a', '#77753d', '#b9753f', '#cfa24d', '#3a2a1d') },
+  winter: { name: 'Winter linen', palette: threads('#e9e4da', '#8c5a55', '#5d6f80', '#6f7d6f', '#9b8790', '#a99a76', '#3b3a38') },
+};
+
+/** The palette a world is drawn in: its own threads under the full-colour look, else the look's. */
+export function worldPalette(look: PaletteName, own?: string): Palette {
+  if (look === 'festive' && own && WORLD_PALETTES[own]) return WORLD_PALETTES[own].palette;
+  return PALETTES[look];
+}
+
 export interface LookOptions {
   /** Pixels per unit. */
   unit: number;

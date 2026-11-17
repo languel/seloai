@@ -231,3 +231,29 @@ describe('editing the plots of a patchwork', () => {
     expect(map.scene!.edits.length).toBe(1);
   });
 });
+
+describe('pattern brushes, house looks and world threads', () => {
+  it('lays pattern strokes and fills, sets the house look and threads, and cuts marks away', async () => {
+    const { sceneShapes } = await import('../../art/sceneArt');
+    let map = mapFromScene(valley(4));
+    const doc = () => ({ map, cast: [], context: GENERIC_WORLD_CONTEXT });
+    const before = sceneShapes(bakeScene(map.scene!).model).length;
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'patternMark', mark: { id: 'p1', mode: 'stroke', points: [[5, 5], [15, 7]], size: 1, spacing: 1.25, ref: 'danube-wave' } } }).map;
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'patternMark', mark: { id: 'p2', mode: 'fill', points: [[20, 20], [21, 20], [20, 21], [22, 22]], size: 1, spacing: 1 } } }).map;
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'houseLook', look: 'stitched' } }).map;
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'palette', palette: 'faded' } }).map;
+    let model = bakeScene(map.scene!).model;
+    expect(model.patternMarks!.map((m) => m.id)).toEqual(['p1', 'p2']);
+    expect(model.houseLook).toBe('stitched');
+    expect(model.palette).toBe('faded');
+    const shapes = sceneShapes(model);
+    expect(before).toBeGreaterThan(0);
+    // Stitched houses are counted work.
+    expect(shapes.filter((s) => s.kind === 'counted').length).toBeGreaterThan(bakeScene(map.scene!).model.features.filter((f) => f.kind === 'house').length);
+    expect(sceneShapes(model, new Set(['patterns'])).length).toBeLessThan(shapes.length);
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'removeMany', ids: ['p1', 'p2'] } }).map;
+    model = bakeScene(map.scene!).model;
+    expect(model.patternMarks).toEqual([]);
+    expect(() => applyCommand(doc(), { type: 'scene.edit', edit: { op: 'palette', palette: 'neon' } })).toThrow(/not a palette/);
+  });
+});

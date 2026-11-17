@@ -9,7 +9,7 @@
  * the new seed did not build) is skipped and reported, not lost.
  */
 import { withAmbience } from '../art/ambient';
-import type { BuildingVariant, FeatureKind, PatchKind, SceneFeature, SceneLayer, SceneModel, Terrain } from '../art/scene';
+import type { BuildingVariant, FeatureKind, HouseLook, PatchKind, PatternMark, SceneFeature, SceneLayer, SceneModel, Terrain } from '../art/scene';
 import { mergePlots, plotInk, pointInPolygon, rasterizePatches, splitPlot } from './patchworkVillage';
 import { hashString } from '../core/rng';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
@@ -39,6 +39,12 @@ export type SceneEdit =
   | { op: 'spawn'; spawn: SpawnPoint }
   | { op: 'removeSpawn'; id: string }
   | { op: 'title'; title: string }
+  /** How the world's houses are worked: drawn or stitched. */
+  | { op: 'houseLook'; look: HouseLook }
+  /** The world's own threads (an id from WORLD_PALETTES). */
+  | { op: 'palette'; palette: string }
+  /** A pattern stroke or fill laid with the brush. */
+  | { op: 'patternMark'; mark: PatternMark }
   /** In a patchwork village: what a plot holds (house, garden, field, …). */
   | { op: 'plot'; id: number; kind: PatchKind }
   /** In a patchwork village: two neighbouring plots made one (the street between goes). */
@@ -62,6 +68,7 @@ export interface PlacedFeature {
   angle?: number;
   ref?: string;
   variant?: BuildingVariant;
+  look?: HouseLook;
 }
 
 export interface WorldScene {
@@ -161,8 +168,18 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         touchRect(touched, f.x, f.y, f.w, f.h);
         return;
       }
+      case 'houseLook':
+        model.houseLook = edit.look;
+        return;
+      case 'palette':
+        model.palette = edit.palette;
+        return;
+      case 'patternMark':
+        model.patternMarks = [...(model.patternMarks ?? []).filter((m) => m.id !== edit.mark.id), { ...edit.mark, points: edit.mark.points.map(([x, y]) => [x, y]) }];
+        return;
       case 'removeMany': {
         const ids = new Set(edit.ids);
+        if (model.patternMarks) model.patternMarks = model.patternMarks.filter((m) => !ids.has(m.id));
         for (const f of model.features) if (f.id && ids.has(f.id)) touchRect(touched, f.x, f.y, f.w, f.h);
         for (const id of edit.ids) if (id.startsWith('amb-') && !model.features.some((f) => f.id === id)) lateRemovals.push({ index, id });
         model.features = model.features.filter((f) => !f.id || !ids.has(f.id));
@@ -170,6 +187,10 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
       }
       case 'remove': {
         const f = model.features.find((g) => g.id === edit.id);
+        if (!f && model.patternMarks?.some((m) => m.id === edit.id)) {
+          model.patternMarks = model.patternMarks.filter((m) => m.id !== edit.id);
+          return;
+        }
         if (!f) {
           // Ambient detail is only added after the edits; try again once it exists.
           if (edit.id.startsWith('amb-')) lateRemovals.push({ index, id: edit.id });

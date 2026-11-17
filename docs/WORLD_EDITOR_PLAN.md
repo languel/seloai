@@ -70,6 +70,17 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   side and takes away the street between them; splitting cuts a plot with a new lane across
   its front, so both halves keep the street. Plots keep their face on the plan and the
   street width along each side (`face`, `halves`), so they can be drawn in again.
+- **Pattern brush**: a stroke stamps motifs along the drag (two variants alternating, like a
+  border), or with a band pattern lays the band along it, turning at the corners; a fill
+  lays a half-drop lattice of motifs over the cells painted, or over a whole plot. Marks are
+  `patternMark` edits on the patterns layer, in one stitch count with stitched houses
+  (`STITCHES_PER_CELL`), and the erase brush cuts them away.
+- **House look**: a world's houses are drawn (the folk houses of grid worlds, the solid
+  fold-out houses of a patchwork) or stitched in counted cross-stitch, like a sampler
+  (`houseLook` edit); a placed house can take its own look.
+- **Threads**: a world can be worked in its own palette (natural dyes, faded heirloom,
+  indigo and rust, Rhodope wool, harvest, winter linen) under the full-colour look
+  (`palette` edit, `WORLD_PALETTES`). The figures keep the look's own threads for now.
 - **Rotate**: the selected feature turns in 15° steps (`[` and `]`, or the buttons), as a
   `rotate` edit. Counted work (pattern medallions) stays square to the cloth.
 - **Patterns** in the palette: a dancing-ground medallion grown from a chosen reference

@@ -100,6 +100,31 @@ export interface SceneFeature {
   ref?: string;
   /** For a house: which kind of building (default: the folk house with a carved gable). */
   variant?: BuildingVariant;
+  /** For a house: drawn or stitched, instead of the world's own house look. */
+  look?: HouseLook;
+}
+
+/**
+ * How a world's houses are worked: `drawn` (the folk houses of grid worlds, the solid
+ * fold-out houses of a patchwork) or `stitched` (counted cross-stitch, like the motifs).
+ */
+export type HouseLook = 'drawn' | 'stitched';
+
+/**
+ * A pattern laid on the cloth with a brush: a stroke (motifs stamped along a path, or a
+ * border band following it) or a fill (a half-drop lattice of motifs over the cells
+ * painted). Points are in cells: the path of a stroke, the cells of a fill.
+ */
+export interface PatternMark {
+  id: string;
+  mode: 'stroke' | 'fill';
+  points: Array<[number, number]>;
+  /** The pattern reference it is grown from (the world's own when absent). */
+  ref?: string;
+  /** Size of each motif, in cells across. */
+  size: number;
+  /** Distance between motifs, as a multiple of their size. */
+  spacing: number;
 }
 
 /** Kinds of building a house can be, besides the default folk house. */
@@ -192,6 +217,12 @@ export interface SceneModel {
   bridges?: Bridge[];
   /** Which way the stream flows, radians, so its waves run one way. */
   streamFlow?: number;
+  /** How the world's houses are worked (default `drawn`). */
+  houseLook?: HouseLook;
+  /** Patterns laid with the brush, on the patterns layer. */
+  patternMarks?: PatternMark[];
+  /** The world's own threads (see WORLD_PALETTES), used under the full-colour look. */
+  palette?: string;
 }
 
 /** What a plot of a patchwork village holds (`road` is kept only for older saved worlds). */

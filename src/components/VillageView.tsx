@@ -26,7 +26,8 @@ import { ScribeBand, type ScribeLine } from '../art/scribeBand';
 import { ThreadRope, drawThread } from '../art/threadRope';
 import { seededFigureTraits } from '../art/figures';
 import { createSeededRng, hashString } from '../core/rng';
-import { PALETTES, type PaletteName } from '../art/looks';
+import { PALETTES, worldPalette, type PaletteName } from '../art/looks';
+import { bakeScene } from '../world/worldScene';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -796,7 +797,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       // over the view (the Scribe's band) ever sits on a dark void.
       {
         const look = aestheticSettings.worldLook;
-        ctx.fillStyle = look === 'tiles' ? '#18211b' : deepen(PALETTES[look as PaletteName].ground, 0.06);
+        ctx.fillStyle = look === 'tiles' ? '#18211b' : deepen(worldPalette(look as PaletteName, sim.map.scene ? bakeScene(sim.map.scene).model.palette : undefined).ground, 0.06);
       }
       ctx.fillRect(0, 0, viewW, viewH);
 

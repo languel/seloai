@@ -12,6 +12,7 @@ import type { WorldDocument } from './document';
 import { findGenerator, generatedFromTileMap, type SceneParams } from './sceneGenerators';
 import { PLOT_KINDS } from './patchworkVillage';
 import { mapFromScene, type SceneEdit, type SceneRecipe, type WorldScene } from './worldScene';
+import { WORLD_PALETTES } from '../art/looks';
 import { BUILDING_VARIANTS, SCENE_LAYERS, type FeatureKind, type Terrain } from '../art/scene';
 import type { WorldContext } from './worldContext';
 
@@ -290,6 +291,7 @@ function checkEdit(edit: SceneEdit) {
         if (f.layer !== undefined && !SCENE_LAYERS.some((l) => l.id === f.layer)) fail(`"${f.layer}" is not a layer.`);
         if (f.angle !== undefined && !Number.isFinite(f.angle)) fail('angle must be a number of radians.');
         if (f.variant !== undefined && !BUILDING_VARIANTS.some((v) => v.id === f.variant)) fail(`"${f.variant}" is not a kind of building.`);
+        if (f.look !== undefined && f.look !== 'drawn' && f.look !== 'stitched') fail('look is "drawn" or "stitched".');
       }
       return;
     }
@@ -316,6 +318,21 @@ function checkEdit(edit: SceneEdit) {
     case 'title':
       if (!edit.title?.trim()) fail('A title cannot be empty.');
       return;
+    case 'palette':
+      if (!WORLD_PALETTES[edit.palette]) fail(`"${edit.palette}" is not a palette (${Object.keys(WORLD_PALETTES).join(', ')}).`);
+      return;
+    case 'houseLook':
+      if (edit.look !== 'drawn' && edit.look !== 'stitched') fail('houseLook is "drawn" or "stitched".');
+      return;
+    case 'patternMark': {
+      const m = edit.mark;
+      if (!m?.id || (m.mode !== 'stroke' && m.mode !== 'fill')) fail('A pattern mark needs an id and a mode (stroke or fill).');
+      if (!Array.isArray(m.points) || m.points.length === 0 || m.points.some((q) => !Array.isArray(q) || !Number.isFinite(q[0]) || !Number.isFinite(q[1]))) fail('A pattern mark needs points [x, y].');
+      if (m.points.length > 4000) fail('A pattern mark may have at most 4000 points.');
+      if (!(m.size >= 0.5 && m.size <= 6)) fail('size is 0.5 to 6 cells.');
+      if (!(m.spacing >= 0.5 && m.spacing <= 4)) fail('spacing is 0.5 to 4.');
+      return;
+    }
     case 'removeMany':
       if (!Array.isArray(edit.ids) || edit.ids.length === 0 || edit.ids.some((id) => typeof id !== 'string')) fail('removeMany needs a list of feature ids.');
       return;

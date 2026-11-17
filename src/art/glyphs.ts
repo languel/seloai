@@ -50,7 +50,8 @@ export type GlyphName =
   | 'rotate'
   | 'layers'
   | 'eye'
-  | 'lock';
+  | 'lock'
+  | 'patternBrush';
 
 const W = 1.1; // the usual stroke weight
 const line = (points: Pt[], ink: Ink = 'dark', weight = W, closed = false): Shape => ({ kind: 'line', points, ink, weight, closed });
@@ -309,6 +310,13 @@ const GLYPHS: Record<GlyphName, () => Shape[]> = {
   eye: () => [
     line([...arc([0, 4], 8.5, Math.PI * 1.22, Math.PI * 1.78, 12), ...arc([0, -4], 8.5, Math.PI * 0.22, Math.PI * 0.78, 12)], 'dark', 1, true),
     knot([0, 0], 1.9, 'primary'),
+  ],
+  // A needle drawing a line of small crosses behind it.
+  patternBrush: () => [
+    line([[2, -7], [6.5, -2.5]], 'dark', 1.2),
+    knot([2.6, -6.4], 0.6, 'gold'),
+    ...([[-6, 5], [-3, 2], [0, -1]] as Pt[]).flatMap(([x, y]) => [line([[x - 1.3, y - 1.3], [x + 1.3, y + 1.3]], 'primary', 0.9), line([[x + 1.3, y - 1.3], [x - 1.3, y + 1.3]], 'primary', 0.9)]),
+    line(quadCurve([0.5, -1.5], [3, -2], [4.2, -4.2], 5), 'secondary', 0.6),
   ],
   lock: () => [line(rect(-4.5, -0.5, 4.5, 6), 'dark', 1.1, true), line(arc([0, -0.5], 3.2, Math.PI, Math.PI * 2, 10), 'dark', 1.1), knot([0, 2.8], 0.9, 'primary')],
   // A grid with crossed-out cells: where one can and cannot walk.

@@ -5,10 +5,12 @@
 import { createSeededRng } from '../core/rng';
 import { ribbon } from './lettering';
 import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
-import { FLAT_KINDS, SCENE_LAYERS, cellRng, layerOf, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
+import { FLAT_KINDS, SCENE_LAYERS, cellRng, layerOf, type PatternMark, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
 import { patchworkShapes, standingBuilding } from './patchworkArt';
+import { STITCHES_PER_CELL, stitchedHouseGrid } from './stitchedHouse';
+import type { MotifGrid } from './patternGrammar';
 import type { PatternReference } from './patternReferences';
 import { seedOf, transposed, worldBand, worldMedallion, worldReferences } from './worldMotifs';
 
@@ -147,6 +149,15 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
   const rng = createSeededRng(feature.seed);
   switch (feature.kind) {
     case 'house':
+      if ((feature.look ?? model?.houseLook) === 'stitched') {
+        // A counted house, standing upright on its footprint like a house on a sampler.
+        const cell = U / STITCHES_PER_CELL;
+        const tall = feature.variant === 'tall' || feature.variant === 'church';
+        const w = feature.w * U * (feature.variant ? 0.95 : 0.86 * HOUSE_SCALE);
+        const h = feature.variant ? U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) : feature.h * U * 0.92 * HOUSE_SCALE;
+        const grid = stitchedHouseGrid(feature.variant ?? 'folk', Math.round(w / cell), Math.round(h / cell), feature.seed);
+        return place([motifShape(grid, cell)], { dx: footX, dy: footY - (grid.h * cell) / 2 });
+      }
       if (feature.variant) {
         // A building of a named kind, in the patchwork's style, standing on its footprint.
         const tall = feature.variant === 'tall' || feature.variant === 'church';
@@ -501,6 +512,71 @@ function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
   return shapes;
 }
 
+const BAND_GRAMMARS = new Set(['chevron', 'meander']);
+
+/**
+ * Patterns laid with the brush, in the same stitch count as stitched houses. A stroke
+ * stamps motifs along its path (two variants alternating, as a border does), or, for a
+ * band pattern, lays pieces of the band along it, upright or across as the path turns. A
+ * fill lays a half-drop lattice of motifs over its cells, alternating like a quilt.
+ */
+function patternMarkShapes(marks: readonly PatternMark[], refs: PatternReference[]): Shape[] {
+  const cell = U / STITCHES_PER_CELL;
+  const grown = new Map<string, MotifGrid>();
+  const medallion = (seed: number, own: PatternReference[], radius: number) => {
+    const key = `m:${seed}:${radius}:${own.map((r) => r.id).join(',')}`;
+    if (!grown.has(key)) grown.set(key, worldMedallion(seed, own, radius));
+    return grown.get(key)!;
+  };
+  const shapes: Shape[] = [];
+  for (const mark of marks) {
+    const own = mark.ref ? worldReferences([mark.ref]) : refs;
+    const isBand = own.length === 1 && BAND_GRAMMARS.has(own[0].grammar);
+    const seed = seedOf(mark.id);
+    // A motif fits its size: 2r + 1 stitches across at most size × stitches-per-cell.
+    const radius = Math.max(2, Math.floor((mark.size * STITCHES_PER_CELL - 1) / 2));
+    const step = Math.max(0.5, mark.size * mark.spacing);
+    const stamp = (x: number, y: number, k: number) => shapes.push(...place([motifShape(medallion(seed + (k % 2), own, radius), cell)], { dx: x * U, dy: y * U }));
+    if (mark.mode === 'fill') {
+      const sp = Math.max(1, Math.ceil(step - 0.01));
+      const cells = new Set(mark.points.map(([x, y]) => `${x},${y}`));
+      for (const [x, y] of mark.points) {
+        const col = Math.floor(x / sp);
+        const drop = col % 2 ? Math.floor(sp / 2) : 0;
+        if (x % sp !== 0 || (y - drop) % sp !== 0) continue;
+        if (!cells.has(`${x},${y}`)) continue;
+        stamp(x + 0.5, y + 0.5, col + Math.floor((y - drop) / sp));
+      }
+      continue;
+    }
+    // A stroke: walk the path, a motif (or a piece of band) every `step` cells.
+    const pts = mark.points;
+    let carry = 0;
+    let k = 0;
+    if (pts.length === 1) stamp(pts[0][0], pts[0][1], 0);
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1];
+      const [bx, by] = pts[i];
+      const len = Math.hypot(bx - ax, by - ay);
+      for (let t = carry; t <= len; t += step) {
+        const x = ax + ((bx - ax) * t) / (len || 1);
+        const y = ay + ((by - ay) * t) / (len || 1);
+        if (isBand) {
+          const across = Math.abs(bx - ax) >= Math.abs(by - ay);
+          const piece = worldBand(seed, own, Math.round(step * STITCHES_PER_CELL), Math.max(3, Math.min(7, radius)));
+          shapes.push(...place([motifShape(across ? piece : transposed(piece), cell)], { dx: x * U, dy: y * U }));
+        } else {
+          stamp(x, y, k);
+        }
+        k++;
+        carry = t + step - len;
+      }
+      if (len < carry) carry -= len;
+    }
+  }
+  return shapes;
+}
+
 /**
  * The order features are drawn in: flat things first, layer by layer, then everything that
  * stands up, front to back by where it stands (layer order breaks ties).
@@ -517,7 +593,8 @@ export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>)
   const refs = worldReferences(model.motifs);
   const ground = model.patches ? patchworkShapes(model, U, hidden) : hidden?.has('ground') ? [] : terrainShapes(model);
   const features = drawOrder(hidden?.size ? model.features.filter((f) => !hidden.has(layerOf(f))) : model.features);
-  const shapes = [...ground, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...clothBorder(model, refs)];
+  const marks = hidden?.has('patterns') ? [] : patternMarkShapes(model.patternMarks ?? [], refs);
+  const shapes = [...ground, ...marks, ...features.flatMap((f) => turnedFeatureShapes(f, refs, model)), ...clothBorder(model, refs)];
   if (model.title) {
     // The place name, stitched into the top of the cloth like the heading of a sampler.
     shapes.push(...place(ribbon(model.title, { cell: 1.1, ink: 'primary', rule: 'dark' }), { dx: (model.width * U) / 2, dy: U * 1.7 }));

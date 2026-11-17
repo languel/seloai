@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { renderWorldLayer } from '../art/gameLook';
 import type { PaletteName } from '../art/looks';
-import { BUILDING_VARIANTS, SCENE_LAYERS, kindsOnLayer, layerOf, type BuildingVariant, type FeatureKind, type SceneFeature, type SceneLayer, type Terrain } from '../art/scene';
+import { BUILDING_VARIANTS, SCENE_LAYERS, kindsOnLayer, layerOf, type BuildingVariant, type FeatureKind, type HouseLook, type PatternMark, type SceneFeature, type SceneLayer, type Terrain } from '../art/scene';
+import { WORLD_PALETTES } from '../art/looks';
 import { SHEVITSA_REFERENCES } from '../art/patternReferences';
 import type { VillageMap } from '../engine/types';
 import { PLACEABLE_FEATURES, type WorldCommand } from '../world/commands';
@@ -23,13 +24,14 @@ interface WorldEditorViewProps {
   onRedo: () => void;
 }
 
-type Tool = 'select' | 'paint' | 'place' | 'scatter' | 'erase' | 'landmark' | 'spawn';
+type Tool = 'select' | 'paint' | 'place' | 'scatter' | 'brush' | 'erase' | 'landmark' | 'spawn';
 
 const TOOLS: Array<[Tool, React.ComponentProps<typeof GlyphButton>['glyph'], string]> = [
   ['select', 'select', 'Select and move (drag a feature)'],
   ['paint', 'paint', 'Paint the ground'],
   ['place', 'place', 'Place a feature'],
   ['scatter', 'scatter', 'Scatter features with a brush (drag to sow)'],
+  ['brush', 'patternBrush', 'Pattern brush: strokes and fills of motifs'],
   ['erase', 'erase', 'Cut away a feature or a landmark'],
   ['landmark', 'landmark', 'Name a place'],
   ['spawn', 'spawn', 'Add a start point'],
@@ -82,6 +84,12 @@ function describeEdit(edit: SceneEdit): string {
       return `Placed ${FEATURE_NAMES[edit.feature.kind] ?? edit.feature.kind} at ${edit.feature.x}, ${edit.feature.y}`;
     case 'scatter':
       return `Scattered ${edit.features.length} ${FEATURE_NAMES[edit.features[0]?.kind] ?? edit.features[0]?.kind ?? ''}`;
+    case 'houseLook':
+      return `Houses ${edit.look}`;
+    case 'palette':
+      return `Threads: ${WORLD_PALETTES[edit.palette]?.name ?? edit.palette}`;
+    case 'patternMark':
+      return `Pattern ${edit.mark.mode} (${edit.mark.points.length} ${edit.mark.mode === 'fill' ? 'cells' : 'points'})`;
     case 'removeMany':
       return `Cut away ${edit.ids.length} thing${edit.ids.length === 1 ? '' : 's'}`;
     case 'mergePlots':
@@ -156,6 +164,13 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   // In a patchwork: paint a plot's kind, merge two plots, or split one.
   const [plotMode, setPlotMode] = useState<'kind' | 'merge' | 'split'>('kind');
   const [mergeFrom, setMergeFrom] = useState<number | null>(null);
+  // Placed houses: drawn or stitched, or as the world's houses are ('').
+  const [placeLook, setPlaceLook] = useState<HouseLook | ''>('');
+  // The pattern brush: a stroke along the drag, a fill of the cells painted, or a whole plot.
+  const [brushMode, setBrushMode] = useState<'stroke' | 'fill' | 'plot'>('stroke');
+  const [brushRef, setBrushRef] = useState('');
+  const [brushSize, setBrushSize] = useState(1);
+  const [brushSpacing, setBrushSpacing] = useState(1.25);
   const [patternRef, setPatternRef] = useState<string>('');
   const [patternSize, setPatternSize] = useState(2);
   const [scatterCount, setScatterCount] = useState(4);
@@ -179,6 +194,8 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     | { mode: 'move'; feature: SceneFeature; start: [number, number]; at: [number, number] }
     | { mode: 'scatter'; features: PlacedFeature[]; last: [number, number] }
     | { mode: 'erase'; ids: Set<string> }
+    | { mode: 'stroke'; points: Array<[number, number]> }
+    | { mode: 'fill'; cells: Map<number, [number, number]> }
     | null
   >(null);
   const hover = useRef<[number, number] | null>(null);
@@ -218,6 +235,12 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   };
   const eraseAround = (ids: Set<string>, [cx, cy]: [number, number]) => {
     const r = brush - 1;
+    // Pattern marks are on the patterns layer: any of their points under the brush.
+    if (!hidden.has('patterns') && !locked.has('patterns') && (activeLayer === 'ground' || activeLayer === 'patterns')) {
+      for (const m of baked?.model.patternMarks ?? []) {
+        if (m.points.some(([x, y]) => Math.abs(x - (cx + 0.5)) <= r + 0.6 && Math.abs(y - (cy + 0.5)) <= r + 0.6)) ids.add(m.id);
+      }
+    }
     for (const f of baked?.model.features ?? []) {
       if (!f.id || !erasable(f)) continue;
       if (f.x <= cx + r && f.x + f.w - 1 >= cx - r && f.y <= cy + r && f.y + f.h - 1 >= cy - r) ids.add(f.id);
@@ -236,11 +259,12 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const pickTool = (id: Tool) => {
     setTool(id);
     if (id === 'paint') setActiveLayer('ground');
+    else if (id === 'brush') setActiveLayer('patterns');
     else if ((id === 'place' || id === 'scatter') && activeLayer === 'ground') pickLayer('plantings');
   };
   const placed = (kind: FeatureKind, x: number, y: number, id: string, angle?: number, v: BuildingVariant | '' = kind === 'house' ? nextVariant() : ''): PlacedFeature => {
     const [w, h] = sizeOf(kind, v);
-    return { id, kind, x, y, w, h, ...(kind === 'star' && patternRef ? { ref: patternRef } : {}), ...(angle ? { angle } : {}), ...(v ? { variant: v } : {}) };
+    return { id, kind, x, y, w, h, ...(kind === 'star' && patternRef ? { ref: patternRef } : {}), ...(angle ? { angle } : {}), ...(v ? { variant: v } : {}), ...(kind === 'house' && placeLook ? { look: placeLook } : {}) };
   };
   /** Sows a handful of the chosen kind round a cell, on cells nothing of the layer holds. */
   const sow = (into: PlacedFeature[], [cx, cy]: [number, number]) => {
@@ -352,6 +376,17 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     } else if (d?.mode === 'scatter') {
       ctx.fillStyle = 'rgba(40, 110, 60, 0.35)';
       for (const f of d.features) ctx.fillRect(f.x * CELL, f.y * CELL, f.w * CELL, f.h * CELL);
+    } else if (d?.mode === 'stroke' && d.points.length > 1) {
+      ctx.strokeStyle = 'rgba(40, 110, 60, 0.8)';
+      ctx.lineWidth = Math.max(2 * lineW, brushSize * CELL * 0.5);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      d.points.forEach(([px, py], k) => (k ? ctx.lineTo(px * CELL, py * CELL) : ctx.moveTo(px * CELL, py * CELL)));
+      ctx.stroke();
+      ctx.lineWidth = lineW;
+    } else if (d?.mode === 'fill') {
+      ctx.fillStyle = 'rgba(40, 110, 60, 0.3)';
+      for (const [x, y] of d.cells.values()) ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
     } else if (d?.mode === 'erase') {
       ctx.fillStyle = 'rgba(170, 30, 20, 0.35)';
       for (const f of baked?.model.features ?? []) if (f.id && d.ids.has(f.id)) ctx.fillRect(f.x * CELL, f.y * CELL, f.w * CELL, f.h * CELL);
@@ -369,19 +404,23 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     if (h && !d) {
       ctx.strokeStyle = 'rgba(30, 30, 30, 0.7)';
       ctx.lineWidth = 1.2 * lineW;
-      const hovered = tool === 'paint' ? baked?.model.patches?.find((p) => pointInPolygon([h[0] + 0.5, h[1] + 0.5], p.points)) : undefined;
+      const hovered = tool === 'paint' || (tool === 'brush' && brushMode === 'plot') ? baked?.model.patches?.find((p) => pointInPolygon([h[0] + 0.5, h[1] + 0.5], p.points)) : undefined;
       if (hovered) {
         ctx.lineWidth = 2.4 * lineW;
         ctx.beginPath();
         hovered.points.forEach(([px, py], k) => (k ? ctx.lineTo(px * CELL, py * CELL) : ctx.moveTo(px * CELL, py * CELL)));
         ctx.closePath();
         ctx.stroke();
-      } else if (tool === 'paint' || tool === 'erase') {
+      } else if (tool === 'paint' || tool === 'erase' || (tool === 'brush' && brushMode === 'fill')) {
         const r = brush - 1;
         ctx.strokeRect((h[0] - r) * CELL, (h[1] - r) * CELL, (2 * r + 1) * CELL, (2 * r + 1) * CELL);
       } else if (tool === 'place') {
         const [w, hh] = sizeOf(featureKind);
         ctx.strokeRect(h[0] * CELL, h[1] * CELL, w * CELL, hh * CELL);
+      } else if (tool === 'brush') {
+        ctx.beginPath();
+        ctx.arc((h[0] + 0.5) * CELL, (h[1] + 0.5) * CELL, (brushSize * CELL) / 2, 0, Math.PI * 2);
+        ctx.stroke();
       } else if (tool === 'scatter') {
         ctx.beginPath();
         ctx.arc((h[0] + 0.5) * CELL, (h[1] + 0.5) * CELL, (brush + 1) * CELL, 0, Math.PI * 2);
@@ -391,7 +430,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       }
     }
     ctx.setLineDash([]);
-  }, [frame, world, map, showWalk, selected, tool, brush, featureKind, patternSize, variant, mergeFrom]);
+  }, [frame, world, map, showWalk, selected, tool, brush, featureKind, patternSize, variant, mergeFrom, brushMode, brushSize]);
 
   const cellAt = (event: React.PointerEvent): [number, number] => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -399,6 +438,25 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     return [Math.floor((event.clientX - rect.left - x) / (zoom * CELL)), Math.floor((event.clientY - rect.top - y) / (zoom * CELL))];
   };
   const inside = ([x, y]: [number, number]) => x >= 0 && y >= 0 && x < map.width && y < map.height;
+  const pointAt = (event: React.PointerEvent): [number, number] => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const { zoom, x, y } = view.current;
+    return [(event.clientX - rect.left - x) / (zoom * CELL), (event.clientY - rect.top - y) / (zoom * CELL)];
+  };
+  const markId = () => {
+    const used = new Set((baked?.model.patternMarks ?? []).map((m) => m.id));
+    let n = (baked?.model.patternMarks?.length ?? 0) + 1;
+    while (used.has(`my-pattern-${n}`)) n++;
+    return `my-pattern-${n}`;
+  };
+  const layMark = (mode: PatternMark['mode'], points: Array<[number, number]>) => {
+    if (points.length === 0) return;
+    const round = (v: number) => Math.round(v * 100) / 100;
+    edit(
+      { op: 'patternMark', mark: { id: markId(), mode, points: points.slice(0, 4000).map(([x, y]) => [round(x), round(y)]), size: brushSize, spacing: brushSpacing, ...(brushRef ? { ref: brushRef } : {}) } },
+      `Pattern ${mode}`,
+    );
+  };
 
   const addBrush = (cells: Map<number, [number, number]>, [cx, cy]: [number, number]) => {
     const r = brush - 1;
@@ -468,6 +526,23 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       const features: PlacedFeature[] = [];
       sow(features, cell);
       drag.current = { mode: 'scatter', features, last: cell };
+    } else if (tool === 'brush') {
+      if (locked.has('patterns')) return void setNotice('The patterns layer is locked.');
+      if (brushMode === 'stroke') drag.current = { mode: 'stroke', points: [pointAt(event)] };
+      else if (brushMode === 'fill') {
+        const cells = new Map<number, [number, number]>();
+        addBrush(cells, cell);
+        drag.current = { mode: 'fill', cells };
+      } else {
+        // A whole plot of a patchwork filled with the pattern.
+        const plot = baked?.model.patches?.find((p) => pointInPolygon(pointAt(event), p.points));
+        if (!plot) return void setNotice('Click inside a plot to fill it.');
+        const xs = plot.points.map((q) => q[0]);
+        const ys = plot.points.map((q) => q[1]);
+        const cells: Array<[number, number]> = [];
+        for (let cx = Math.floor(Math.min(...xs)); cx <= Math.max(...xs); cx++) for (let cy = Math.floor(Math.min(...ys)); cy <= Math.max(...ys); cy++) if (pointInPolygon([cx + 0.5, cy + 0.5], plot.points)) cells.push([cx, cy]);
+        layMark('fill', cells);
+      }
     } else if (tool === 'erase') {
       const poi = (map.pointsOfInterest ?? []).find((p) => p.x === x && p.y === y);
       const spawn = map.spawnPoints.find((s) => s.x === x && s.y === y);
@@ -499,6 +574,12 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       d.at = [d.feature.x + cell[0] - d.start[0], d.feature.y + cell[1] - d.start[1]];
     } else if (d?.mode === 'erase' && inside(cell)) {
       eraseAround(d.ids, cell);
+    } else if (d?.mode === 'stroke') {
+      const p = pointAt(event);
+      const last = d.points[d.points.length - 1];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= 0.4) d.points.push(p);
+    } else if (d?.mode === 'fill' && inside(cell)) {
+      addBrush(d.cells, cell);
     } else if (d?.mode === 'scatter' && inside(cell) && Math.hypot(cell[0] - d.last[0], cell[1] - d.last[1]) >= brush + 1) {
       sow(d.features, cell);
       d.last = cell;
@@ -513,6 +594,10 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       edit({ op: 'terrain', cells: [...d.cells.values()], terrain }, `Paint ${terrain}`);
     } else if (d?.mode === 'scatter' && d.features.length > 0) {
       edit({ op: 'scatter', features: d.features }, `Scatter ${featureKind}`);
+    } else if (d?.mode === 'stroke') {
+      layMark('stroke', d.points);
+    } else if (d?.mode === 'fill' && d.cells.size > 0) {
+      layMark('fill', [...d.cells.values()]);
     } else if (d?.mode === 'erase' && d.ids.size > 0) {
       const ids = [...d.ids];
       if (ids.length === 1) edit({ op: 'remove', id: ids[0] }, 'Cut away');
@@ -663,6 +748,37 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                 </div>
               </>
             )}
+            <label className="flex flex-col gap-0.5">
+              <span className="stitch-muted text-[10px]">Threads</span>
+              <select
+                value={baked?.model.palette ?? 'festive'}
+                onChange={(e) => edit({ op: 'palette', palette: e.target.value }, `Threads: ${WORLD_PALETTES[e.target.value].name}`)}
+                className="rounded-sm border border-borderFolk bg-transparent px-1 py-1"
+              >
+                {Object.entries(WORLD_PALETTES).map(([id, { name }]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <span className="flex gap-0.5">
+                {(['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark'] as const).map((ink) => (
+                  <span key={ink} className="h-2.5 flex-1 rounded-sm" style={{ background: WORLD_PALETTES[baked?.model.palette ?? 'festive']?.palette.inks[ink] }} />
+                ))}
+              </span>
+              {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
+            </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="stitch-muted text-[10px]">Houses</span>
+              <select
+                value={baked?.model.houseLook ?? 'drawn'}
+                onChange={(e) => edit({ op: 'houseLook', look: e.target.value as HouseLook }, `Houses ${e.target.value}`)}
+                className="rounded-sm border border-borderFolk bg-transparent px-1 py-1"
+              >
+                <option value="drawn">Drawn</option>
+                <option value="stitched">Stitched (cross-stitch)</option>
+              </select>
+            </label>
           </>
         ) : (
           <div className="flex flex-col gap-2 leading-snug">
@@ -761,6 +877,50 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
             </>
           )}
           {(tool === 'place' || tool === 'scatter' || tool === 'erase') && <LayerBadge layer={activeLayer} erase={tool === 'erase'} />}
+          {tool === 'brush' && (
+            <>
+              <LayerBadge layer="patterns" erase={false} />
+              {(['stroke', 'fill', ...(baked?.model.patches ? ['plot' as const] : [])] as const).map((m) => (
+                <Chip key={m} on={brushMode === m} onClick={() => setBrushMode(m)}>
+                  {m === 'stroke' ? 'Stroke' : m === 'fill' ? 'Fill' : 'Fill a plot'}
+                </Chip>
+              ))}
+              <select value={brushRef} onChange={(e) => setBrushRef(e.target.value)} title="The pattern it is grown from" className="rounded-sm border border-borderFolk bg-transparent px-1 py-0.5">
+                <option value="">the world's own</option>
+                {(brushMode === 'stroke' ? SHEVITSA_REFERENCES : MEDALLION_REFS).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+              <span className="stitch-muted ml-1">Size</span>
+              {[0.75, 1, 1.5, 2].map((n) => (
+                <Chip key={n} on={brushSize === n} onClick={() => setBrushSize(n)}>
+                  {n}
+                </Chip>
+              ))}
+              <span className="stitch-muted ml-1">Spacing</span>
+              {[
+                [1, 'close'],
+                [1.25, 'even'],
+                [2, 'open'],
+              ].map(([n, label]) => (
+                <Chip key={n} on={brushSpacing === n} onClick={() => setBrushSpacing(n as number)}>
+                  {label}
+                </Chip>
+              ))}
+              {brushMode === 'fill' && (
+                <>
+                  <span className="stitch-muted ml-1">Brush</span>
+                  {[1, 2, 3].map((b) => (
+                    <Chip key={b} on={brush === b} onClick={() => setBrush(b)}>
+                      {b * 2 - 1}
+                    </Chip>
+                  ))}
+                </>
+              )}
+            </>
+          )}
           {tool === 'erase' && (
             <>
               <span className="stitch-muted ml-1">Brush</span>
@@ -791,6 +951,22 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                       {FEATURE_NAMES[k] ?? k}
                     </Chip>
                   ))}
+              {activeLayer === 'buildings' && (
+                <>
+                  <span className="stitch-muted ml-1">Look</span>
+                  {(
+                    [
+                      ['', "world's"],
+                      ['drawn', 'drawn'],
+                      ['stitched', 'stitched'],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <Chip key={id || 'world'} on={placeLook === id} onClick={() => setPlaceLook(id)}>
+                      {label}
+                    </Chip>
+                  ))}
+                </>
+              )}
               {featureKind === 'star' && (
                 <>
                   <select value={patternRef} onChange={(e) => setPatternRef(e.target.value)} title="The pattern it is grown from" className="rounded-sm border border-borderFolk bg-transparent px-1 py-0.5">
@@ -879,7 +1055,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
         <div className="font-display text-sm">Layers</div>
         <ol className="flex flex-col-reverse gap-0.5">
           {SCENE_LAYERS.map(({ id, name }) => {
-            const count = id === 'ground' ? null : (baked?.model.features ?? []).filter((f) => layerOf(f) === id && !f.id?.startsWith('amb-')).length;
+            const count = id === 'ground' ? null : (baked?.model.features ?? []).filter((f) => layerOf(f) === id && !f.id?.startsWith('amb-')).length + (id === 'patterns' ? baked?.model.patternMarks?.length ?? 0 : 0);
             const toggle = (set: ReadonlySet<SceneLayer>, apply: (s: Set<SceneLayer>) => void) => {
               const next = new Set(set);
               if (next.has(id)) next.delete(id);

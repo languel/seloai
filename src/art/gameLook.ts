@@ -4,7 +4,7 @@
  */
 import { createSeededRng, hashString } from '../core/rng';
 import type { VillageMap } from '../engine/types';
-import { PALETTES, paintLinen, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
+import { PALETTES, paintLinen, worldPalette, renderEmbroidery, renderLineArt, type LookOptions, type PaletteName } from './looks';
 import { figureParts, type Expression, type FigureBuild, type FigureKind, type FigureParts, type FigureDetail, type FigureTraits, type FigureView } from './figures';
 import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
@@ -38,15 +38,15 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
   canvas.width = Math.max(1, map.width * map.tileDim);
   canvas.height = Math.max(1, map.height * map.tileDim);
   const ctx = canvas.getContext('2d')!;
-  const options: LookOptions = {
-    unit: map.tileDim / UNITS_PER_TILE,
-    origin: [0, 0],
-    palette: PALETTES[look],
-    seed: hashString(map.name),
-  };
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
   const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
   const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
+  const options: LookOptions = {
+    unit: map.tileDim / UNITS_PER_TILE,
+    origin: [0, 0],
+    palette: worldPalette(look, model.palette),
+    seed: hashString(map.name),
+  };
   const shapes = sceneShapes(model, hidden);
   if (isThread(look)) {
     paintLinen(ctx, canvas.width, canvas.height, options);

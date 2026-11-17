@@ -11,7 +11,9 @@
  */
 import { createSeededRng, type Rng } from '../core/rng';
 import type { Bridge, Patch, SceneLayer, SceneModel, SpecialBuilding } from './scene';
-import { circle, type Ink, type Pt, type Shape } from './shapes';
+import { circle, place as placeShapes, type Ink, type Pt, type Shape } from './shapes';
+import { motifShape } from './patternGrammar';
+import { STITCHES_PER_CELL, stitchedHouseGrid } from './stitchedHouse';
 
 function pointIn([x, y]: Pt, poly: Pt[]): boolean {
   let hit = false;
@@ -250,7 +252,7 @@ export function patchworkShapes(model: SceneModel, U: number, hidden?: ReadonlyS
     const fr = frameOf(pts, p.front ?? 0);
     switch (p.kind) {
       case 'house':
-        houseRow(buildings, p, pts, fr, rng, U);
+        houseRow(buildings, p, pts, fr, rng, U, model.houseLook === 'stitched');
         break;
       case 'garden':
       case 'vineyard':
@@ -368,7 +370,7 @@ function bridgeShapes(shapes: Shape[], br: Bridge, U: number) {
 }
 
 /** The houses of a house plot: a row along the street, sometimes overlapping, sometimes a corner house on the side street. */
-function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: number) {
+function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: number, stitched = false) {
   const special = p.special;
   const room = Math.min(fr.depth, U * 4.2);
   const mid = pts.reduce<Pt>((acc, q) => [acc[0] + q[0] / pts.length, acc[1] + q[1] / pts.length], [0, 0]);
@@ -377,6 +379,14 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
     const c: Pt = [ra[0] + ru[0] * (along + w / 2) + rn[0] * U * 0.05, ra[1] + ru[1] * (along + w / 2) + rn[1] * U * 0.05];
     const cu: Pt = [ru[0] * Math.cos(tilt) - ru[1] * Math.sin(tilt), ru[0] * Math.sin(tilt) + ru[1] * Math.cos(tilt)];
     const cn: Pt = [rn[0] * Math.cos(tilt) - rn[1] * Math.sin(tilt), rn[0] * Math.sin(tilt) + rn[1] * Math.cos(tilt)];
+    if (stitched) {
+      // Counted houses stand upright, as on a sampler, just inside the plot from the street.
+      const cell = U / STITCHES_PER_CELL;
+      const grid = stitchedHouseGrid(kind, Math.round(w / cell), Math.round(h / cell), Math.floor(rng() * 1e9));
+      const at: Pt = [c[0] + cn[0] * grid.h * cell * 0.5, c[1] + cn[1] * grid.h * cell * 0.5];
+      shapes.push(...placeShapes([motifShape(grid, cell)], { dx: at[0], dy: at[1] }));
+      return;
+    }
     building(shapes, c, cu, cn, w, h, rng, U, kind, p.ink);
   };
   if (special) {
