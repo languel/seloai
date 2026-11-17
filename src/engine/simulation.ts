@@ -5,6 +5,7 @@ import { computeSpatialMix, type SpatialMix } from './spatialMix';
 import { GENERIC_WORLD_CONTEXT, placeName, type WorldContext } from '../world/worldContext';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
 import { ensureVillagerSprite } from './characterGenerator';
+import { findNamedCharacter } from './names';
 import type {
   BubbleEntry,
   ChatMessage,
@@ -106,6 +107,9 @@ export function parseMentionTargets(
       token: v.name.trim().toLowerCase(),
       targets: [target],
     });
+    for (const alt of v.callNames ?? []) {
+      if (alt.trim()) catalog.push({ token: alt.trim().toLowerCase(), targets: [target] });
+    }
     const first = v.name.trim().split(/\s+/)[0];
     if (first && first.toLowerCase() !== v.name.trim().toLowerCase()) {
       catalog.push({
@@ -921,17 +925,21 @@ export class VillageSimulation {
         rt.currentThoughtBubble = undefined;
       }
 
-      if (rt.path.length > 0 && rt.state !== 'conversing' && rt.state !== 'thinking' && rt.state !== 'speaking') {
-        rt.state = 'walking';
+      const busyTalking = rt.state === 'conversing' || rt.state === 'thinking' || rt.state === 'speaking';
+      if (rt.path.length > 0 && (!busyTalking || (rt.walkAndTalk && rt.state !== 'conversing'))) {
+        if (!busyTalking) rt.state = 'walking';
         const hasMore = this.advanceVillagerPath(rt, cfg.speed, dt);
         if (!hasMore && rt.path.length === 0) {
-          rt.state = 'idle';
+          if (!busyTalking) rt.state = 'idle';
           rt.lastMoveAt = now;
           this.lastMoveSimMs.set(rt.id, this.simTimeMs);
+          rt.walkAndTalk = false;
+          this.continueErrand(rt);
         }
       } else if (rt.state === 'walking') {
         rt.state = 'idle';
       }
+      if (rt.path.length === 0 && rt.walkAndTalk) rt.walkAndTalk = false;
     }
 
     this.aiAccumulator += dt;
@@ -1381,7 +1389,9 @@ export class VillageSimulation {
       res.blockerId !== this.player.id &&
       this.modelSettings.autoConverse &&
       !this.holdStory &&
-      !rt.activeConversationId
+      !rt.activeConversationId &&
+      !rt.walkAndTalk &&
+      (!rt.errand || rt.errand.targetId === res.blockerId)
     ) {
       const otherRt = this.runtimes.get(res.blockerId);
       if (
@@ -1452,6 +1462,8 @@ export class VillageSimulation {
         const a = runtimesList[i];
         if (
           a.activeConversationId ||
+          a.errand ||
+          a.walkAndTalk ||
           a.state === 'thinking' ||
           a.state === 'speaking' ||
           a.state === 'listening'
@@ -1465,6 +1477,8 @@ export class VillageSimulation {
           const b = runtimesList[j];
           if (
             b.activeConversationId ||
+            b.errand ||
+            b.walkAndTalk ||
             b.state === 'thinking' ||
             b.state === 'speaking' ||
             b.state === 'listening'
@@ -1487,7 +1501,7 @@ export class VillageSimulation {
 
     // 2. Westworld-style ongoing world-session motivation -> physical pathing
     for (const rt of runtimesList) {
-      if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0) continue;
+      if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0 || rt.errand) continue;
       if (this.planningVillagers.has(rt.id)) continue;
       const lastMoveSim = this.lastMoveSimMs.get(rt.id) ?? -9999;
       if (this.simTimeMs - lastMoveSim < 4200 + this.rng() * 4400) continue;
@@ -1897,9 +1911,15 @@ export class VillageSimulation {
         [cfgA, rtA, cfgB],
       ];
 
+      let calledAway = false;
       for (const [speakerCfg, speakerRt, partnerCfg] of turns) {
         await this.whenRunning();
         if (!this.runtimes.has(speakerCfg.id) || !this.runtimes.has(partnerCfg.id)) break;
+        // Someone was called away (the player sent them off): the talk ends here.
+        if (rtA.activeConversationId !== convId || rtB.activeConversationId !== convId) {
+          calledAway = true;
+          break;
+        }
         speakerRt.state = 'thinking';
         this.notify(true);
 
@@ -1965,7 +1985,7 @@ export class VillageSimulation {
       });
       this.appendWorldEvent(rtB, bSummary);
 
-      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet) {
+      if (!calledAway && this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet) {
         const closing = await this.mind.generateSceneBeat({
         world: this.world,
         cast: this.castPronouns(),
@@ -2095,6 +2115,62 @@ export class VillageSimulation {
     return lines.join('\n');
   }
 
+  /** Takes a villager out of a talk with another villager, so they can go where they were sent. */
+  private callAway(rt: VillagerRuntime) {
+    const convId = rt.activeConversationId;
+    if (!convId) return;
+    const conv = this.conversations.find((c) => c.id === convId);
+    if (conv && conv.participantIds.includes(this.player.id)) return;
+    rt.activeConversationId = undefined;
+    for (const pid of conv?.participantIds ?? []) {
+      const other = this.runtimes.get(pid);
+      if (other && other !== rt && other.activeConversationId === convId) {
+        other.activeConversationId = undefined;
+        other.state = 'idle';
+      }
+    }
+    if (rt.state === 'conversing') rt.state = 'idle';
+  }
+
+  /**
+   * At the end of a walk on an errand: if the person they were sent to has moved on, follow
+   * (a few times); once side by side, turn to them and talk.
+   */
+  private continueErrand(rt: VillagerRuntime) {
+    const errand = rt.errand;
+    if (!errand) return;
+    const target = this.runtimes.get(errand.targetId);
+    if (!target) {
+      rt.errand = undefined;
+      return;
+    }
+    const dist = Math.hypot(target.x - rt.x, target.y - rt.y);
+    if (dist > 1.6 && errand.tries < 4) {
+      errand.tries += 1;
+      const goal = this.findAdjacentStandTile(target.x, target.y, rt.id);
+      const path = findPath(this.map, { x: rt.x, y: rt.y }, goal, this.getOccupiedTileSet(rt.id));
+      if (path.length > 0) {
+        rt.path = path;
+        rt.walkAndTalk = rt.state === 'thinking' || rt.state === 'speaking';
+        return;
+      }
+    }
+    rt.errand = undefined;
+    rt.facing = computeFacing(rt, target, rt.facing);
+    if (dist > 2.2) return;
+    if (
+      this.modelSettings.autoConverse &&
+      !rt.activeConversationId &&
+      !target.activeConversationId &&
+      rt.state !== 'thinking' &&
+      rt.state !== 'speaking' &&
+      target.state !== 'thinking' &&
+      target.state !== 'speaking'
+    ) {
+      void this.startAutonomousConversation(rt.id, target.id);
+    }
+  }
+
   private applyWorldDirection(
     _cfg: VillagerConfig,
     rt: VillagerRuntime,
@@ -2122,22 +2198,36 @@ export class VillageSimulation {
       return p.length > 0 ? p : findPath(this.map, { x: rt.x, y: rt.y }, goal);
     };
 
-    const otherTarget = [...this.configs.values()].find(
-      (other) => other.id !== rt.id && lower.includes(other.name.toLowerCase()),
-    );
+    const otherTarget = findNamedCharacter(userText, this.configs.values(), rt.id);
     if (otherTarget) {
       const otherRt = this.runtimes.get(otherTarget.id);
       if (otherRt) {
+        this.callAway(rt);
         const goal = this.findAdjacentStandTile(otherRt.x, otherRt.y, rt.id);
         const path = findBestPath(goal);
         rt.currentIntention = `Heading to speak with ${otherTarget.name}`;
         rt.activityLabel = rt.currentIntention;
+        rt.errand = { targetId: otherTarget.id, tries: 0 };
         if (path.length > 0) {
           rt.path = path;
-          rt.state = 'walking';
+          rt.walkAndTalk = true;
         }
         return;
       }
+    }
+
+    // "Come here", "come to me", "follow me": to the player's side.
+    if (/\b(come (here|over|to me|with me)|follow me|to me)\b/i.test(userText)) {
+      this.callAway(rt);
+      const goal = this.findAdjacentStandTile(this.player.x, this.player.y, rt.id);
+      const path = findBestPath(goal);
+      rt.currentIntention = `Coming to ${this.player.name}`;
+      rt.activityLabel = rt.currentIntention;
+      if (path.length > 0) {
+        rt.path = path;
+        rt.walkAndTalk = true;
+      }
+      return;
     }
 
     const pois = this.map.pointsOfInterest ?? [];
@@ -2508,6 +2598,8 @@ export class VillageSimulation {
     } finally {
       rt.state = rt.path.length > 0 ? 'walking' : 'idle';
       rt.lastThinkAt = this.now();
+      // Arrived while still answering: now go on with what they were sent to do.
+      if (rt.errand && rt.path.length === 0) this.continueErrand(rt);
       this.notify(true);
     }
   }

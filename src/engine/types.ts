@@ -230,6 +230,8 @@ export interface VillagerConfig {
   identity: string;
   plan: string;
   voiceStyle: string;
+  /** Other names people call them by in passing ("Stoyane", "Bai Stoyan"); the first is the usual one. */
+  callNames?: string[];
   voice?: VillagerVoiceProfile;
   homeTile: { x: number; y: number };
   speed: number;
@@ -278,6 +280,10 @@ export interface VillagerRuntime {
   avoidSign?: 1 | -1;
   avoidTargetId?: string;
   lastRerouteAt?: number;
+  /** Someone the player sent them to: they keep after them until they are side by side. */
+  errand?: { targetId: string; tries: number };
+  /** Sent somewhere by the player: they keep walking while they answer. */
+  walkAndTalk?: boolean;
   lastThinkAt: number;
   lastMoveAt: number;
   lastLatencyMs?: number;

@@ -1,4 +1,5 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
+import { shortName } from '../engine/names';
 import { ttsInstruction } from './voiceAccent';
 import { kokoroEngine, kokoroVoiceFor } from './kokoroEngine';
 import { castPronounLine, type CastEntry } from './castPronouns';
@@ -505,6 +506,7 @@ class BrainRouter {
           castPronounLine(params.cast),
           `The story has not begun yet. Only greet ${partnerName} and make small talk: the weather, the day's work, family, a kind word. Do NOT raise any trouble, curse, demand, sacrifice, secret, plan or quest.`,
           `Answer what ${partnerName} said in your own words; never repeat or echo their line.`,
+          addressLine(partnerName),
           `Reply in one short, warm spoken sentence (under 20 words), in first person, plain dialogue only. Always write strictly in natural English. NEVER start with or utter your own name (never write "${villager.name}:").`,
         ]
           .filter(Boolean)
@@ -523,6 +525,7 @@ class BrainRouter {
       latestNarration ? `Just unfolded right here: ${latestNarration}` : '',
       `Dramatic direction: ${sceneTactic}`,
       `Answer what ${partnerName} just said in your own words; never repeat or echo their line.`,
+      addressLine(partnerName),
       `Respond to ${partnerName} in 1 to 2 crisp, vivid spoken sentences (under 45 words). Vary rhythm and tone—be playful, guarded, superstitious, blunt, or curious as the moment demands.`,
       `Speak ONLY plain dialogue in first person. Always write strictly in natural English regardless of voice accent. NEVER start with or utter your own name (never write "${villager.name}:"), never re-introduce your profession, and avoid stage directions.`,
     ]
@@ -1823,7 +1826,7 @@ function buildWorldLineCandidates(
     ...selectLines(world.storyLines.characterLines[villager.id], sceneText),
     ...world.storyLines.sharedLines.flatMap((pool) => selectLines(pool, sceneText)),
   ];
-  return templates.map((template) => fillTemplate(template, { partner: partnerName }));
+  return templates.map((template) => fillTemplate(template, { partner: shortName({ name: partnerName }) }));
 }
 
 /** Plain hellos and small talk, for before the story is set. `{name}` is the one greeted. */
@@ -1970,3 +1973,13 @@ function synthesizeStorySimNarration(
 }
 
 export const brainRouter = new BrainRouter();
+
+/**
+ * How to call the person in front of you. People in a village rarely say a whole name: they say
+ * the first name, call it out ("Stoyane!", "Lamio"), put a title to it ("Baba Rada"), or use none.
+ */
+function addressLine(partnerName: string): string {
+  const short = shortName({ name: partnerName });
+  if (short === partnerName.trim()) return '';
+  return `When you speak to ${partnerName}, call them as people here do: "${short}", a called-out or fond form of it, a title with it, or no name at all. Do not say the full name "${partnerName}".`;
+}

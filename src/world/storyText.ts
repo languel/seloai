@@ -9,7 +9,7 @@
  *   title, description, place (the place's name), kind (village, harbour town…),
  *   traveler (what the player is called), gathering (the usual meeting place),
  *   premise, opening, focus (the character the story opens on, by name or id),
- *   characters: [ { name, id?, role, who, wants, speaks, voice, look, colour, home, says } ],
+ *   characters: [ { name, id?, role, who, wants, speaks, voice, look, colour, home, says, called } ],
  *   lines: { opening: [...], closing: [...], anyone: [ { line, when: [...] } ] }
  *
  * In Markdown the characters and lines can also be written as sections:
@@ -52,6 +52,8 @@ export interface FriendlyCharacter {
   color?: string;
   home?: string | number[] | { x: number; y: number };
   says?: string[] | string;
+  /** Other names they are called by: "Stoyane, Bai Stoyan". */
+  called?: string[] | string;
 }
 
 export interface FriendlyStory {
@@ -156,6 +158,7 @@ export function storyPackFromFriendly(story: FriendlyStory) {
       speed: 0.8,
       ...(readVoice(c.voice) ? { voice: readVoice(c.voice) } : {}),
       ...(Object.keys(figure).length ? { figure } : {}),
+      ...(calledNames(c.called).length ? { callNames: calledNames(c.called) } : {}),
     };
     cast.push(member);
     const says = list(c.says);
@@ -292,6 +295,7 @@ export function storyToMarkdown(world: WorldContext, cast: VillagerConfig[], tit
     out.push(`- role: ${c.role}`);
     out.push(`- wants: ${c.plan}`);
     if (c.voiceStyle) out.push(`- speaks: ${c.voiceStyle}`);
+    if (c.callNames?.length) out.push(`- called: ${c.callNames.join(', ')}`);
     if (v) out.push(`- voice: ${v.gender}, ${v.language}${v.pitchSemitones ? `, ${v.pitchSemitones}` : ''}`);
     const look = [c.figure?.build, c.figure?.kind && c.figure.kind !== 'human' ? c.figure.kind : ''].filter(Boolean).join(' ');
     if (look) out.push(`- look: ${look}`);
@@ -313,4 +317,10 @@ export function storyToMarkdown(world: WorldContext, cast: VillagerConfig[], tit
     }
   }
   return out.join('\n');
+}
+
+/** "Stoyane, Bai Stoyan" or a list: the other names someone is called by. */
+function calledNames(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[,;]/) : [];
+  return raw.map((v) => String(v).trim()).filter(Boolean);
 }
