@@ -671,4 +671,17 @@ describe('Pause', () => {
     expect(first.currentIntention).toBe(sim.configs.get(first.id)!.plan);
     expect(first.memories).toHaveLength(1);
   });
+
+  it('lets the story make the well flow, tells everyone, and forgets it on a reset', async () => {
+    const map = createDefaultMap();
+    const sim = createBrowserSimulation(map, DEFAULT_VILLAGERS, [], { ...DEFAULT_MODEL_SETTINGS, inferenceMode: 'story-sim', enableWebSpeechFallback: false });
+    expect(sim.wellWater).toBeNull();
+    const conv = { id: 'c-well', participantIds: [], messages: [], updatedAt: 0 } as never;
+    await (sim as unknown as { emitNarrationTurn: (c: unknown, t: string, speak: boolean) => Promise<void> }).emitNarrationTurn(conv, 'With a long hiss the Lamia uncoils and releases the water.', false);
+    expect(sim.wellWater).toBe('flowing');
+    const someone = [...sim.runtimes.values()][0];
+    expect(someone.worldFeed?.some((e) => /well flows again/i.test(e))).toBe(true);
+    sim.resetStory();
+    expect(sim.wellWater).toBeNull();
+  });
 });

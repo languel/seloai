@@ -181,6 +181,34 @@ const MAX_MESSAGES_PER_CONV = 160;
 const MAX_CONVERSATIONS = 40;
 const DEFAULT_MAX_TIMELINE_FRAMES = 450;
 
+/**
+ * Whether a line of the story plainly says the well's water came back or ran dry. Only
+ * clear statements count ("the water flows again", "she releases the water", "the well
+ * brims"), never a hint (a drop seeping, a sound of water), and a negated sentence ("the
+ * well does not flow") says nothing. Returns the change, or null.
+ */
+export function wellWaterIn(text: string): 'dry' | 'flowing' | null {
+  let found: 'dry' | 'flowing' | null = null;
+  for (const sentence of text.split(/(?<=[.!?;])\s+/)) {
+    const s = sentence.toLowerCase();
+    if (!/\b(well|water|spring|springs)\b/.test(s)) continue;
+    if (/\b(not|never|no longer|won't|will not|cannot|can't|unless|until|if|refuses?)\b/.test(s)) continue;
+    if (
+      /\b(runs?|ran|gone|goes|went) dry\b|\bdr(y|ies|ied) up\b|\bwell (is|lies|stands) dry\b/.test(s)
+    ) {
+      found = 'dry';
+    } else if (
+      /\b(water|well|spring)s?\b[^.]{0,40}\b(flows?|flowing|flowed|gush(es|ed|ing)?|surges?|brims?|brimming|overflows?|spills? over|wells up|springs? (forth|up|back))\b/.test(s) ||
+      /\bwater\b[^.]{0,12}\b(returns?|returned|comes? back|came back)\b/.test(s) ||
+      /\breleas(es|ed|ing)\b[^.]{0,30}\b(the )?(water|spring|springs|well)\b/.test(s) ||
+      /\b(fills|filled|refills|refilled)\b[^.]{0,20}\b(the )?well\b|\bwell (fills|filled|refills)\b/.test(s)
+    ) {
+      found = 'flowing';
+    }
+  }
+  return found;
+}
+
 export class VillageSimulation {
   public map: VillageMap;
   public configs: Map<string, VillagerConfig> = new Map();
@@ -195,6 +223,11 @@ export class VillageSimulation {
   public fps = 60;
   public modelSettings: ModelSettings;
   public focalWorldlineId: string | 'traveler' = 'traveler';
+  /**
+   * The well's water as the story has made it: flowing, dry, or (null) as the world was
+   * drawn. The story sets it when a line says so plainly; a reset story clears it.
+   */
+  public wellWater: 'dry' | 'flowing' | null = null;
   /** Setting-specific knowledge supplied by the active world pack. */
   public world: WorldContext;
 
@@ -575,6 +608,7 @@ export class VillageSimulation {
   clearDatabase() {
     this.conversations = [];
     this.focalWorldlineId = 'scribe';
+    this.wellWater = null;
     for (const [id, rt] of this.runtimes.entries()) {
       const cfg = this.configs.get(id);
       rt.activeConversationId = undefined;
@@ -626,6 +660,23 @@ export class VillageSimulation {
     this.player.y = safe.y;
     this.player.path = [];
     this.notify(true);
+  }
+
+  /** Sets the well's water and tells everyone in the village. */
+  setWellWater(state: 'dry' | 'flowing' | null) {
+    if (state === this.wellWater) return;
+    this.wellWater = state;
+    if (state) {
+      const news = state === 'flowing' ? 'The well flows again: the water has come back.' : 'The well has run dry.';
+      for (const rt of this.runtimes.values()) this.appendWorldEvent(rt, news);
+    }
+    this.notify(true);
+  }
+
+  /** Reads a finished line of the story for the well's water coming back or running dry. */
+  private noticeWellWater(text: string) {
+    const change = wellWaterIn(text);
+    if (change) this.setWellWater(change);
   }
 
   private getOccupiedTileSet(excludeId?: string): Set<string> {
@@ -1666,6 +1717,7 @@ export class VillageSimulation {
   ): Promise<void> {
     const clean = text.trim();
     if (!clean) return;
+    this.noticeWellWater(clean);
     this.pushConversationMessage(conv, {
       id: `msg-nar-${this.now()}-${this.rng().toString(36).slice(2, 6)}`,
       senderId: 'narrator',
@@ -1925,6 +1977,7 @@ export class VillageSimulation {
         );
       }
     }
+    if (this.wellWater) lines.push(this.wellWater === 'flowing' ? 'The well flows again: the water has come back.' : 'The well has run dry.');
     const pois = this.map.pointsOfInterest ?? [];
     if (pois.length > 0) {
       lines.push(
@@ -2166,6 +2219,7 @@ export class VillageSimulation {
         conv.messages.push(streamingMsg);
       }
       streamingMsg.text = spokenLine;
+      this.noticeWellWater(spokenLine);
       streamingMsg.reasoning = reasoning;
       streamingMsg.timestamp = nowSp;
       streamingMsg.kind = 'speech';
@@ -2418,6 +2472,7 @@ export class VillageSimulation {
 
     const parsedNar = parseDialogueAndNarration(res.text, narratorName);
     streamingMsg.text = parsedNar.display;
+    this.noticeWellWater(parsedNar.display);
     streamingMsg.reasoning = parsedNar.reasoning.join('\n\n') || undefined;
     streamingMsg.source = res.source;
     conv.updatedAt = this.now();

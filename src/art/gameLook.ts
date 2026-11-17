@@ -53,12 +53,20 @@ interface PreparedShape {
   box: [number, number, number, number];
 }
 
-export function createWorldArt(map: VillageMap, look: PaletteName, semantics?: TileSemantics, hidden?: ReadonlySet<SceneLayer>): WorldArt {
+export function createWorldArt(
+  map: VillageMap,
+  look: PaletteName,
+  semantics?: TileSemantics,
+  hidden?: ReadonlySet<SceneLayer>,
+  /** The well's water as the story has made it, over what the world says. */
+  wellState?: 'dry' | 'flowing' | null,
+): WorldArt {
   const width = Math.max(1, map.width * map.tileDim);
   const height = Math.max(1, map.height * map.tileDim);
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
   const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
-  const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
+  const baked = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
+  const model = wellState ? { ...baked, features: baked.features.map((f) => (f.kind === 'well' ? { ...f, state: wellState } : f)) } : baked;
   // Behind the people: quieter work in thinner, sparser thread rather than a faded cloth.
   const strength = Math.max(0.3, Math.min(1, model.backdrop ?? 1));
   const options: LookOptions = {

@@ -697,6 +697,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     let artLayer: {
       map: typeof sim.map;
       look: WorldLook;
+      well: 'dry' | 'flowing' | null;
       canvas: HTMLCanvasElement;
       art: WorldArt;
       /** Sharper tiles of the world, by `${level}:${tx}:${ty}`, most recently used last. */
@@ -936,13 +937,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
       if (worldLook !== 'tiles') {
         // Art looks draw the world from its meaning, not from tile images.
-        if (!artLayer || artLayer.map !== map || artLayer.look !== worldLook) {
-          const art = createWorldArt(map, worldLook, tileSemanticsForMap(map));
+        if (!artLayer || artLayer.map !== map || artLayer.look !== worldLook || artLayer.well !== sim.wellWater) {
+          const art = createWorldArt(map, worldLook, tileSemanticsForMap(map), undefined, sim.wellWater);
           const canvas = document.createElement('canvas');
           canvas.width = art.width;
           canvas.height = art.height;
           art.drawRegion(canvas.getContext('2d')!, 0, 0, art.width, art.height);
-          artLayer = { map, look: worldLook, canvas, art, tiles: new Map() };
+          artLayer = { map, look: worldLook, well: sim.wellWater, canvas, art, tiles: new Map() };
         }
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(artLayer.canvas, 0, 0);
