@@ -361,7 +361,7 @@ describe('Simulation', () => {
     const narConv = sim.conversations.find((c) => c.participantIds.includes('narrator'));
     expect(narConv).toBeDefined();
     const reply = narConv!.messages.find((m) => m.senderId === 'narrator');
-    expect(reply?.senderName).toBe('Scribe');
+    expect(reply?.senderName).toBe('The Scribe');
     expect(reply?.text).toContain('Kukeri Fire Hearth');
   });
 
