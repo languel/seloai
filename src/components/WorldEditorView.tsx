@@ -178,7 +178,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const [brushSize, setBrushSize] = useState(1);
   const [brushSpacing, setBrushSpacing] = useState(1.25);
   const [patternRef, setPatternRef] = useState<string>('');
-  const [patternSize, setPatternSize] = useState(2);
+  const [patternSize, setPatternSize] = useState(3);
   const [scatterCount, setScatterCount] = useState(4);
   const [showWalk, setShowWalk] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -282,13 +282,36 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     for (const f of baked?.model.features ?? []) if (layerOf(f) === activeLayer && !f.id?.startsWith('amb-')) mark(f);
     into.forEach(mark);
     const used = new Set([...(baked?.model.features ?? []).map((f) => f.id), ...into.map((f) => f.id)]);
-    for (let tries = 0, made = 0; tries < scatterCount * 8 && made < scatterCount; tries++) {
+    // Patterns are never strewn like stickers: they go down on a regular half-drop lattice,
+    // anchored to the cloth so strokes line up, square and all one size.
+    const lattice = featureKind === 'star' || featureKind === 'rosette';
+    const latticeSpots: Array<[number, number]> = [];
+    if (lattice) {
+      const [lw] = sizeOf(featureKind);
+      const sp = lw + 1;
+      const reach = Math.max(r, sp * 1.5);
+      for (let col = Math.floor((cx - reach) / sp); col <= Math.ceil((cx + reach) / sp); col++) {
+        const drop = col % 2 ? Math.floor(sp / 2) : 0;
+        for (let row = Math.floor((cy - reach) / sp) - 1; row <= Math.ceil((cy + reach) / sp); row++) {
+          const x = col * sp;
+          const y = row * sp + drop;
+          if (Math.hypot(x + lw / 2 - cx, y + lw / 2 - cy) <= reach) latticeSpots.push([x, y]);
+        }
+      }
+    }
+    const tries = lattice ? latticeSpots.length : scatterCount * 8;
+    for (let k = 0, made = 0; k < tries && (lattice || made < scatterCount); k++) {
       const v = featureKind === 'house' ? nextVariant() : '';
       const [w, h] = sizeOf(featureKind, v);
-      const a = Math.random() * Math.PI * 2;
-      const d = Math.sqrt(Math.random()) * r;
-      const x = Math.round(cx + Math.cos(a) * d - w / 2);
-      const y = Math.round(cy + Math.sin(a) * d - h / 2);
+      let x: number;
+      let y: number;
+      if (lattice) [x, y] = latticeSpots[k];
+      else {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.sqrt(Math.random()) * r;
+        x = Math.round(cx + Math.cos(a) * d - w / 2);
+        y = Math.round(cy + Math.sin(a) * d - h / 2);
+      }
       if (!inside([x, y]) || !inside([x + w - 1, y + h - 1])) continue;
       let free = true;
       // Nothing is sown on water or walls, and nothing standing (a house, a tree) on a road.
@@ -305,7 +328,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       for (let n = 1; used.has(id); n++) id = `${uniqueId(`my-${featureKind}`)}-${n}`;
       used.add(id);
       // Houses lean a little, Chagall-wise; flat things may lie any way round.
-      const angle = featureKind === 'house' ? (Math.random() - 0.5) * 0.4 : ['field', 'vineyard', 'star', 'rosette'].includes(featureKind) ? (Math.random() - 0.5) * 0.8 : 0;
+      const angle = featureKind === 'house' ? (Math.random() - 0.5) * 0.4 : ['field', 'vineyard'].includes(featureKind) ? (Math.random() - 0.5) * 0.8 : 0;
       const f = placed(featureKind, x, y, id, angle, v);
       into.push(f);
       mark(f);
@@ -1042,7 +1065,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                     ))}
                   </select>
                   <span className="stitch-muted">Size</span>
-                  {[1, 2, 3, 4].map((n) => (
+                  {[2, 3, 4, 6].map((n) => (
                     <button key={n} type="button" aria-pressed={patternSize === n} onClick={() => setPatternSize(n)} className={`glyph-button rounded-sm px-1.5 py-0.5 ${patternSize === n ? 'glyph-on' : ''}`}>
                       {n}
                     </button>

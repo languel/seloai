@@ -106,7 +106,9 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
 - **Rotate**: the selected feature turns in 15° steps (`[` and `]`, or the buttons), as a
   `rotate` edit. Counted work (pattern medallions) stays square to the cloth.
 - **Patterns** in the palette: a dancing-ground medallion grown from a chosen reference
-  (or the world's own), sizes 1 to 4.
+  (or the world's own), large by default (3 cells; 2, 4 or 6). Patterns are never strewn
+  like stickers: one is placed as a large one-off, and scattering lays them square, one
+  size, on a regular half-drop lattice anchored to the cloth, so strokes line up.
 - **Edits list**: every hand edit, newest first, each removable, with "clear all edits".
 - New, open bundled, import and export a world pack. Undo and redo through the world store.
 
