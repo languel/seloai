@@ -12,9 +12,7 @@ import { buildSceneModel, semanticsFromTable, type SceneLayer, type TileSemantic
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { restitch } from './stitchStyles';
 import { STITCHES_PER_CELL } from './stitchedHouse';
-import { bounds, type Ink, type Pt, type Shape } from './shapes';
-import { motifShape } from './patternGrammar';
-import { personSign } from './textileLexicon';
+import { bounds, type Pt, type Shape } from './shapes';
 
 /** 'tiles' is the original tileset renderer; every other value is a look of the art system. */
 export type WorldLook = 'tiles' | PaletteName;
@@ -123,7 +121,7 @@ export interface FigureLooks {
   build?: FigureBuild;
   view?: FigureView;
   kind?: FigureKind;
-  /** `bold` for figures seen small; see `figureDetailFor`. */
+  /** `bold` draws the figure with heavier lines; the village always uses `full`. */
   detail?: FigureDetail;
   /** The maker's quirks (`FigureOptions.quirks`). On unless turned off in the Style panel. */
   quirks?: boolean;
@@ -133,14 +131,6 @@ export interface FigureLooks {
   traits?: FigureTraits;
   /** Hide the cloth behind the figure (the default) instead of letting it show between threads. */
   solid?: boolean;
-}
-
-/** Below this on-screen height a figure is drawn bold so its face still reads. */
-export const BOLD_BELOW_PX = 84;
-
-/** The detail level for a figure of this height in world pixels at this camera zoom. */
-export function figureDetailFor(heightPx: number, zoom: number): FigureDetail {
-  return heightPx * zoom < BOLD_BELOW_PX ? 'bold' : 'full';
 }
 
 /** How tall an art figure stands, in map cells, at character scale 1. */
@@ -273,64 +263,6 @@ export function getFigureRig(
   if (rigCache.size > 400) rigCache.clear();
   rigCache.set(key, rig);
   return rig;
-}
-
-/** A sign is this many stitches tall (see `personSign`), counting the row kept for a crown. */
-const SIGN_ROWS = 8;
-const SIGN_GARMENTS: readonly Ink[] = ['primary', 'secondary', 'accent', 'accent2'];
-const signCache = new Map<string, HTMLCanvasElement>();
-
-/**
- * How much of the full figure to show for its height on screen: 0 is the counted sign
- * alone (far away), 1 the full figure alone (close), with a short blend between.
- */
-export function figureNearness(heightPx: number, zoom: number): number {
-  const t = Math.max(0, Math.min(1, (heightPx * zoom - 46) / 18));
-  return t * t * (3 - 2 * t);
-}
-
-/**
- * A character as a small counted sign, for the far view: the same person written the way
- * the cloth writes everything else. It stands as tall as the full figure, treads as it
- * walks, and moves stitch by stitch on its own grid.
- */
-export function paintFigureSign(
-  ctx: CanvasRenderingContext2D,
-  id: string,
-  look: PaletteName,
-  tileX: number,
-  tileY: number,
-  tileDim: number,
-  heightPx: number,
-  options: { build?: FigureBuild; kind?: FigureKind; moving?: boolean; animFrame?: number; solid?: boolean } = {},
-) {
-  const { build = 'skirted', kind = 'human', solid = true } = options;
-  const stitch = Math.max(2, Math.round(heightPx / (SIGN_ROWS - 1)));
-  const step = Boolean(options.moving) && Math.floor((options.animFrame ?? 0) * 1.1) % 2 === 1;
-  const key = `${id}|${look}:${activeWorldThreadsId()}|${stitch}|${build}|${kind}|${step}|${solid}`;
-  let canvas = signCache.get(key);
-  if (!canvas) {
-    const garment = SIGN_GARMENTS[hashString(id) % SIGN_GARMENTS.length];
-    const grid = personSign(build === 'trousered' ? 'trousered' : 'skirted', garment, step, kind !== 'human');
-    const unit = stitch * DENSITY;
-    canvas = document.createElement('canvas');
-    canvas.width = grid.w * unit;
-    canvas.height = grid.h * unit;
-    const signCtx = canvas.getContext('2d')!;
-    const shapes = [motifShape(grid, 1)];
-    const origin: [number, number] = [canvas.width / 2, canvas.height / 2];
-    const lookOptions: LookOptions = { unit, origin, palette: clothPalette(look), seed: hashString(id) };
-    if (solid) paintBacking(signCtx, shapes, unit, origin, lookOptions.palette.ground);
-    if (isThread(look)) renderEmbroidery(signCtx, shapes, lookOptions);
-    else renderLineArt(signCtx, shapes, lookOptions);
-    if (signCache.size > 300) signCache.clear();
-    signCache.set(key, canvas);
-  }
-  const w = canvas.width / DENSITY;
-  const h = canvas.height / DENSITY;
-  // On its own stitch grid: a sign moves a whole stitch at a time.
-  const snap = (v: number) => Math.round(v / stitch) * stitch;
-  ctx.drawImage(canvas, snap(tileX + tileDim / 2 - w / 2), snap(tileY + tileDim - 3 - h), w, h);
 }
 
 const SAD_WORDS = /\b(no|never|not|drought|curse|cursed|blood|fear|afraid|dark|lie|lied|liar|beware|sacrifice|demand|dead|death|thirst|steal|stole|angry|hush|warn)\b/i;

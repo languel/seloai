@@ -339,7 +339,7 @@ a world should be written in it, not arranged on top of it.
   `personSign` in the lexicon): below about 46 px on screen a person is a counted sign as
   tall as the full figure, in a garment thread of their own, treading as they walk and
   moving a stitch at a time; above about 64 px the full figure; a blend between. Style
-  panel, "People from afar": Always in full (default) or Stitched signs. Off by default for now, on the owner's word (2026-11-17). Works in every
+  panel option, removed on 2026-11-17 at the owner's word: characters are always drawn in full, with no level-of-detail switching by zoom (the "bold" small-figure detail went too). Worked in every
   world, not only textile ones.
 - **Solid figures, done** (owner: "characters that are generally not transparent"): each
   part of a figure, and each sign, is backed with cloth colour under its threads, closed

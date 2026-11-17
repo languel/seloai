@@ -75,8 +75,6 @@ export interface AestheticSettings {
   figureQuirks: boolean;
   /** In the art looks, figures hide the cloth behind them instead of letting its stitches show through. */
   figureSolid: boolean;
-  /** In the art looks, people are worked as small counted signs when seen from afar. */
-  figureFarSigns: boolean;
   /** How speech and thoughts are shown: in bubbles, or embroidered onto the cloth as woven text. */
   speechStyle: 'bubbles' | 'woven';
   /** The hand woven letters are worked in. */
@@ -121,7 +119,6 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   figureTurns: true,
   figureQuirks: true,
   figureSolid: true,
-  figureFarSigns: false,
   speechStyle: 'woven',
   wovenHand: 'script',
   wovenSize: 1,
@@ -424,7 +421,6 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
     figureTurns: typeof raw?.figureTurns === 'boolean' ? raw.figureTurns : DEFAULT_AESTHETIC_SETTINGS.figureTurns,
     figureQuirks: typeof raw?.figureQuirks === 'boolean' ? raw.figureQuirks : DEFAULT_AESTHETIC_SETTINGS.figureQuirks,
     figureSolid: typeof raw?.figureSolid === 'boolean' ? raw.figureSolid : DEFAULT_AESTHETIC_SETTINGS.figureSolid,
-    figureFarSigns: typeof raw?.figureFarSigns === 'boolean' ? raw.figureFarSigns : DEFAULT_AESTHETIC_SETTINGS.figureFarSigns,
     speechStyle: raw?.speechStyle === 'bubbles' || raw?.speechStyle === 'woven' ? raw.speechStyle : DEFAULT_AESTHETIC_SETTINGS.speechStyle,
     wovenHand: (['satin', 'script', 'ductus', 'counted'] as const).includes(raw?.wovenHand as never) ? raw!.wovenHand! : DEFAULT_AESTHETIC_SETTINGS.wovenHand,
     wovenSize: typeof raw?.wovenSize === 'number' ? Math.max(0.4, Math.min(2, raw.wovenSize)) : DEFAULT_AESTHETIC_SETTINGS.wovenSize,

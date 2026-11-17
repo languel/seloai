@@ -236,11 +236,6 @@ describe('figures seen small', () => {
     }
   });
 
-  it('picks bold below the on-screen height threshold', async () => {
-    const { figureDetailFor } = await import('../gameLook');
-    expect(figureDetailFor(56, 1.15)).toBe('bold');
-    expect(figureDetailFor(56, 2)).toBe('full');
-  });
 });
 
 describe('tile meanings in world packs', () => {
