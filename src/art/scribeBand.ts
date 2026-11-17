@@ -98,10 +98,13 @@ export class ScribeBand {
         const y = top - 10;
         const away = 100000;
         ctx.save();
+        // Shadows are measured in device pixels and ignore the transform, so scale both the
+        // offset and the blur by it (on a 2x screen an unscaled offset lands off-screen).
+        const scale = ctx.getTransform().a || 1;
         ctx.globalAlpha = 0.82 * fade;
         ctx.shadowColor = ground;
-        ctx.shadowBlur = soft;
-        ctx.shadowOffsetX = away;
+        ctx.shadowBlur = soft * scale;
+        ctx.shadowOffsetX = away * scale;
         ctx.fillStyle = ground;
         ctx.beginPath();
         ctx.roundRect(x - away, y, w, h, 12);
