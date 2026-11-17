@@ -212,6 +212,16 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     | null
   >(null);
   const hover = useRef<[number, number] | null>(null);
+
+  // Over the map, a pinch (ctrl+wheel) or scroll belongs to the map: stop the page from
+  // zooming or scrolling. React's wheel handlers are passive and cannot do this.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const hold = (event: WheelEvent) => event.preventDefault();
+    canvas.addEventListener('wheel', hold, { passive: false });
+    return () => canvas.removeEventListener('wheel', hold);
+  }, []);
   const [frame, setFrame] = useState(0);
   const redraw = () => setFrame((f) => f + 1);
 

@@ -645,6 +645,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
     return Math.max(0.05, Math.min(0.45, fit));
   };
 
+  // Over the map, a pinch (ctrl+wheel) or scroll belongs to the map: stop the page from
+  // zooming or scrolling. React's wheel handlers are passive and cannot do this.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const hold = (event: WheelEvent) => event.preventDefault();
+    canvas.addEventListener('wheel', hold, { passive: false });
+    return () => canvas.removeEventListener('wheel', hold);
+  }, []);
+
   // Center camera initially
   useEffect(() => {
     const canvas = canvasRef.current;
