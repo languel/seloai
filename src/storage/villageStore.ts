@@ -1,3 +1,4 @@
+import { normalizeWorldContext } from '../world/worldContext';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, withBundledTileMeanings } from '../world/packs';
 import type { WorldContext } from '../world/worldContext';
 import {
@@ -423,6 +424,19 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
       format: 'seloai-characters-v1',
       villagers: (data as VillagerConfig[]).map(ensureVillagerSprite),
     };
+  }
+
+  // A story pack (format "seloai-world-pack"): the premise, the opening, the cast and, if it
+  // has one, the place. Without a map it goes onto the world already loaded.
+  if (data.format === 'seloai-world-pack') {
+    const pack: ParsedImportBundle = { format: data.format, world: normalizeWorldContext(data.context) };
+    if (typeof data.story?.openingDirective === 'string' && data.story.openingDirective.trim() && !pack.world!.opening) {
+      pack.world = { ...pack.world!, opening: data.story.openingDirective };
+    }
+    if (data.map && Array.isArray(data.map.bgTiles) && typeof data.map.width === 'number') pack.map = withBundledTileMeanings(data.map as VillageMap);
+    if (Array.isArray(data.cast) && data.cast.length > 0) pack.villagers = (data.cast as VillagerConfig[]).map(ensureVillagerSprite);
+    if (typeof data.story?.focalCharacterId === 'string') pack.focalWorldlineId = data.story.focalCharacterId;
+    return pack;
   }
 
   // Support bare VillageMap JSON

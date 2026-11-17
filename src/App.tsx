@@ -1,10 +1,11 @@
 import { startSimulationDriver } from './app/simulationDriver';
 import type { WorldCommand } from './world/commands';
 import { WorldStore } from './world/worldStore';
-import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext } from './world/packs';
+import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, tileSemanticsForMap } from './world/packs';
+import { createWorldArt } from './art/gameLook';
 import { GENERIC_WORLD_CONTEXT } from './world/worldContext';
 import { createBrowserSimulation } from './app/browserSimulation';
-import { Glyph, GlyphButton, GlyphTip } from './components/Glyph';
+import { GlyphButton } from './components/Glyph';
 import { StitchScope } from './components/Stitch';
 import { shellVars } from './art/uiChrome';
 import type { PaletteName } from './art/looks';
@@ -88,7 +89,8 @@ export function App() {
   const [villagers, setVillagers] = useState<VillagerConfig[]>([]);
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
-  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  // One side panel at a time: Style or World & Data. In the village it takes the inspector's place.
+  const [sidePanel, setSidePanel] = useState<'style' | 'data' | null>(null);
   const [aestheticSettings, setAestheticSettings] = useState<AestheticSettings>(() =>
     loadAestheticSettings(),
   );
@@ -114,7 +116,6 @@ export function App() {
   const syncedCastRef = useRef<VillagerConfig[] | null>(null);
   const [, setHistoryTick] = useState(0);
   const resetDialogRef = useRef<HTMLDialogElement | null>(null);
-  const dataDialogRef = useRef<HTMLDialogElement | null>(null);
   const autoLoadAttemptedRef = useRef(false);
   const [showVoiceNudge, setShowVoiceNudge] = useState(false);
   // Until the startup check has decided which voice to load, the story waits.
@@ -528,6 +529,39 @@ export function App() {
     URL.revokeObjectURL(url);
   };
 
+  const saveBlob = (blob: Blob | null, name: string) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+  const imageName = (what: string) => `${(map?.name ?? 'world').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${what}.png`;
+  /** The view on screen now (the village or the editor), as a picture. */
+  const handleExportViewImage = () => {
+    const canvas = [...document.querySelectorAll<HTMLCanvasElement>('main canvas')].sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
+    if (!canvas) return setDataNotice('Nothing to take a picture of here.');
+    canvas.toBlob((blob) => saveBlob(blob, imageName('view')), 'image/png');
+    setDataNotice('Saved a picture of this view.');
+  };
+  /** The whole world, drawn sharp at up to three times its size, without the people. */
+  const handleExportTapestry = () => {
+    if (!map) return;
+    const look = (aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName;
+    const art = createWorldArt(map, look, tileSemanticsForMap(map), undefined, simRef.current?.wellWater ?? null);
+    const scale = Math.max(1, Math.min(3, 12000 / art.width, 12000 / art.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(art.width * scale);
+    canvas.height = Math.round(art.height * scale);
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(scale, scale);
+    art.drawRegion(ctx, 0, 0, art.width, art.height);
+    canvas.toBlob((blob) => saveBlob(blob, imageName('tapestry')), 'image/png');
+    setDataNotice(`Saved the whole tapestry (${canvas.width}×${canvas.height}).`);
+  };
+
   const handleExportBundle = () => {
     if (!map || !settings) return;
     downloadJson(
@@ -619,6 +653,12 @@ export function App() {
         }
         if (parsed.focalWorldlineId) {
           simRef.current?.setFocalWorldline(parsed.focalWorldlineId);
+        }
+        // A new story (a world without its conversations) starts afresh: greetings, then the
+        // Scribe's prologue.
+        if (parsed.world && !parsed.conversations) {
+          simRef.current?.resetStory();
+          parts.push('a fresh story');
         }
         persistAll(nextMap, nextVillagers, nextSettings);
         setDataNotice(`Imported ${parts.join(', ') || 'bundle'}.`);
@@ -723,7 +763,6 @@ export function App() {
     setSettings({ ...s.modelSettings });
     savePersistedState({ ...s, savedAt: Date.now() });
     setSelectedSavedWorldId(target.id);
-    dataDialogRef.current?.close();
     setDataNotice(`Loaded saved world "${target.name}" from memory.`);
   };
 
@@ -786,7 +825,6 @@ export function App() {
       void sim?.sendUserAddressedMessage(pack.story.focalCharacterId, pack.story.openingDirective, false);
     }
     persistAll(pack.map, nextVillagers, settings);
-    dataDialogRef.current?.close();
     setTab('village');
     setDataNotice(`Loaded "${pack.name}".`);
   };
@@ -829,259 +867,20 @@ export function App() {
 
 
   // Style: in the village it takes the inspector's place; elsewhere it docks on the right.
-  const stylePanel = (fill: boolean) => (
-    <AestheticStudioPanel
-      settings={aestheticSettings}
-      tokens={aestheticTokens}
-      worldName={map.name}
-      appTheme={theme}
-      onChangeAppTheme={setTheme}
-      onChange={handleUpdateAesthetic}
-      onClose={() => setStylePanelOpen(false)}
-      fill={fill}
-    />
-  );
-
-  return (
-    <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
-    <div className={`flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
-      {showVoiceNudge && settings ? <VoiceNudge settings={settings} onClose={() => setShowVoiceNudge(false)} /> : null}
-      <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
-        {/* Navigation Tabs (glyph-only with hover labels) */}
-        <nav aria-label="Workspace Views" className="flex items-center gap-1">
-          {(
-            [
-              ['village', 'Village', 'village'],
-              ['observatory', 'Control Room', 'observatory'],
-              ['world', 'World Editor', 'world'],
-              ['patterns', 'Pattern Studio', 'tapestry'],
-              ['characters', 'Characters', 'characters'],
-              ['monitor', 'AI & Voice Monitor', 'monitor'],
-              ['guides', 'Guides & Templates', 'guides'],
-            ] as const
-          ).map(([id, label, glyph]) => {
-            const active = tab === id;
-            const tabBtn = (
-              <GlyphButton
-                key={id}
-                glyph={glyph}
-                label={label}
-                onClick={() => setTab(id)}
-                aria-current={active ? 'page' : undefined}
-                className={active ? 'glyph-on' : ''}
-                size={17}
-              >
-                {id === 'monitor' && (
-                  <span className="flex flex-col items-center gap-0.5" aria-hidden="true">
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        textStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
-                      }`}
-                    />
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        omniStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
-                      }`}
-                    />
-                  </span>
-                )}
-              </GlyphButton>
-            );
-
-            if (id === 'guides') {
-              return (
-                <React.Fragment key={id}>
-                  <GlyphButton
-                    glyph="style"
-                    label="Style: the look of the world and interface"
-                    onClick={() => setStylePanelOpen((o) => !o)}
-                    pressed={stylePanelOpen}
-                    size={17}
-                  />
-                  {tabBtn}
-                </React.Fragment>
-              );
-            }
-
-            return tabBtn;
-          })}
-        </nav>
-
-        {/* Global Utilities */}
-        <div className="flex items-center gap-1">
-          <div
-            title={`Current world: ${map.name} (click to switch demo or saved world)`}
-            className="relative inline-flex h-7 max-w-[165px] sm:max-w-[200px] items-center gap-1 rounded-sm bg-transparent px-2 text-[11px] font-medium text-ink hover:bg-ink/5 focus-within:ring-1 focus-within:ring-sage"
-          >
-            <Sparkles className="pointer-events-none h-3.5 w-3.5 shrink-0 text-sage" />
-            <span className="min-w-0 truncate whitespace-nowrap">
-              {abbreviateWorldName(map.name, 20)}
-            </span>
-            <ChevronDown className="pointer-events-none h-3 w-3 shrink-0 text-muted" />
-            <select
-              aria-label="Switch demo or saved world"
-              value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                if (v.startsWith('demo:')) {
-                  void handleLoadDemoWorld(v.slice(5) as DemoWorldId);
-                } else if (v.startsWith('saved:')) {
-                  handleLoadSavedWorld(v.slice(6));
-                } else if (v === 'action:save-current') {
-                  setDataNotice(null);
-                  setSaveWorldName(map.name);
-                  dataDialogRef.current?.showModal();
-                }
-              }}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-            >
-              <option value="" disabled>
-                Current: {map.name}
-              </option>
-              <optgroup label="Demo Worlds">
-                {DEMO_WORLDS.map((demo) => (
-                  <option key={demo.id} value={`demo:${demo.id}`}>
-                    {demo.label}
-                  </option>
-                ))}
-              </optgroup>
-              {savedWorlds.length > 0 && (
-                <optgroup label="Saved Worlds (Memory)">
-                  {savedWorlds.map((slot) => (
-                    <option key={slot.id} value={`saved:${slot.id}`}>
-                      {slot.name} ({slot.width}×{slot.height})
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              <option value="action:save-current">+ Save Current World to Memory…</option>
-            </select>
-          </div>
-
-          <GlyphButton
-            glyph="data"
-            label="New world or story, export and database"
-            tipSide="below-left"
-            onClick={() => {
-              setDataNotice(null);
-              dataDialogRef.current?.showModal();
-            }}
-          />
-
-          <GlyphButton glyph="undo" label="Undo world edit" tipSide="below-left" onClick={handleUndoWorld} disabled={!storeRef.current.canUndo} />
-
-          <GlyphButton glyph="redo" label="Redo world edit" tipSide="below-left" onClick={handleRedoWorld} disabled={!storeRef.current.canRedo} />
-
-          <GlyphButton glyph="exportFile" label="Export the whole project as JSON" tipSide="below-left" onClick={handleExportBundle} />
-
-          <label aria-label="Import a village from JSON" className="glyph-button group relative inline-flex h-7 min-w-7 cursor-pointer items-center justify-center rounded-sm px-1">
-            <Glyph name="importFile" size={16} />
-            <input type="file" accept="application/json" className="sr-only" onChange={handleImportBundle} />
-            <GlyphTip side="below-left">Import a village from JSON</GlyphTip>
-          </label>
-
-          <GlyphButton glyph="reset" label="Reset the village to defaults" tipSide="below-left" onClick={() => resetDialogRef.current?.showModal()} />
-
-          <GlyphButton
-            glyph="panel"
-            label={sidebarOpen ? 'Hide the inspector panel' : 'Show the inspector panel'}
-            tipSide="below-left"
-            onClick={toggleSidebarOpen}
-            pressed={sidebarOpen}
-          />
-        </div>
-      </header>
-
-      <div className="flex flex-1 min-h-0">
-      <main className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
-        {tab === 'village' && (
-          <VillageView
-            sim={simRef.current}
-            villagers={villagers}
-            settings={settings}
-            onUpdateSettings={handleUpdateSettings}
-            onOpenMonitor={() => setTab('monitor')}
-            aestheticSettings={aestheticSettings}
-            onUpdateAesthetic={handleUpdateAesthetic}
-            sidebarOpen={sidebarOpen}
-            sidebarSwap={stylePanelOpen ? stylePanel(true) : undefined}
-            onResetStory={() => void handleResetStory()}
-          />
-        )}
-        {tab === 'observatory' && (
-          <ObservatoryView
-            sim={simRef.current}
-            look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName}
-            villagers={villagers}
-            settings={settings}
-            onJumpToVillage={(villagerId) => {
-              if (villagerId) simRef.current?.setFocalWorldline(villagerId);
-              setTab('village');
-            }}
-          />
-        )}
-        {tab === 'patterns' && (
-          <PatternStudioView look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName} />
-        )}
-        {tab === 'world' && (
-          <WorldEditorView
-            map={map}
-            look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName}
-            dispatch={handleWorldCommand}
-            canUndo={storeRef.current.canUndo}
-            canRedo={storeRef.current.canRedo}
-            onUndo={handleUndoWorld}
-            onRedo={handleRedoWorld}
-          />
-        )}
-        {tab === 'characters' && (
-          <CharacterEditorView
-            villagers={villagers}
-            map={map}
-            settings={settings}
-            onApplyVillagers={handleApplyVillagers}
-            onUpdateSettings={handleUpdateSettings}
-            worldLook={aestheticSettings.worldLook}
-            figureTurns={aestheticSettings.figureTurns}
-            figureQuirks={aestheticSettings.figureQuirks}
-          />
-        )}
-        {tab === 'monitor' && (
-          <MonitorView
-            sim={simRef.current}
-            villagers={villagers}
-            settings={settings}
-            onUpdateSettings={handleUpdateSettings}
-          />
-        )}
-        {tab === 'guides' && <AssetGuideView />}
-      </main>
-      {/* Style docks on the right beside whatever view is open, so changes show as they are made. */}
-      {stylePanelOpen && tab !== 'village' && stylePanel(false)}
+  /** World & Data: worlds, the story, saving, files and images; a side panel like Style. */
+  const dataPanel = (fill: boolean) => (
+    <aside
+      aria-label="World and data"
+      className={`flex h-full ${fill ? 'w-full' : 'w-[min(92vw,22rem)] border-l border-borderFolk'} shrink-0 flex-col overflow-hidden bg-card text-ink`}
+    >
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-borderFolk px-3 py-2">
+        <h2 className="text-sm font-bold">World &amp; Data</h2>
+        <button type="button" onClick={() => setSidePanel(null)} aria-label="Close World and Data" className="rounded-sm px-1.5 py-0.5 text-xs text-muted hover:text-ink">
+          Close
+        </button>
       </div>
-
-      {/* World, Story & Data Management Modal */}
-      <dialog
-        ref={dataDialogRef}
-        aria-labelledby="data-dialog-title"
-        className="w-full max-w-lg rounded-sm border border-borderFolk bg-card p-3.5 text-ink"
-      >
-        <div className="flex items-center justify-between gap-2 border-b border-borderFolk pb-2">
-          <h2 id="data-dialog-title" className="text-sm font-bold">
-            World, Story &amp; Data
-          </h2>
-          <form method="dialog">
-            <button
-              value="close"
-              className="rounded-sm border border-borderFolk bg-surface px-2 py-0.5 text-xs text-muted hover:text-ink"
-            >
-              Close
-            </button>
-          </form>
-        </div>
-
-        <div className="mt-2.5 space-y-3 text-xs">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 thin-scroll">
+        <div className="space-y-3 text-xs">
           {dataNotice && (
             <div className="rounded-sm border border-sage/50 bg-surface px-2 py-1 text-[11px] text-sage">
               {dataNotice}
@@ -1226,14 +1025,25 @@ export function App() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  dataDialogRef.current?.close();
-                  resetDialogRef.current?.showModal();
-                }}
+                onClick={() => resetDialogRef.current?.showModal()}
                 className="rounded-sm border border-crimson/40 bg-surface px-2 py-1.5 text-left text-crimson hover:border-crimson"
               >
                 <div className="font-semibold">Reset Defaults</div>
                 <div className="text-[10px] text-muted">Zmeyovo map &amp; cast</div>
+              </button>
+            </div>
+          </section>
+
+          <section className="space-y-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">Images</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              <button type="button" onClick={handleExportViewImage} className="rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-left hover:border-ink/40">
+                <div className="font-semibold">This view (.png)</div>
+                <div className="text-[10px] text-muted">What is on screen now, people included</div>
+              </button>
+              <button type="button" onClick={handleExportTapestry} className="rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-left hover:border-ink/40">
+                <div className="font-semibold">Whole tapestry (.png)</div>
+                <div className="text-[10px] text-muted">The whole world, sharp, at print size</div>
               </button>
             </div>
           </section>
@@ -1297,7 +1107,241 @@ export function App() {
             </label>
           </section>
         </div>
-      </dialog>
+      </div>
+    </aside>
+  );
+  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : null);
+
+  const stylePanel = (fill: boolean) => (
+    <AestheticStudioPanel
+      settings={aestheticSettings}
+      tokens={aestheticTokens}
+      worldName={map.name}
+      appTheme={theme}
+      onChangeAppTheme={setTheme}
+      onChange={handleUpdateAesthetic}
+      onClose={() => setSidePanel(null)}
+      fill={fill}
+    />
+  );
+
+  return (
+    <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
+    <div className={`flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
+      {showVoiceNudge && settings ? <VoiceNudge settings={settings} onClose={() => setShowVoiceNudge(false)} /> : null}
+      <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
+        {/* Navigation Tabs (glyph-only with hover labels) */}
+        <nav aria-label="Workspace Views" className="flex items-center gap-1">
+          {(
+            [
+              ['village', 'Village', 'village'],
+              ['observatory', 'Control Room', 'observatory'],
+              ['world', 'World Editor', 'world'],
+              ['patterns', 'Pattern Studio', 'tapestry'],
+              ['characters', 'Characters', 'characters'],
+              ['monitor', 'AI & Voice Monitor', 'monitor'],
+              ['guides', 'Guides & Templates', 'guides'],
+            ] as const
+          ).map(([id, label, glyph]) => {
+            const active = tab === id;
+            const tabBtn = (
+              <GlyphButton
+                key={id}
+                glyph={glyph}
+                label={label}
+                onClick={() => setTab(id)}
+                aria-current={active ? 'page' : undefined}
+                className={active ? 'glyph-on' : ''}
+                size={17}
+              >
+                {id === 'monitor' && (
+                  <span className="flex flex-col items-center gap-0.5" aria-hidden="true">
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        textStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
+                      }`}
+                    />
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        omniStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
+                      }`}
+                    />
+                  </span>
+                )}
+              </GlyphButton>
+            );
+
+            if (id === 'village') {
+              return (
+                <React.Fragment key={id}>
+                  <GlyphButton
+                    glyph="data"
+                    label="World & Data: worlds, the story, saving, files and images"
+                    onClick={() => {
+                      setDataNotice(null);
+                      setSidePanel((p) => (p === 'data' ? null : 'data'));
+                    }}
+                    pressed={sidePanel === 'data'}
+                    size={17}
+                  />
+                  {tabBtn}
+                </React.Fragment>
+              );
+            }
+
+            if (id === 'guides') {
+              return (
+                <React.Fragment key={id}>
+                  <GlyphButton
+                    glyph="style"
+                    label="Style: the look of the world and interface"
+                    onClick={() => setSidePanel((p) => (p === 'style' ? null : 'style'))}
+                    pressed={sidePanel === 'style'}
+                    size={17}
+                  />
+                  {tabBtn}
+                </React.Fragment>
+              );
+            }
+
+            return tabBtn;
+          })}
+        </nav>
+
+        {/* Global Utilities */}
+        <div className="flex items-center gap-1">
+          <div
+            title={`Current world: ${map.name} (click to switch demo or saved world)`}
+            className="relative inline-flex h-7 max-w-[165px] sm:max-w-[200px] items-center gap-1 rounded-sm bg-transparent px-2 text-[11px] font-medium text-ink hover:bg-ink/5 focus-within:ring-1 focus-within:ring-sage"
+          >
+            <Sparkles className="pointer-events-none h-3.5 w-3.5 shrink-0 text-sage" />
+            <span className="min-w-0 truncate whitespace-nowrap">
+              {abbreviateWorldName(map.name, 20)}
+            </span>
+            <ChevronDown className="pointer-events-none h-3 w-3 shrink-0 text-muted" />
+            <select
+              aria-label="Switch demo or saved world"
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v) return;
+                if (v.startsWith('demo:')) {
+                  void handleLoadDemoWorld(v.slice(5) as DemoWorldId);
+                } else if (v.startsWith('saved:')) {
+                  handleLoadSavedWorld(v.slice(6));
+                } else if (v === 'action:save-current') {
+                  setDataNotice(null);
+                  setSaveWorldName(map.name);
+                  setSidePanel('data');
+                }
+              }}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            >
+              <option value="" disabled>
+                Current: {map.name}
+              </option>
+              <optgroup label="Demo Worlds">
+                {DEMO_WORLDS.map((demo) => (
+                  <option key={demo.id} value={`demo:${demo.id}`}>
+                    {demo.label}
+                  </option>
+                ))}
+              </optgroup>
+              {savedWorlds.length > 0 && (
+                <optgroup label="Saved Worlds (Memory)">
+                  {savedWorlds.map((slot) => (
+                    <option key={slot.id} value={`saved:${slot.id}`}>
+                      {slot.name} ({slot.width}×{slot.height})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <option value="action:save-current">+ Save Current World to Memory…</option>
+            </select>
+          </div>
+
+          <GlyphButton glyph="undo" label="Undo world edit" tipSide="below-left" onClick={handleUndoWorld} disabled={!storeRef.current.canUndo} />
+
+          <GlyphButton glyph="redo" label="Redo world edit" tipSide="below-left" onClick={handleRedoWorld} disabled={!storeRef.current.canRedo} />
+
+          <GlyphButton
+            glyph="panel"
+            label={sidebarOpen ? 'Hide the inspector panel' : 'Show the inspector panel'}
+            tipSide="below-left"
+            onClick={toggleSidebarOpen}
+            pressed={sidebarOpen}
+          />
+        </div>
+      </header>
+
+      <div className="flex flex-1 min-h-0">
+      <main className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
+        {tab === 'village' && (
+          <VillageView
+            sim={simRef.current}
+            villagers={villagers}
+            settings={settings}
+            onUpdateSettings={handleUpdateSettings}
+            onOpenMonitor={() => setTab('monitor')}
+            aestheticSettings={aestheticSettings}
+            onUpdateAesthetic={handleUpdateAesthetic}
+            sidebarOpen={sidebarOpen}
+            sidebarSwap={sidePanel ? sidePanelNode(true) : undefined}
+            onResetStory={() => void handleResetStory()}
+          />
+        )}
+        {tab === 'observatory' && (
+          <ObservatoryView
+            sim={simRef.current}
+            look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName}
+            villagers={villagers}
+            settings={settings}
+            onJumpToVillage={(villagerId) => {
+              if (villagerId) simRef.current?.setFocalWorldline(villagerId);
+              setTab('village');
+            }}
+          />
+        )}
+        {tab === 'patterns' && (
+          <PatternStudioView look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName} />
+        )}
+        {tab === 'world' && (
+          <WorldEditorView
+            map={map}
+            look={(aestheticSettings.worldLook === 'tiles' ? 'festive' : aestheticSettings.worldLook) as PaletteName}
+            dispatch={handleWorldCommand}
+            canUndo={storeRef.current.canUndo}
+            canRedo={storeRef.current.canRedo}
+            onUndo={handleUndoWorld}
+            onRedo={handleRedoWorld}
+          />
+        )}
+        {tab === 'characters' && (
+          <CharacterEditorView
+            villagers={villagers}
+            map={map}
+            settings={settings}
+            onApplyVillagers={handleApplyVillagers}
+            onUpdateSettings={handleUpdateSettings}
+            worldLook={aestheticSettings.worldLook}
+            figureTurns={aestheticSettings.figureTurns}
+            figureQuirks={aestheticSettings.figureQuirks}
+          />
+        )}
+        {tab === 'monitor' && (
+          <MonitorView
+            sim={simRef.current}
+            villagers={villagers}
+            settings={settings}
+            onUpdateSettings={handleUpdateSettings}
+          />
+        )}
+        {tab === 'guides' && <AssetGuideView />}
+      </main>
+      {/* Style docks on the right beside whatever view is open, so changes show as they are made. */}
+      {sidePanel && tab !== 'village' && sidePanelNode(false)}
+      </div>
+
 
       {/* Native Accessible Modal Dialog for Reset Confirmation */}
       <dialog

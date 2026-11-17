@@ -31,6 +31,8 @@ export interface WorldContext {
   fallbackLandmark: string;
   /** One or two sentences of situation, given to models as grounding. */
   premise: string;
+  /** How the story should open: guidance for the Scribe's prologue (optional). */
+  opening?: string;
   /** Visual theme id for the interface, if the world declares one. */
   themeId?: string;
   storyLines: StoryLinePools;
@@ -44,6 +46,31 @@ export const GENERIC_WORLD_CONTEXT: WorldContext = {
   premise: '',
   storyLines: { openingBeats: [], closingBeats: [], characterLines: {}, sharedLines: [] },
 };
+
+/**
+ * A world context from a hand-written file (a student's story pack), with anything missing
+ * filled from the neutral default, so a short file still loads.
+ */
+export function normalizeWorldContext(raw: unknown): WorldContext {
+  const w = (raw && typeof raw === 'object' ? raw : {}) as Partial<WorldContext>;
+  const lines = (w.storyLines ?? {}) as Partial<StoryLinePools>;
+  const text = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback);
+  return {
+    settingName: text(w.settingName, GENERIC_WORLD_CONTEXT.settingName),
+    settingKind: text(w.settingKind, GENERIC_WORLD_CONTEXT.settingKind) || 'village',
+    playerName: text(w.playerName, GENERIC_WORLD_CONTEXT.playerName) || 'Traveler',
+    fallbackLandmark: text(w.fallbackLandmark, GENERIC_WORLD_CONTEXT.fallbackLandmark),
+    premise: text(w.premise, ''),
+    ...(typeof w.opening === 'string' && w.opening.trim() ? { opening: w.opening } : {}),
+    ...(typeof w.themeId === 'string' ? { themeId: w.themeId } : {}),
+    storyLines: {
+      openingBeats: Array.isArray(lines.openingBeats) ? lines.openingBeats.filter((l) => typeof l === 'string') : [],
+      closingBeats: Array.isArray(lines.closingBeats) ? lines.closingBeats.filter((l) => typeof l === 'string') : [],
+      characterLines: lines.characterLines && typeof lines.characterLines === 'object' ? lines.characterLines : {},
+      sharedLines: Array.isArray(lines.sharedLines) ? lines.sharedLines : [],
+    },
+  };
+}
 
 /** "Zmeyovo" when the place is named, otherwise "the village". */
 export function placeName(world: WorldContext): string {

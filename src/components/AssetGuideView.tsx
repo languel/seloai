@@ -1,121 +1,185 @@
+/**
+ * Guides & Templates: how to make your own interactive story in SeloAI (a world, a cast and
+ * a story), written for students, with templates to copy or download and prompts for a chat
+ * assistant to help draft them.
+ */
 import React, { useState } from 'react';
-import { BookOpen, Check, Copy, Download, HelpCircle, Sparkles } from 'lucide-react';
+import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
-import { resolvePublicUrl } from '../utils/assetUrl';
 
-interface PromptTemplate {
+/** A story pack: the premise, the opening and the cast, imported onto a world you built. */
+const STORY_PACK_TEMPLATE = `{
+  "format": "seloai-world-pack",
+  "version": 1,
+  "id": "the-dark-lamp",
+  "name": "The Dark Lamp",
+  "description": "A harbour town whose lighthouse has gone dark on the night a ship is due.",
+  "context": {
+    "settingName": "Gullrock",
+    "settingKind": "harbour town",
+    "playerName": "Traveler",
+    "fallbackLandmark": "the quay",
+    "premise": "The lighthouse lamp went dark last night and the supply ship is due at dawn. Someone in Gullrock broke it, and everyone has a reason to want the ship to stay away.",
+    "storyLines": {
+      "openingBeats": ["Fog rolls in off the water as {a} and {b} meet by {place}."],
+      "closingBeats": ["{a} glances back at the dark tower as the talk with {b} ends."],
+      "characterLines": {
+        "keeper": { "lines": ["{partner}, the lamp did not break itself.", "I trimmed that wick myself at sunset."] }
+      },
+      "sharedLines": [
+        { "lines": ["Did you hear a ship's bell out there?"], "whenMentioned": ["ship", "bell"] }
+      ]
+    }
+  },
+  "story": {
+    "openingDirective": "Open at dusk on the quay, the lamp cold and the fog coming in.",
+    "focalCharacterId": "keeper"
+  },
+  "cast": [
+    {
+      "id": "keeper",
+      "name": "Ada Bell",
+      "role": "Lighthouse keeper",
+      "identity": "Stubborn and kind, she has kept the #Lighthouse for thirty years and blames herself for every wreck.",
+      "plan": "Find out who broke the lamp before dawn.",
+      "voiceStyle": "Low and salty, few words.",
+      "voice": { "gender": "female", "language": "Danish", "pitchSemitones": -0.5, "speakingRate": 0.95, "warmthDb": 1 },
+      "figure": { "build": "skirted" },
+      "accentColor": "#2f5d7a",
+      "spritesheetId": "modular",
+      "homeTile": { "x": 20, "y": 14 },
+      "speed": 0.8
+    },
+    {
+      "id": "smuggler",
+      "name": "Tobin Reed",
+      "role": "Net mender",
+      "identity": "Charming and in debt; the ship carries the man he owes money to. He is never far from the #Quay.",
+      "plan": "Keep everyone talking about anything but the lamp.",
+      "voiceStyle": "Quick, warm, a little too friendly.",
+      "voice": { "gender": "male", "language": "Italian", "pitchSemitones": 0, "speakingRate": 1.02, "warmthDb": 2 },
+      "figure": { "build": "trousered" },
+      "accentColor": "#8a4b2a",
+      "spritesheetId": "modular",
+      "homeTile": { "x": 26, "y": 18 },
+      "speed": 0.85
+    }
+  ]
+}`;
+
+/** One character, as the roster keeps it. */
+const CHARACTER_TEMPLATE = `{
+  "id": "baker",
+  "name": "Mira Holt",
+  "role": "Village baker",
+  "identity": "Up before everyone, she hears every secret told at the #Bakery door and keeps most of them.",
+  "plan": "Trade a secret for the recipe her mother never wrote down.",
+  "voiceStyle": "Bright, quick, teasing.",
+  "voice": { "gender": "female", "language": "French", "pitchSemitones": 0.5, "speakingRate": 1.0, "warmthDb": 1.5 },
+  "figure": { "build": "skirted", "kind": "human" },
+  "accentColor": "#b0573a",
+  "spritesheetId": "modular",
+  "homeTile": { "x": 18, "y": 12 },
+  "speed": 0.8
+}`;
+
+interface AssistantPrompt {
   id: string;
-  category: 'image' | 'llm';
   title: string;
-  attachmentNote: string;
+  when: string;
   prompt: string;
 }
 
-const PROMPT_TEMPLATES: PromptTemplate[] = [
+/** Prompts for a chat assistant (any capable model) to help draft the files. */
+const ASSISTANT_PROMPTS: AssistantPrompt[] = [
   {
-    id: 'img-character',
-    category: 'image',
-    title: 'Character Spritesheet (Cozy Fantasy RPG)',
-    attachmentNote: 'Attach character-spritesheet-template-384x512.png as image reference',
-    prompt: `Create a top-down 2D pixel-art RPG character spritesheet strictly matching the attached 3x4 grid template (384x512 px, 3 columns x 4 rows of 128x128 cells representing 32x32 pixel blocks).
-Subject: A fantasy village weaver wearing a tailored linen tunic with crimson and indigo trim, dark wool vest, and leather boots.
-Layout rules:
-- Row 1 (top): facing DOWN (front view), 3 walking animation frames (left foot, neutral, right foot).
-- Row 2: facing LEFT, 3 walking animation frames.
-- Row 3: facing RIGHT, 3 walking animation frames.
-- Row 4 (bottom): facing UP (back view), 3 walking animation frames.
-Style: Crisp 16-bit/32-bit pixel art, clean dark outlines, flat solid #00FF00 chroma-key or transparent background, NO grid lines, NO text labels, centered cleanly inside each cell's safe box.`,
+    id: 'story-pack',
+    title: 'Turn my idea into a story pack',
+    when: 'Start here. Paste the story pack template after the prompt.',
+    prompt: `You are helping me write a story pack for SeloAI, an app where AI characters live in a small embroidered world and talk to each other and to me.
+
+My story idea: [describe your idea in two or three sentences]
+
+Write a complete story pack as JSON, following the template I paste below exactly (same fields). Rules:
+- 3 to 5 characters. Give each one a goal ("plan") that clashes with at least one other character's goal, and a secret or fear in their "identity".
+- Write "premise" as two sentences: the trouble, and why it matters tonight.
+- Mention the important places in identities and plans as #Tags (one word each, like #Bakery or #OldBridge). I will create places with those names in the World Editor.
+- "voice.language" is only an accent; pick varied ones. "voice.gender" is "female" or "male".
+- "figure.build" is "skirted" or "trousered".
+- Add 2 to 4 lines per character in storyLines.characterLines (used when no AI model is loaded); {partner} is the person they talk to.
+- Return only the JSON.
+
+Template:`,
   },
   {
-    id: 'img-tileset',
-    category: 'image',
-    title: 'Village Tileset (Fantasy & Medieval Craft Theme)',
-    attachmentNote: 'Attach tileset-template-512x512.png as image reference',
-    prompt: `Create a seamless 2D top-down RPG pixel-art tileset strictly aligned to the attached 16x16 grid of 32x32 pixel tiles (512x512 px total).
-Visual theme: Cozy fantasy and medieval craft pixel art — warm parchment stone tones, madder crimson, indigo blue, golden ochre, and forest sage.
-Zone layout matching the reference colors:
-- Rows 1-3 (green zone): seamless meadow grass, clover, wildflower patches, mossy border grass.
-- Rows 4-6 (tan zone): cobblestone plaza tiles, dirt footpath edges, wooden bridge planks.
-- Rows 7-8 (blue zone): clear creek water, shoreline edges, river reeds.
-- Rows 9-12 (cream zone): half-timbered cottage walls, thatched roofs, carved timber doors and window frames.
-- Rows 13-14 (dark green zone): oak trees, berry bushes, wooden fences.
-- Rows 15-16 (crimson zone): wooden weaving loom, hearth firepit, earthenware jugs, lanterns, decorative woven rug tiles.
-Rules: Orthographic top-down 3/4 RPG perspective, crisp pixel edges, NO anti-aliasing blur, NO visible black grid lines in the output, transparent background around object tiles.`,
+    id: 'cast',
+    title: 'Design a cast with clashing goals',
+    when: 'When your characters agree too much and nothing happens.',
+    prompt: `Here are the characters of my SeloAI story (JSON below). They agree too much and nothing happens.
+Rewrite only their "identity" and "plan" fields so that:
+- every character wants something another one is trying to stop;
+- each has one secret that someone else half-knows;
+- at least two of them would cooperate if they talked honestly.
+Keep names, ids and voices. Return the same JSON array.
+
+Characters:`,
   },
   {
-    id: 'img-animated-prop',
-    category: 'image',
-    title: 'Animated Village Prop Strip (4 Frames)',
-    attachmentNote: 'Output 128x32 px horizontal 4-frame strip (32x32 per frame)',
-    prompt: `Create a 128x32 pixel-art 4-frame horizontal sprite strip (four 32x32 frames side by side) on a transparent background.
-Subject: A cozy medieval stone hearth / clay oven with glowing embers and gentle flickering sparks.
-Frames 1 to 4 must animate smoothly in a seamless loop at the exact same pixel baseline with zero horizontal drift.`,
-  },
-  {
-    id: 'llm-villager',
-    category: 'llm',
-    title: 'LLM Prompt: Generate Villager Roster JSON',
-    attachmentNote: 'Attach villager-character-template.json for exact schema',
-    prompt: `Generate a JSON array of 4 villagers for SeloAI matching the schema in villager-character-template.json.
-Theme: A fantasy and medieval craft village inspired by weaving, blacksmithing, astronomy, alchemy, and herbalism.
-Requirements:
-- Fields per villager: id, name, role, accentColor (hex), spritesheetId ("modular"), identity (2 vivid sentences), plan (1 current goal), voiceStyle (tone for TTS), homeTile ({x, y} within 12..38, 10..30), speed (0.65..0.9).
-- Return ONLY valid JSON with no markdown commentary.`,
-  },
-  {
-    id: 'llm-map',
-    category: 'llm',
-    title: 'LLM Prompt: Generate Village Map JSON',
-    attachmentNote: 'Attach village-map-template.json for exact column-major [x][y] structure',
-    prompt: `Generate a valid SeloAI VillageMap JSON matching village-map-template.json with width=24 and height=18.
-Rules:
-- bgTiles[0] and objectTiles[0] and collisionGrid are column-major [x][y] arrays of length 24, each column of length 18.
-- Use tile index 271 for grass, 962 for dirt path, -1 for empty object cells.
-- Mark impassable water/wall/tree cells as true in collisionGrid and keep at least 3 walkable spawnPoints.`,
+    id: 'lines',
+    title: 'Write scripted lines for no-model mode',
+    when: 'So the story still works on computers without an AI model.',
+    prompt: `Write storyLines for my SeloAI story pack (JSON below), in this shape:
+"storyLines": { "openingBeats": [...], "closingBeats": [...], "characterLines": { "<id>": { "lines": [...] } }, "sharedLines": [ { "lines": [...], "whenMentioned": ["word"] } ] }
+- openingBeats and closingBeats are one sentence each, in the narrator's voice; use {a}, {b} and {place}.
+- characterLines: 4 lines per character, in their own voice; {partner} is who they talk to. No line may give the whole secret away.
+- sharedLines: 6 lines anyone could say, each tied to a word with whenMentioned.
+Return only the storyLines JSON.
+
+Story pack:`,
   },
 ];
 
-const DOWNLOAD_FILES = [
-  {
-    name: 'character-spritesheet-template-384x512.png',
-    label: 'Character Grid 4× (384×512 PNG)',
-    desc: 'Best size to attach directly to Gemini/Flux/Midjourney',
-    href: resolvePublicUrl('/templates/character-spritesheet-template-384x512.png'),
-  },
-  {
-    name: 'character-spritesheet-template-96x128.png',
-    label: 'Character Grid Native (96×128 PNG)',
-    desc: 'Exact 1:1 32×32 pixel grid (3 cols × 4 rows)',
-    href: resolvePublicUrl('/templates/character-spritesheet-template-96x128.png'),
-  },
-  {
-    name: 'tileset-template-512x512.png',
-    label: 'Tileset Grid (512×512 PNG)',
-    desc: '16×16 zone-coded 32×32 tileset layout',
-    href: resolvePublicUrl('/templates/tileset-template-512x512.png'),
-  },
-  {
-    name: 'villager-character-template.json',
-    label: 'Villager JSON Schema',
-    desc: 'Starter VillagerConfig JSON for LLM generation',
-    href: resolvePublicUrl('/templates/villager-character-template.json'),
-  },
-  {
-    name: 'village-map-template.json',
-    label: 'Village Map JSON Schema',
-    desc: 'Minimal 8×6 column-major [x][y] map JSON',
-    href: resolvePublicUrl('/templates/village-map-template.json'),
-  },
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+  return (
+    <section id={id} aria-labelledby={`${id}-title`} className="rushnyk-card scroll-mt-3 rounded-sm p-3 space-y-2 text-[13px] leading-relaxed">
+      <h2 id={`${id}-title`} className="text-base font-bold">
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+const SECTIONS: Array<[string, string]> = [
+  ['how', 'How a story runs'],
+  ['first', 'Your first story in 30 minutes'],
+  ['world', 'Build the world'],
+  ['characters', 'Make the characters'],
+  ['story', 'Write the story'],
+  ['voices', 'Voices and AI models'],
+  ['share', 'Save and share'],
+  ['templates', 'Templates'],
+  ['assistant', 'Prompts for a chat assistant'],
+  ['draft', 'Draft a character here'],
 ];
 
 export const AssetGuideView: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [genConcept, setGenConcept] = useState('A wandering lute minstrel who remembers every tavern ballad');
+  const [genConcept, setGenConcept] = useState('A ferryman who has not spoken since the flood, but writes everything down');
   const [genOutput, setGenOutput] = useState('');
   const [generating, setGenerating] = useState(false);
 
-  const copyPrompt = async (id: string, text: string) => {
+  const copy = async (id: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
@@ -125,60 +189,48 @@ export const AssetGuideView: React.FC = () => {
     }
   };
 
-  const handleLocalVillagerDraft = async (e: React.FormEvent) => {
+  const CopyButton = ({ id, text }: { id: string; text: string }) => (
+    <button
+      type="button"
+      onClick={() => void copy(id, text)}
+      className="inline-flex items-center gap-1 rounded-sm border border-borderFolk bg-surface px-2 py-1 text-[11px] font-medium hover:border-ink/40"
+    >
+      {copiedId === id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copiedId === id ? 'Copied' : 'Copy'}
+    </button>
+  );
+
+  const draftCharacter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!genConcept.trim() || generating) return;
     setGenerating(true);
     setGenOutput('');
-
-    const systemPrompt =
-      'Return ONLY a single valid JSON object with fields: name, role, accentColor, identity, plan, voiceStyle.';
-    const userPrompt = `Create a SeloAI villager JSON for: ${genConcept.trim()}`;
-
+    const system =
+      'Return ONLY one valid JSON object for a SeloAI character with fields: id (lowercase, no spaces), name, role, identity (two vivid sentences with one secret), plan (one goal that could clash with someone), voiceStyle, voice {gender: "female" or "male", language (an accent such as Greek or Italian), pitchSemitones (-1 to 1)}, figure {build: "skirted" or "trousered"}.';
+    const user = `Character idea: ${genConcept.trim()}`;
     try {
       if (omniEngine.isReady()) {
         const res = await omniEngine.generateChatReply({
           messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
+            { role: 'system', content: system },
+            { role: 'user', content: user },
           ],
           voice: false,
-          maxNewTokens: 200,
+          maxNewTokens: 260,
           onTextChunk: (c) => setGenOutput((p) => p + c),
         });
         setGenOutput(res.text);
       } else if (brainRouter.isTextModelReady()) {
         const res = await brainRouter.generateText(
           [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
+            { role: 'system', content: system },
+            { role: 'user', content: user },
           ],
-          {
-            maxNewTokens: 200,
-            temperature: 0.4,
-            onChunk: (c) => setGenOutput((p) => p + c),
-          },
+          { maxNewTokens: 260, temperature: 0.6, onChunk: (c) => setGenOutput((p) => p + c) },
         );
         setGenOutput(res.text);
       } else {
-        setGenOutput(
-          JSON.stringify(
-            {
-              id: `v-${Date.now()}`,
-              name: 'Alden',
-              role: 'Wandering Minstrel',
-              accentColor: '#23436b',
-              spritesheetId: 'f2',
-              identity: genConcept.trim(),
-              plan: 'Play twilight ballads beside the hearth fire and gather new verses from travelers.',
-              voiceStyle: 'Resonant, gentle, rhythmic storyteller.',
-              homeTile: { x: 24, y: 15 },
-              speed: 0.72,
-            },
-            null,
-            2,
-          ),
-        );
+        setGenOutput('No AI model is loaded. Load one from the voice card or the AI & Voice Monitor, or use the character template and a chat assistant instead.');
       }
     } catch (err: any) {
       setGenOutput(`Error: ${err?.message || String(err)}`);
@@ -189,254 +241,316 @@ export const AssetGuideView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto bg-linen p-3 thin-scroll">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="border-b border-borderFolk pb-3">
+      <div className="mx-auto max-w-4xl space-y-4">
+        <header className="border-b border-borderFolk pb-3">
           <div className="flex items-center gap-2">
             <BookOpen className="h-5 w-5 text-crimson" />
-            <h1 className="text-lg font-bold">
-              Custom Characters, Maps &amp; Generative Asset Templates
-            </h1>
+            <h1 className="text-lg font-bold">Make your own interactive story</h1>
           </div>
-          <p className="mt-1 text-xs text-muted">
-            Quick village controls &amp; shortcuts, downloadable pixel-aligned reference PNG grids
-            and JSON schemas, and prompts for creating custom worlds and villagers.
+          <p className="mt-1 text-[13px] text-muted">
+            In SeloAI a small cast of AI characters lives in a world you build, talks to each other, and answers you. You set
+            the place, the people and the trouble; the story grows from what they want and what you do. This guide walks you
+            from an empty cloth to a story you can share.
           </p>
-        </div>
-
-        {/* Village Controls & Quick Help (moved from Village canvas overlay) */}
-        <section
-          aria-label="Village Controls & Help"
-          className="rushnyk-card rounded-sm p-3.5 space-y-2.5"
-        >
-          <div className="flex items-center gap-2 border-b border-borderFolk pb-2">
-            <HelpCircle className="h-4 w-4 text-crimson" />
-            <h2 className="text-sm font-bold">Village Controls &amp; Quick Help</h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
-            <div className="rounded border border-borderFolk bg-linen/70 p-2.5 space-y-1">
-              <div className="font-semibold text-ink">Movement &amp; Exploration</div>
-              <p className="text-muted">
-                <strong>Click or tap ground</strong> to pathfind your avatar there, or use{' '}
-                <kbd className="rounded border border-borderFolk bg-surface px-1 font-mono text-[10px]">
-                  W A S D
-                </kbd>{' '}
-                /{' '}
-                <kbd className="rounded border border-borderFolk bg-surface px-1 font-mono text-[10px]">
-                  Arrow keys
-                </kbd>{' '}
-                to walk freely.
-              </p>
-            </div>
-            <div className="rounded border border-borderFolk bg-linen/70 p-2.5 space-y-1">
-              <div className="font-semibold text-ink">Camera &amp; Inspection</div>
-              <p className="text-muted">
-                <strong>Click any villager</strong> to inspect their memory &amp; thread.{' '}
-                <strong>Drag</strong> the canvas to pan, <strong>scroll / pinch</strong> to zoom, or
-                toggle <strong>Follow</strong> &amp; <strong>POV</strong> in the top HUD.
-              </p>
-            </div>
-            <div className="rounded border border-borderFolk bg-linen/70 p-2.5 space-y-1">
-              <div className="font-semibold text-ink">Conversation, Time &amp; Style</div>
-              <p className="text-muted">
-                Use the logarithmic speed slider (<strong>-10× rewind</strong> to{' '}
-                <strong>10×</strong>), adjust <strong>Eavesdrop</strong> hearing radius, type{' '}
-                <code className="font-mono">@Name</code> /{' '}
-                <code className="font-mono">#Landmark</code> in chat or hold the mic to speak, and
-                customize typography/bubbles via <strong>Style</strong> in the top bar.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Visual Reference Grid Previews & Downloads */}
-        <section aria-label="Downloadable Reference Templates" className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-          <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-bold">Character Spritesheet Grid (3×4 · 32×32 cells)</h2>
-              <a
-                href={resolvePublicUrl('/templates/character-spritesheet-template-384x512.png')}
-                download="character-spritesheet-template-384x512.png"
-                className="inline-flex items-center gap-1 rounded bg-crimson px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>384×512 PNG</span>
-              </a>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2.5 items-start">
-              <img
-                src={resolvePublicUrl('/templates/character-spritesheet-template-384x512.png')}
-                alt="3 by 4 character walk-cycle spritesheet template grid for Down, Left, Right, and Up directions"
-                className="pixel-canvas w-36 rounded border border-borderFolk bg-surface shrink-0"
-              />
-              <div className="text-xs space-y-2 leading-relaxed">
-                <p>
-                  <strong>Row 1 (Crimson):</strong> DOWN (front walk: step L, stand, step R)
-                  <br />
-                  <strong>Row 2 (Indigo):</strong> LEFT walk frames
-                  <br />
-                  <strong>Row 3 (Ochre):</strong> RIGHT walk frames
-                  <br />
-                  <strong>Row 4 (Sage):</strong> UP (back walk frames)
-                </p>
-                <p className="text-muted">
-                  Send the <strong>384×512 PNG</strong> to image models so they respect the cell
-                  boundaries, then nearest-neighbor downscale to <strong>96×128</strong> (or set
-                  Frame W/H to 128 in the Character Editor).
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-bold">Tileset Reference Grid (16×16 · 512×512 px)</h2>
-              <a
-                href={resolvePublicUrl('/templates/tileset-template-512x512.png')}
-                download="tileset-template-512x512.png"
-                className="inline-flex items-center gap-1 rounded bg-indigoFolk px-2.5 py-1 text-xs font-semibold text-white hover:opacity-95"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>512×512 PNG</span>
-              </a>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2.5 items-start">
-              <img
-                src={resolvePublicUrl('/templates/tileset-template-512x512.png')}
-                alt="16 by 16 tileset template grid organized by terrain, paths, water, cottages, trees, and folk props"
-                className="pixel-canvas w-40 rounded border border-borderFolk bg-surface shrink-0"
-              />
-              <div className="text-xs space-y-1.5 leading-relaxed">
-                <div><strong>Rows 1–3 (Green):</strong> Linen meadow grass &amp; wildflowers</div>
-                <div><strong>Rows 4–6 (Tan):</strong> Cobblestone plazas, dirt trails, bridges</div>
-                <div><strong>Rows 7–8 (Blue):</strong> River water, reeds, shorelines</div>
-                <div><strong>Rows 9–12 (Cream):</strong> Khata cottage walls, thatch roofs</div>
-                <div><strong>Rows 13–14 (Forest):</strong> Birch, rowanberry, wattle fences</div>
-                <div><strong>Rows 15–16 (Crimson):</strong> Looms, hearths, rushnyk borders</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* All Downloadable Files Bar */}
-        <section aria-label="Template File Downloads" className="rushnyk-card rounded-sm p-2.5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
-            All Template Files (docs/CUSTOM_ASSETS_GUIDE.md &amp; public/templates/)
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-            {DOWNLOAD_FILES.map((f) => (
-              <a
-                key={f.name}
-                href={f.href}
-                download={f.name}
-                className="flex flex-col justify-between rounded border border-borderFolk bg-surface p-2.5 text-xs hover:border-crimson transition"
-              >
-                <div>
-                  <div className="font-semibold text-ink">{f.label}</div>
-                  <div className="mt-1 text-[11px] text-muted">{f.desc}</div>
-                </div>
-                <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-crimson">
-                  <Download className="h-3 w-3" />
-                  <span>Download</span>
-                </div>
+          <nav aria-label="Guide sections" className="mt-2 flex flex-wrap gap-1 text-[12px]">
+            {SECTIONS.map(([id, title]) => (
+              <a key={id} href={`#${id}`} className="rounded-sm border border-borderFolk bg-surface px-2 py-0.5 hover:border-ink/40">
+                {title}
               </a>
             ))}
-          </div>
-        </section>
+          </nav>
+        </header>
 
-        {/* Copy-Paste Prompts for Image & LLM Models */}
-        <section aria-label="Generative Prompts" className="space-y-3">
-          <h2 className="text-sm font-bold">
-            Ready-to-Send Prompts for Image Models &amp; Generative LLMs
-          </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-            {PROMPT_TEMPLATES.map((tpl) => {
-              const copied = copiedId === tpl.id;
-              return (
-                <article key={tpl.id} className="rushnyk-card rounded-sm p-2.5 flex flex-col gap-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span
-                        className={`inline-block rounded px-1.5 py-0.5 font-mono text-[10px] uppercase ${
-                          tpl.category === 'image'
-                            ? 'bg-crimson/15 text-crimson'
-                            : 'bg-indigoFolk/15 text-indigoFolk'
-                        }`}
-                      >
-                        {tpl.category === 'image' ? 'Image Model' : 'LLM JSON'}
-                      </span>
-                      <h3 className="mt-1 text-sm font-bold">{tpl.title}</h3>
-                      <p className="text-[11px] text-muted">{tpl.attachmentNote}</p>
-                    </div>
+        <Section id="how" title="How a story runs">
+          <p>A story in SeloAI has three parts, each with its own place in the app:</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              <strong>The world</strong> (World Editor): the place, its houses, river, roads and named places like a well or a
+              bridge.
+            </li>
+            <li>
+              <strong>The characters</strong> (Characters): who they are, what they want, how they look and sound. Two are
+              special: <em>the Scribe</em>, who narrates, and <em>the Traveler</em>, who is you.
+            </li>
+            <li>
+              <strong>The story</strong> (a story pack you import): the premise, how it opens, and lines to use without an AI
+              model.
+            </li>
+          </ul>
+          <p>When the village starts:</p>
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>The story waits until a voice is loaded (or you choose &ldquo;Not now&rdquo;).</li>
+            <li>Characters wander and only greet each other: the story has not begun.</li>
+            <li>The Scribe tells a short prologue that sets the scene. From then on, each character follows their goal.</li>
+            <li>
+              You can talk to anyone: type in the chat box, use <code>@Name</code> to address someone and <code>#Place</code>{' '}
+              to send them somewhere. You are part of the story; what you say changes it.
+            </li>
+          </ol>
+          <p>
+            Useful controls: the play/pause and speed menu in the village toolbar; <em>Story mode</em> (the camera follows the
+            story); double-click a character or a highlighted name or place to look there; <em>Reset story</em> (the circular
+            arrow) to start again in the same world.
+          </p>
+        </Section>
+
+        <Section id="first" title="Your first story in 30 minutes">
+          <ol className="list-decimal space-y-1.5 pl-5">
+            <li>
+              <strong>Idea (5 min).</strong> Write two sentences: a place, a trouble, and why it matters tonight. Example:
+              &ldquo;A harbour town whose lighthouse went dark the night a ship is due. Someone broke it.&rdquo;
+            </li>
+            <li>
+              <strong>World (10 min).</strong> Open the World Editor. Under <em>New world</em> pick <em>Patchwork village</em>{' '}
+              (or <em>Blank cloth</em> to draw everything yourself) and press <em>Make a new world</em>. Use{' '}
+              <em>Name a place</em> to name 3 or 4 places that matter to your story (the Lighthouse, the Quay).
+            </li>
+            <li>
+              <strong>Story pack (10 min).</strong> Copy the story pack template below into a chat assistant together with the
+              &ldquo;Turn my idea into a story pack&rdquo; prompt and your idea. Check the result, then save it as a{' '}
+              <code>.json</code> file.
+            </li>
+            <li>
+              <strong>Import (1 min).</strong> Open <em>World &amp; Data</em> (the first button in the top bar) and under{' '}
+              <em>Import</em> choose your file. The cast and premise go onto your world and the story starts fresh.
+            </li>
+            <li>
+              <strong>Play and adjust (rest).</strong> Watch the greetings and the prologue, talk to the characters, and fix
+              what does not work in Characters (goals, voices, looks). Reset story to try again.
+            </li>
+          </ol>
+        </Section>
+
+        <Section id="world" title="Build the world">
+          <p>The World Editor makes the place. Everything is stitched: you choose what is there, the app draws it as needlework.</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              <strong>New world</strong>: pick a maker (Blank cloth, Valley, Patchwork village, Textile village, Zmeyovo,
+              Shevitsa), set its options and seed, and press <em>Make a new world</em>. Change a setting later and your hand
+              edits are kept.
+            </li>
+            <li>
+              <strong>Tools</strong> (top of the editor): select and move; paint ground (road, water, field); place a house,
+              tree, well and more; scatter many at once; the pattern brush; erase; <em>Name a place</em>;{' '}
+              <em>Add a start point</em>. Shift-drag or two fingers to pan, pinch or scroll to zoom, double-click to frame.
+            </li>
+            <li>
+              <strong>Places and start points</strong>: places (red pins) are where characters go and what they talk about;
+              start points (blue diamonds) are where people appear. Drag pins to move them; the list in the sidebar finds
+              them.
+            </li>
+            <li>
+              <strong>Name places the way your story does.</strong> A character whose plan mentions <code>#Bakery</code> walks
+              to the place called &ldquo;Bakery&rdquo; (or one sharing a word with it, like &ldquo;The old bakery&rdquo;).
+            </li>
+            <li>
+              <strong>Looks</strong>: threads (pick a palette, click a swatch to dye a thread), stitch family, thread weight,
+              house size and style. The Style panel (top bar) sets how the whole world and its text are drawn.
+            </li>
+            <li>
+              <strong>A well</strong> can be dry or flowing (select it, then <em>Water</em>). If a character or the Scribe says
+              plainly that the water came back, the well starts flowing in the story too.
+            </li>
+            <li>Every change is an edit you can undo, and the list of your edits is in the sidebar.</li>
+          </ul>
+        </Section>
+
+        <Section id="characters" title="Make the characters">
+          <p>Open Characters. The roster lists the Scribe, the Traveler and everyone in the village.</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              <strong>Add people</strong> with <em>Random</em>, <em>+3</em> or <em>+5</em>, or duplicate someone and change
+              them.
+            </li>
+            <li>
+              <strong>Identity</strong> is who they are: personality, history and one secret. Two or three sentences work
+              best. The AI uses it as hidden background, so write it the way you would brief an actor.
+            </li>
+            <li>
+              <strong>Plan</strong> is what they want right now. This drives the story: make goals clash (one wants the ship
+              to come, another wants it gone).
+            </li>
+            <li>
+              <strong>The figure</strong>: build, kind and garment threads, hair and headdress, with a preview of moods.
+            </li>
+            <li>
+              <strong>Voice</strong>: female or male, a locale (it gives an accent, not a language), pitch, speed and warmth.
+              Press <em>Test Voice</em>. Keep pitch within about one semitone unless a character really needs more.
+            </li>
+            <li>
+              <strong>The Scribe</strong> narrates: name, storytelling style and voice. <strong>The Traveler</strong> is you:
+              your figure, name and voice (and whether your typed lines are spoken).
+            </li>
+            <li>
+              Press <em>Apply Roster to Village</em> to send changes to the village. Characters use each other&apos;s pronouns
+              from their sheets (the voice&apos;s gender).
+            </li>
+          </ul>
+        </Section>
+
+        <Section id="story" title="Write the story">
+          <p>A good interactive story is a situation, not a script. Set up people who want different things and let them meet.</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              <strong>Premise</strong>: two sentences the AI always knows: the trouble and why now. Keep it concrete
+              (&ldquo;the lamp went dark&rdquo;, not &ldquo;mysterious events happen&rdquo;).
+            </li>
+            <li>
+              <strong>Opening</strong> (<code>story.openingDirective</code>): how the Scribe should open (the time, the mood,
+              the first image). The Scribe&apos;s prologue starts the story after the greetings.
+            </li>
+            <li>
+              <strong>Goals that clash</strong>, <strong>secrets that leak</strong>: every character&apos;s plan should get in
+              someone&apos;s way, and every secret should be half-known by someone else.
+            </li>
+            <li>
+              <strong>Places carry the story</strong>: mention <code>#Places</code> in identities and plans, and name places
+              on the map to match. Characters gather there and the camera follows.
+            </li>
+            <li>
+              <strong>You are a character</strong>: plan what the Traveler can do (bring news, take sides, make a promise). Use{' '}
+              <code>@Name</code> to talk to someone and <code>#Place</code> to send them.
+            </li>
+            <li>
+              <strong>Scripted lines</strong> (<code>context.storyLines</code>) are used when no AI model is loaded: opening
+              and closing beats (with <code>{'{a}'}</code>, <code>{'{b}'}</code>, <code>{'{place}'}</code>), lines per
+              character (with <code>{'{partner}'}</code>), and shared lines tied to words with <code>whenMentioned</code>.
+            </li>
+            <li>
+              <strong>Test and tune</strong>: watch a few scenes, then adjust plans and identities. Reset story to replay from
+              the start.
+            </li>
+          </ul>
+        </Section>
+
+        <Section id="voices" title="Voices and AI models">
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              On first start a card offers <strong>Voice + brain</strong> (LFM3-Omni, about 1.5 GB, needs WebGPU: it writes and
+              speaks) or a <strong>Light voice</strong> (Kokoro, about 330 MB). Both download once and stay on the computer.
+            </li>
+            <li>
+              Without a model the story still runs from your scripted lines, in the browser&apos;s voice. The AI &amp; Voice
+              Monitor shows what is loaded and lets you load others or connect a local or online model.
+            </li>
+            <li>
+              The <strong>voice instruction</strong> (in the Scribe or Traveler panel) is the one sentence the voice model reads
+              each line with. Keep it short; long instructions make it lose the line.
+            </li>
+          </ul>
+        </Section>
+
+        <Section id="share" title="Save and share">
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              <strong>World &amp; Data</strong> (the first button in the top bar): load the demo worlds, save worlds in the
+              browser, reset the story or everything, export and import files, and save pictures.
+            </li>
+            <li>
+              <strong>Export → Whole Project</strong> saves the whole thing (world, characters, conversations). Share that
+              file and anyone can import it to see your story as it is.
+            </li>
+            <li>
+              <strong>A story pack</strong> (the template below) is the shareable recipe: premise, opening and cast. Import it
+              onto any world; with a <code>map</code> in it, it brings its own world too.
+            </li>
+            <li>Characters can be exported on their own and imported into another world.</li>
+            <li>
+              <strong>Images</strong>: <em>This view</em> saves what is on screen (people included); <em>Whole tapestry</em>{' '}
+              saves the whole world, sharp, at print size, for posters and portfolios.
+            </li>
+          </ul>
+        </Section>
+
+        <Section id="templates" title="Templates">
+          <div className="space-y-3">
+            {(
+              [
+                ['story-pack', 'Story pack', 'story-pack-template.json', STORY_PACK_TEMPLATE, 'The premise, opening, scripted lines and cast. Import it onto a world you built.'],
+                ['character', 'One character', 'character-template.json', CHARACTER_TEMPLATE, 'A single character as the roster keeps it. Put several in a list (or in a story pack) to import a cast.'],
+              ] as const
+            ).map(([id, title, file, text, note]) => (
+              <div key={id} className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold">{title}</h3>
+                    <p className="text-[12px] text-muted">{note}</p>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <CopyButton id={id} text={text} />
                     <button
                       type="button"
-                      onClick={() => copyPrompt(tpl.id, tpl.prompt)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs font-medium hover:bg-card"
+                      onClick={() => download(file, text)}
+                      className="inline-flex items-center gap-1 rounded-sm border border-borderFolk bg-surface px-2 py-1 text-[11px] font-medium hover:border-ink/40"
                     >
-                      {copied ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-sage" />
-                          <span>Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          <span>Copy</span>
-                        </>
-                      )}
+                      <Download className="h-3.5 w-3.5" />
+                      {file}
                     </button>
                   </div>
-                  <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded border border-borderFolk bg-surface p-2.5 font-mono text-[11px] leading-relaxed thin-scroll">
-                    {tpl.prompt}
-                  </pre>
-                </article>
-              );
-            })}
+                </div>
+                <pre className="max-h-64 overflow-auto rounded-sm border border-borderFolk bg-surface p-2 text-[11px] leading-snug thin-scroll">{text}</pre>
+              </div>
+            ))}
           </div>
-        </section>
+        </Section>
 
-        {/* Local LFM3-1.7B Character JSON Draft Helper */}
-        <section aria-label="Local Villager Draft Generator" className="rushnyk-card rounded-sm p-2.5 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-ochre" />
-              <h2 className="text-sm font-bold">
-                Quick Villager JSON Generator (
-                {omniEngine.isReady()
-                  ? 'LFM3-Omni WebGPU'
-                  : brainRouter.isTextModelReady()
-                    ? 'LFM3-1.7B WebGPU'
-                    : 'Schema Preview'}
-                )
-              </h2>
-            </div>
+        <Section id="assistant" title="Prompts for a chat assistant">
+          <p>
+            Any capable chat assistant can draft these files with you. Copy a prompt, add your material after it, and always read
+            the result: you are the author.
+          </p>
+          <div className="space-y-3">
+            {ASSISTANT_PROMPTS.map((p) => (
+              <div key={p.id} className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold">{p.title}</h3>
+                    <p className="text-[12px] text-muted">{p.when}</p>
+                  </div>
+                  <CopyButton id={`prompt-${p.id}`} text={p.prompt} />
+                </div>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-sm border border-borderFolk bg-surface p-2 text-[11px] leading-snug thin-scroll">{p.prompt}</pre>
+              </div>
+            ))}
           </div>
-          <form onSubmit={handleLocalVillagerDraft} className="flex flex-wrap gap-2">
-            <label htmlFor="villager-concept-input" className="visually-hidden">
-              Villager concept description
-            </label>
+        </Section>
+
+        <Section id="draft" title="Draft a character here">
+          <p>With an AI model loaded, describe a character in a sentence and get a draft to paste into your story pack.</p>
+          <form onSubmit={draftCharacter} className="flex flex-col gap-2 sm:flex-row">
             <input
-              id="villager-concept-input"
-              type="text"
               value={genConcept}
               onChange={(e) => setGenConcept(e.target.value)}
-              className="flex-1 min-w-[240px] rounded border border-borderFolk bg-surface px-3 py-1.5 text-xs"
+              aria-label="Character idea"
+              className="flex-1 rounded-sm border border-borderFolk bg-surface px-2.5 py-1.5 text-[13px]"
             />
             <button
               type="submit"
               disabled={generating}
-              className="inline-flex items-center gap-1.5 rounded bg-ochre px-3 py-1.5 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1.5 rounded-sm bg-crimson px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              <span>{generating ? 'Generating…' : 'Draft Villager JSON'}</span>
+              {generating ? 'Drafting…' : 'Draft'}
             </button>
           </form>
           {genOutput && (
-            <pre className="overflow-x-auto rounded border border-borderFolk bg-surface p-3 font-mono text-[11px] leading-relaxed">
-              {genOutput}
-            </pre>
+            <div className="space-y-1.5">
+              <div className="flex justify-end">
+                <CopyButton id="draft" text={genOutput} />
+              </div>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-sm border border-borderFolk bg-surface p-2 text-[11px] leading-snug thin-scroll">{genOutput}</pre>
+            </div>
           )}
-        </section>
+        </Section>
+
+        <p className="pb-4 text-[11px] text-muted">
+          For teachers and advanced users: the app exposes tools for AI agents (create worlds and characters, run scenarios,
+          query the story database) through <code>window.seloAI</code> in the browser and an MCP server (<code>npm run mcp</code>
+          ), and stories can run headless for experiments (<code>scripts/headless-run.ts</code>).
+        </p>
       </div>
     </div>
   );
 };
+
+export default AssetGuideView;

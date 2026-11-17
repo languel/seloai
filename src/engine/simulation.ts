@@ -694,8 +694,13 @@ export class VillageSimulation {
         const res = await this.mind.generateNarratorReply({
           world: this.world,
           cast: this.castPronouns(),
-          prompt:
+          prompt: [
             'Open the story. In two or three sentences, set the scene for everyone listening: the place, the trouble that hangs over it, and who is caught up in it. End on the moment the day begins.',
+            this.world.premise ? `The situation: ${this.world.premise}` : '',
+            this.world.opening ? `How it should open: ${this.world.opening}` : '',
+          ]
+            .filter(Boolean)
+            .join(' '),
           sceneContext: this.buildSceneContext(),
           history: [],
           settings: this.modelSettings,

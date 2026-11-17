@@ -132,3 +132,24 @@ describe('World storage and bundles', () => {
     expect(remaining.some((w) => w.id === saved.id)).toBe(false);
   });
 });
+
+describe('story packs', () => {
+  it('imports a short hand-written story pack onto the current world, filling what is missing', async () => {
+    const { parseImportedVillageJson } = await import('../villageStore');
+    const pack = {
+      format: 'seloai-world-pack',
+      version: 1,
+      id: 'lighthouse',
+      name: 'The Lighthouse',
+      context: { settingName: 'Gullrock', settingKind: 'harbour', premise: 'The lamp has gone dark and a ship is due.' },
+      story: { openingDirective: 'Open at dusk, the lamp cold.', focalCharacterId: 'keeper' },
+      cast: [{ id: 'keeper', name: 'Ada Bell', role: 'Lighthouse keeper', identity: 'Stubborn, kind, afraid of the dark.', plan: 'Find out who broke the lamp.', voiceStyle: 'Low, salty.', homeTile: { x: 10, y: 10 }, speed: 0.8, accentColor: '#335577', spritesheetId: 'modular' }],
+    };
+    const parsed = parseImportedVillageJson(JSON.stringify(pack));
+    expect(parsed.map).toBeUndefined();
+    expect(parsed.villagers?.map((v) => v.id)).toEqual(['keeper']);
+    expect(parsed.world).toMatchObject({ settingName: 'Gullrock', settingKind: 'harbour', playerName: 'Traveler', opening: 'Open at dusk, the lamp cold.' });
+    expect(parsed.world?.storyLines.sharedLines).toEqual([]);
+    expect(parsed.focalWorldlineId).toBe('keeper');
+  });
+});
