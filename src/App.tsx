@@ -122,6 +122,14 @@ export function App() {
   const [saveWorldName, setSaveWorldName] = useState<string>('');
 
   const simRef = useRef<VillageSimulation | null>(null);
+  // On a local dev server, the live simulation is reachable from the console as `__sim`, for debugging.
+  useEffect(() => {
+    if (!/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) return;
+    const id = window.setInterval(() => {
+      (window as unknown as { __sim?: unknown }).__sim = simRef.current;
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
   const storeRef = useRef<WorldStore>(new WorldStore());
   const syncedCastRef = useRef<VillagerConfig[] | null>(null);
   const [, setHistoryTick] = useState(0);

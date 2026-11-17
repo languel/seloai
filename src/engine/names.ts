@@ -87,3 +87,19 @@ export function shortName(cfg: Pick<VillagerConfig, 'name' | 'callNames'>): stri
   const parts = cfg.name.trim().split(/\s+/);
   return parts.find((p) => p.length >= 3 && !TITLES.has(p.toLowerCase())) ?? parts[0] ?? cfg.name;
 }
+
+/**
+ * The text with its @-mentions and the listener's own name taken out: "@Lamia, go to the river"
+ * becomes ", go to the river", so the name is not read as a place (the Well of the Lamia).
+ */
+export function withoutAddress(text: string, listener: Pick<VillagerConfig, 'name' | 'callNames'>): string {
+  const forms = nameForms(listener);
+  return text
+    .replace(/@[\p{L}\p{N}_'’-]+/gu, ' ')
+    .split(/(\s+)/)
+    .map((chunk) => {
+      const word = chunk.toLowerCase().replace(/[^\p{L}\p{N}'’-]/gu, '');
+      return word && forms.some((f) => !f.includes(' ') && wordIsForm(word, f)) ? ' ' : chunk;
+    })
+    .join('');
+}

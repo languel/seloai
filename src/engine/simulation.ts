@@ -5,7 +5,9 @@ import { computeSpatialMix, type SpatialMix } from './spatialMix';
 import { GENERIC_WORLD_CONTEXT, placeName, type WorldContext } from '../world/worldContext';
 import { computeFacing, findNearestWalkableTile, findPath, isTileWalkable } from './pathfinding';
 import { ensureVillagerSprite } from './characterGenerator';
-import { findNamedCharacter } from './names';
+import { findNamedCharacter, withoutAddress } from './names';
+import { nearestThing, thingSenseFor } from './things';
+import { bakeScene } from '../world/worldScene';
 import type {
   BubbleEntry,
   ChatMessage,
@@ -1240,6 +1242,55 @@ export class VillageSimulation {
       }
     }
 
+    // Blocked by a person: slide round them along the edge of their space, toward the goal,
+    // instead of alternating a blocked step and a sidestep (which shivers at frame rate).
+    if (direct.blockerId && dist > 1e-6) {
+      const blocker = direct.blockerId === this.player.id ? this.player : this.runtimes.get(direct.blockerId);
+      if (blocker) {
+        let nx = entity.x - blocker.x;
+        let ny = entity.y - blocker.y;
+        const nd = Math.hypot(nx, ny) || 1e-6;
+        nx /= nd;
+        ny /= nd;
+        const gx = dx / dist;
+        const gy = dy / dist;
+        const into = gx * nx + gy * ny;
+        // The goal direction with the part heading into them taken out: a tangent.
+        let tx = gx - Math.min(0, into) * nx;
+        let ty = gy - Math.min(0, into) * ny;
+        let tl = Math.hypot(tx, ty);
+        let side = entity.avoidTargetId === direct.blockerId ? entity.avoidSign : undefined;
+        if (tl < 0.25 || side) {
+          // Head-on (or already going round one side): keep to one side of them.
+          if (!side) side = (nx * gy - ny * gx) >= 0 ? 1 : -1;
+          tx = -ny * side;
+          ty = nx * side;
+          // Lean toward the goal once the way ahead opens.
+          tx += gx * 0.35;
+          ty += gy * 0.35;
+          tl = Math.hypot(tx, ty);
+        }
+        tx /= tl;
+        ty /= tl;
+        // Keep just outside their space, easing out if already inside it.
+        const push = Math.max(0, CHAR_COLLISION_RADIUS + 0.02 - nd) * 0.5;
+        const sx = entity.x + tx * stepSize + nx * push;
+        const sy = entity.y + ty * stepSize + ny * push;
+        if (
+          isTileWalkable(this.map, Math.round(sx), Math.round(sy)) &&
+          !this.findCharacterCollision(sx, sy, entity.x, entity.y, selfId)
+        ) {
+          entity.x = sx;
+          entity.y = sy;
+          entity.facing = computeFacing(entity, { x: entity.x + tx, y: entity.y + ty }, entity.facing);
+          entity.animFrame += animDelta * 0.8;
+          entity.avoidTargetId = direct.blockerId;
+          entity.avoidSign = side ?? ((nx * ty - ny * tx) >= 0 ? -1 : 1);
+          return { progressed: true, sidestepped: true, reachedEnd: false, blockerId: direct.blockerId };
+        }
+      }
+    }
+
     // Perpendicular sidestep with locked avoidance side per blocker so characters never oscillate left-right
     const pickSideOrder = (axis: 'x' | 'y'): [1 | -1, 1 | -1] => {
       if (direct.blockerId && entity.avoidTargetId === direct.blockerId && entity.avoidSign) {
@@ -2185,6 +2236,8 @@ export class VillageSimulation {
       kind: 'observation',
       summary: `${this.player.name} instructed: "${userText.slice(0, 80)}"`,
     });
+    // Who the order is addressed to is not where to go: "@Lamia, go to the river" is not the Lamia's well.
+    userText = withoutAddress(userText, _cfg);
     const lower = userText.toLowerCase();
 
     // Let natural language "@Character / @all go talk to Bram / visit #Plaza / scatter" steer motivation + movement
@@ -2199,6 +2252,20 @@ export class VillageSimulation {
     };
 
     const otherTarget = findNamedCharacter(userText, this.configs.values(), rt.id);
+    // "Go to Stoyan's house": to their home, not to them.
+    const homeOf = otherTarget && /\b(house|home|cottage|hut|door|yard|place)\b/i.test(userText) ? otherTarget : undefined;
+    if (homeOf) {
+      this.callAway(rt);
+      const goal = findNearestWalkableTile(this.map, homeOf.homeTile.x, homeOf.homeTile.y);
+      const path = findBestPath(goal);
+      rt.currentIntention = `Going to ${homeOf.name}'s house`;
+      rt.activityLabel = rt.currentIntention;
+      if (path.length > 0) {
+        rt.path = path;
+        rt.walkAndTalk = true;
+      }
+      return;
+    }
     if (otherTarget) {
       const otherRt = this.runtimes.get(otherTarget.id);
       if (otherRt) {
@@ -2259,11 +2326,50 @@ export class VillageSimulation {
       const off = ringOffsets[slotIndex % ringOffsets.length];
       const goal = findNearestWalkableTile(this.map, landmark.x + off.dx, landmark.y + off.dy);
       const path = findBestPath(goal);
+      this.callAway(rt);
       rt.currentIntention = `Headed to ${landmark.label}`;
       rt.activityLabel = rt.currentIntention;
       if (path.length > 0) {
         rt.path = path;
-        rt.state = 'walking';
+        rt.walkAndTalk = true;
+      }
+      return;
+    }
+
+    // Everyday things: "go to the river", "sit under a tree", "wait by the flowers".
+    const sense = thingSenseFor(userText);
+    const scene = this.map.scene ? bakeScene(this.map.scene).model : undefined;
+    const thing = sense && scene ? nearestThing(scene, sense, rt) : undefined;
+    if (sense && thing) {
+      this.callAway(rt);
+      const taken = this.getOccupiedTileSet(rt.id);
+      let goal: { x: number; y: number } | undefined;
+      let goalD = Infinity;
+      const inside = new Set(thing.cells.map((c) => `${c.x},${c.y}`));
+      for (const c of thing.cells) {
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const x = c.x + dx;
+            const y = c.y + dy;
+            const key = `${x},${y}`;
+            if (taken.has(key)) continue;
+            if (inside.has(key) && !isTileWalkable(this.map, x, y)) continue;
+            if (!isTileWalkable(this.map, x, y)) continue;
+            const d = Math.hypot(x - rt.x, y - rt.y) + slotIndex * 0.01 * ((x * 7 + y * 3) % 5);
+            if (d < goalD) {
+              goal = { x, y };
+              goalD = d;
+            }
+          }
+        }
+      }
+      goal ??= findNearestWalkableTile(this.map, Math.round(thing.centre.x), Math.round(thing.centre.y));
+      const path = findBestPath(goal);
+      rt.currentIntention = `Going to ${sense.label}`;
+      rt.activityLabel = rt.currentIntention;
+      if (path.length > 0) {
+        rt.path = path;
+        rt.walkAndTalk = true;
       }
       return;
     }
