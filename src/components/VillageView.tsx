@@ -92,14 +92,7 @@ import type {
   VillagerRuntime,
 } from '../engine/types';
 import { abbreviatePersonName, tokenizeRichText } from '../utils/formatNames';
-import {
-  SLIDER_MAX_POS,
-  SPEED_LOG_MARKS,
-  formatSpeedLabel,
-  sliderPosToSpeed,
-  speedToSliderPos,
-  speedToTrackPercent,
-} from '../utils/speedSlider';
+import { SPEED_LOG_MARKS } from '../utils/speedSlider';
 
 interface VillageViewProps {
   sim: VillageSimulation;
@@ -1766,9 +1759,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
             role="toolbar"
             aria-label="Village simulation controls"
             style={stitchHud ? { fontFamily: aestheticTokens.hudStyle.fontFamily } : aestheticTokens.hudStyle}
-            className={`pointer-events-auto relative flex min-w-0 flex-wrap items-center gap-1 rounded-md ${
-              stitchHud ? 'stitch-panel px-3 py-2' : 'px-2 py-1.5'
-            } ${aestheticSettings.showDecorations && !stitchHud ? 'pt-2' : ''}`}
+            className={`pointer-events-auto relative flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto rounded-md thin-scroll ${
+              stitchHud ? 'stitch-panel px-2 py-0.5' : 'px-1.5 py-0.5'
+            } ${aestheticSettings.showDecorations && !stitchHud ? 'pt-1' : ''}`}
           >
             {aestheticSettings.showDecorations && !stitchHud && (
               <div
@@ -1800,7 +1793,6 @@ export const VillageView: React.FC<VillageViewProps> = ({
             {/* Signed logarithmic time-pace & rewind slider (-10× .. 0 .. +10×) */}
             {(() => {
               const effectiveSpeed = sim.paused ? 0 : sim.speedMultiplier;
-              const sliderPos = speedToSliderPos(effectiveSpeed);
               const rewindInfo = sim.getRewindInfo();
               const isRewinding = effectiveSpeed < 0;
               const isStopped = Math.abs(effectiveSpeed) < 0.001;
@@ -1829,68 +1821,21 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       ? { backgroundColor: aestheticTokens.activeSpeechBg, color: aestheticTokens.activeSpeechText }
                       : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor };
               return (
-                <div className="flex items-center gap-2 px-1" role="group" aria-label="Time pace and rewind">
-                  <button
-                    type="button"
-                    onClick={() => applySpeed(1)}
-                    title="Simulation speed multiplier (click to reset to 1×)"
+                <div className="flex items-center gap-1 px-0.5" role="group" aria-label="Time pace and rewind">
+                  <select
+                    value={String(SPEED_LOG_MARKS.reduce((best, m) => (Math.abs(m.value - effectiveSpeed) < Math.abs(best - effectiveSpeed) ? m.value : best), 1))}
+                    onChange={(e) => applySpeed(Number(e.target.value))}
+                    aria-label="Simulation speed (negative rewinds, 0 pauses)"
+                    title="Simulation speed: negative rewinds, 0 pauses"
                     style={speedBadgeStyle}
-                    className={`min-w-[40px] rounded px-1.5 py-0.5 text-center font-mono text-[11px] font-semibold transition ${stitchHud ? 'glyph-button' : ''}`}
+                    className={`h-6 cursor-pointer rounded border-0 px-1 font-mono text-[11px] font-semibold ${stitchHud ? 'glyph-button bg-transparent' : ''}`}
                   >
-                    {formatSpeedLabel(effectiveSpeed)}
-                  </button>
-                  <div className="relative flex w-56 sm:w-64 flex-col justify-center">
-                    <div className="relative flex h-3.5 items-center">
-                      <span
-                        aria-hidden="true"
-                        className="pointer-events-none absolute top-0.5 bottom-0.5 left-1/2 w-px -translate-x-1/2"
-                        style={{ backgroundColor: aestheticTokens.hudBorderColor }}
-                      />
-                      <SpeedRange
-                        stitched={stitchHud}
-                        min={-SLIDER_MAX_POS}
-                        max={SLIDER_MAX_POS}
-                        step={1}
-                        value={sliderPos}
-                        aria-label="Simulation speed and rewind"
-                        title="Drag left for negative speed to rewind events, center (0) to pause, right for 1/4× to 10×"
-                        onChange={(e) => applySpeed(sliderPosToSpeed(Number(e.target.value)))}
-                        className={stitchHud ? 'w-full' : 'h-1.5 w-full cursor-pointer accent-amber-400'}
-                      />
-                    </div>
-                    <div className="relative h-3 w-full select-none">
-                      {SPEED_LOG_MARKS.map((mark) => {
-                        const pct = speedToTrackPercent(mark.value);
-                        const active =
-                          mark.value === 0
-                            ? isStopped
-                            : Math.abs(effectiveSpeed - mark.value) < 0.02;
-                        const activeMarkColor = stitchHud
-                          ? hudKit.thread
-                          : mark.value < 0
-                            ? aestheticTokens.accentHex
-                            : mark.value === 0
-                              ? aestheticTokens.poiHighlightHex
-                              : aestheticTokens.activeThoughtText;
-                        return (
-                          <button
-                            key={mark.value}
-                            type="button"
-                            onClick={() => applySpeed(mark.value)}
-                            style={{
-                              left: `${pct}%`,
-                              color: active ? activeMarkColor : stitchHud ? hudKit.muted : aestheticTokens.hudMutedColor,
-                              fontWeight: active ? 700 : 500,
-                            }}
-                            title={`Set pace to ${mark.label}×`}
-                            className="absolute top-0 -translate-x-1/2 font-mono text-[8.5px] leading-none transition hover:opacity-100"
-                          >
-                            {mark.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                    {[...SPEED_LOG_MARKS].reverse().map((mark) => (
+                      <option key={mark.value} value={String(mark.value)}>
+                        {mark.value === 0 ? 'Pause' : `${mark.label}×`}
+                      </option>
+                    ))}
+                  </select>
                   {(isRewinding || rewindInfo.behindPresentSec >= 0.4) && (
                     <span
                       className="whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
@@ -1995,7 +1940,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     ? { backgroundColor: aestheticTokens.accentHex, color: '#ffffff', fontWeight: 600 }
                     : { backgroundColor: aestheticTokens.hudChipIdleBg, color: aestheticTokens.hudTextColor }
               }
-              className={`relative inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition ${
+              className={`relative inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs transition ${
                 stitchHud ? `glyph-button ${sim.focalWorldlineId !== 'traveler' ? 'glyph-on' : ''}` : 'hover:opacity-90'
               }`}
             >
@@ -2027,7 +1972,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     : 'transparent',
                 color: stitchHud ? hudKit.ink : aestheticTokens.hudTextColor,
               }}
-              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-xs transition"
             >
               <label htmlFor="village-eavesdrop-radius" className="group relative inline-flex cursor-pointer items-center" aria-label="Eavesdrop distance">
                 <span className={settings.proximityRadiusTiles > 0 ? '' : 'opacity-45'}>
@@ -2061,7 +2006,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   }
                   onUpdateSettings({ proximityRadiusTiles: nextRadius });
                 }}
-                className={stitchHud ? 'w-20' : 'w-20 cursor-pointer accent-emerald-400'}
+                className={stitchHud ? 'w-14' : 'w-14 cursor-pointer accent-emerald-400'}
                 title="Eavesdrop hearing radius (0 = Off, right end = Whole Map)"
               />
               <span className="w-7 text-right font-mono text-[11px]">
