@@ -35,19 +35,19 @@ export const PALETTES = {
   /** Black thread on undyed linen. */
   blackwork: {
     ground: '#e4dac6',
-    inks: { primary: '#1c1a18', secondary: '#2b2826', accent: '#1c1a18', accent2: '#34302c', gold: '#3a352f', dark: '#141210', skin: '#cfc4ae', light: '#f4eee2' },
+    inks: { primary: '#1c1a18', secondary: '#2b2826', accent: '#1c1a18', accent2: '#34302c', gold: '#3a352f', dark: '#141210', skin: '#cfc4ae', light: '#eeebe3' },
     skinTones: ['#d8cdb8', '#bfb39c', '#a2957e', '#7d7160'],
   },
   /** The traditional register: red and black with one quiet accent. */
   redBlack: {
     ground: '#e6dcc8',
-    inks: { primary: '#a8201a', secondary: '#1d1a18', accent: '#7c1712', accent2: '#c0392b', gold: '#b08a3c', dark: '#1d1a18', skin: '#d2a679', light: '#f5eedf' },
+    inks: { primary: '#a8201a', secondary: '#1d1a18', accent: '#7c1712', accent2: '#c0392b', gold: '#b08a3c', dark: '#1d1a18', skin: '#d2a679', light: '#efece4' },
     skinTones: ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'],
   },
   /** The full festive palette of the museum pieces. */
   festive: {
     ground: '#e3d8c2',
-    inks: { primary: '#b0241c', secondary: '#27407f', accent: '#2f6a3c', accent2: '#a82e63', gold: '#b8923a', dark: '#231f1c', skin: '#d2a679', light: '#f6efe0' },
+    inks: { primary: '#b0241c', secondary: '#27407f', accent: '#2f6a3c', accent2: '#a82e63', gold: '#b8923a', dark: '#231f1c', skin: '#d2a679', light: '#efece5' },
     skinTones: ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'],
   },
 } satisfies Record<string, Palette>;
@@ -57,8 +57,8 @@ export type PaletteName = keyof typeof PALETTES;
 const SKIN = ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'];
 const threads = (ground: string, primary: string, secondary: string, accent: string, accent2: string, gold: string, dark: string, light?: string): Palette => ({
   ground,
-  // The light thread: an off-white a little brighter than the linen, so it shows on it.
-  inks: { primary, secondary, accent, accent2, gold, dark, skin: '#d2a679', light: light ?? towardGround(ground, '#ffffff', 0.62) },
+  // The light thread: white stone, a cool pale grey a little brighter than the linen, so it shows on it.
+  inks: { primary, secondary, accent, accent2, gold, dark, skin: '#d2a679', light: light ?? towardGround(ground, '#f1f0ec', 0.72) },
   skinTones: SKIN,
 });
 

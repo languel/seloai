@@ -63,7 +63,8 @@ function pine(feature: SceneFeature): Shape[] {
   for (let i = 0; i < 3; i++) {
     const base = -h * (0.18 + i * 0.24);
     const half = U * (0.5 - i * 0.11) * TREE_SCALE;
-    shapes.push({ kind: 'area', points: [[-half, base], [half, base], [0, base - h * 0.36]], ink: 'accent', grain: UP });
+    // A softer green than the thread's own, so the pines sit back behind the village.
+    shapes.push({ kind: 'area', points: [[-half, base], [half, base], [0, base - h * 0.36]], ink: 'accent', grain: UP, fade: 0.28 });
   }
   return shapes;
 }
@@ -146,11 +147,17 @@ function well(feature: SceneFeature, model?: SceneModel): Shape[] {
   const postH = w * 1.05;
   const roofY = top - postH;
   for (const side of [-1, 1]) {
-    shapes.push({ kind: 'line', points: [[side * half * 0.86, top + ry * 0.4], [side * half * 0.86, roofY + w * 0.04]], ink: 'dark', weight: 0.9, fade: 0.3 });
+    // White stone posts, with a thin dark edge so they read on the linen.
+    const px = side * half * 0.86;
+    shapes.push({ kind: 'line', points: [[px + side * w * 0.035, top + ry * 0.4], [px + side * w * 0.035, roofY + w * 0.04]], ink: 'dark', weight: 0.25, fade: 0.35 });
+    shapes.push({ kind: 'line', points: [[px, top + ry * 0.4], [px, roofY + w * 0.04]], ink: 'light', weight: 1.1 });
   }
   const eave = half * 1.25;
   const peak = roofY - w * 0.42;
-  shapes.push({ kind: 'area', points: [[-eave, roofY + w * 0.06], [0, peak], [eave, roofY + w * 0.06]], ink: 'dark', grain: Math.PI / 2 });
+  // A white stone roof, edged in the dark thread.
+  const roof: Pt[] = [[-eave, roofY + w * 0.06], [0, peak], [eave, roofY + w * 0.06]];
+  shapes.push({ kind: 'area', points: roof, ink: 'light', grain: Math.PI / 2 });
+  shapes.push({ kind: 'line', points: roof, ink: 'dark', weight: 0.3, closed: true, fade: 0.2 });
   for (let k = 1; k <= 3; k++) {
     const t = k / 4;
     shapes.push({ kind: 'line', points: [[-eave * (1 - t), roofY + w * 0.06 + (peak - roofY - w * 0.06) * t], [eave * (1 - t), roofY + w * 0.06 + (peak - roofY - w * 0.06) * t]], ink: 'gold', weight: 0.3 });
