@@ -62,17 +62,30 @@ export interface Shot {
   cut: boolean;
   /** A few words for a caption or a log. */
   caption: string;
+  /** How the camera moves to it when not cutting: `slow` for a push in or a pull back. */
+  pace?: 'normal' | 'slow';
+  /** A two-shot framed loosely, with the surroundings: the pull back. */
+  loose?: boolean;
 }
 
 /** Shortest and longest a shot is held, in seconds. */
-export const MIN_SHOT = 3;
-export const MAX_SHOT = 16;
-const CLOSE_HOLD = 3.2;
-const REACTION_HOLD = 1.7;
-const LULL_ESTABLISH = 40;
+export const MIN_SHOT = 5;
+export const MAX_SHOT = 24;
+/** A slow push in on a dramatic line is held this long, and allowed this often. */
+const CLOSE_HOLD = 6;
+const CLOSE_EVERY = 25;
+/** A cutaway to someone named in a line, and how often one is allowed. */
+const CUTAWAY_HOLD = 2.6;
+const CUTAWAY_EVERY = 30;
+/** A slow pull back during a long conversation: how long in before, how long held. */
+const PULL_AFTER = 30;
+const PULL_HOLD = 9;
+const LULL_ESTABLISH = 60;
 /** How long a wide shot of one place is held before the next place, when nothing is happening. */
-const ESTABLISH_HOLD = 7;
-const RECENT = 9;
+const ESTABLISH_HOLD = 14;
+const RECENT = 12;
+/** A frame is kept while its people stay this far inside it (a share of its size from each edge). */
+const SAFE_MARGIN = 0.12;
 
 interface Candidate {
   kind: ShotKind;
@@ -83,14 +96,10 @@ interface Candidate {
   landmark?: DirectorLandmark;
 }
 
-function strongLine(line: string) {
-  return /[?!]\s*$/.test(line.trim()) || line.length > 70;
-}
-
-function hash(text: string) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
-  return (h >>> 0) / 4294967296;
+/** A line worth a slow push in: an exclamation or a long, charged question, not every remark. */
+function dramaticLine(line: string) {
+  const t = line.trim();
+  return (/!\s*$/.test(t) && t.length > 30) || (/\?\s*$/.test(t) && t.length > 60) || t.length > 110;
 }
 
 export class Director {
@@ -102,6 +111,8 @@ export class Director {
   private lastText = new Map<string, string>();
   private closedLines = new Set<string>();
   private lastClose = -Infinity;
+  private lastCutaway = -Infinity;
+  private lastPull = -Infinity;
   private lastEstablish = -Infinity;
   private left = new Map<string, number>();
   private establishVisits = new Map<string, number>();
@@ -125,11 +136,24 @@ export class Director {
     this.lastLine.clear();
     this.left.clear();
     this.lastClose = -Infinity;
+    this.lastCutaway = -Infinity;
+    this.lastPull = -Infinity;
     this.lastEstablish = -Infinity;
   }
 
   private name(id: string) {
     return this.names.get(id) ?? id;
+  }
+
+  /** Whether a line names this character (by any word of their name longer than three letters). */
+  private mentions(line: string, id: string) {
+    const name = this.names.get(id);
+    if (!name) return false;
+    const lower = line.toLowerCase();
+    return name
+      .toLowerCase()
+      .split(/\s+/)
+      .some((word) => word.length > 3 && new RegExp(`\\b${word.replace(/[^a-z]/g, '')}\\b`).test(lower));
   }
 
   private candidates(input: DirectorInput): Candidate[] {
@@ -175,7 +199,7 @@ export class Director {
     return out;
   }
 
-  private frame(kind: ShotKind, actors: DirectorActor[], input: DirectorInput, landmark?: DirectorLandmark): ShotRect {
+  private frame(kind: ShotKind, actors: DirectorActor[], input: DirectorInput, landmark?: DirectorLandmark, loose = false): ShotRect {
     let x0: number;
     let y0: number;
     let x1: number;
@@ -197,12 +221,14 @@ export class Director {
       y0 = Math.min(...actors.map((a) => a.y));
       y1 = Math.max(...actors.map((a) => a.y)) + 1;
       const tight = kind === 'close' || kind === 'reaction';
-      // Room above for the head and speech bubble, a little below for the feet.
-      x0 -= tight ? 2 : 3.5;
-      x1 += tight ? 2 : 3.5;
-      y0 -= tight ? 3.2 : 4.5;
-      y1 += tight ? 1.2 : 2;
-      minW = tight ? 7 : kind === 'follow' ? 13 : 12;
+      // Room above for the head and speech bubble, a little below for the feet; a loose
+      // frame (the pull back) takes in the surroundings too.
+      const pad = loose ? 2.2 : 1;
+      x0 -= (tight ? 2 : 3.5) * pad;
+      x1 += (tight ? 2 : 3.5) * pad;
+      y0 -= (tight ? 3.2 : 4.5) * pad;
+      y1 += (tight ? 1.2 : 2) * pad;
+      minW = tight ? 7 : loose ? 22 : kind === 'follow' ? 13 : 12;
     }
     let w = Math.max(minW, x1 - x0);
     let h = y1 - y0;
@@ -218,8 +244,16 @@ export class Director {
     return { x: cx - w / 2, y: cy - h / 2, w, h };
   }
 
-  private take(candidate: Candidate, kind: ShotKind, actors: DirectorActor[], input: DirectorInput, caption: string, forceEase = false): Shot {
-    const rect = this.frame(kind, actors, input, candidate.landmark);
+  private take(
+    candidate: Candidate,
+    kind: ShotKind,
+    actors: DirectorActor[],
+    input: DirectorInput,
+    caption: string,
+    forceEase = false,
+    opts: { pace?: 'normal' | 'slow'; loose?: boolean; cut?: boolean } = {},
+  ): Shot {
+    const rect = this.frame(kind, actors, input, candidate.landmark, opts.loose);
     const prev = this.current;
     let cut = !prev;
     if (prev && !forceEase) {
@@ -229,13 +263,24 @@ export class Director {
       const rescale = Math.max(rect.w / prev.rect.w, prev.rect.w / rect.w) > 2.4;
       cut = prev.subject !== candidate.subject && (far || rescale);
     }
+    if (opts.cut) cut = true;
     if (prev && prev.subject !== candidate.subject) this.left.set(prev.subject, input.time);
     if (!prev || prev.subject !== candidate.subject) this.subjectSince = input.time;
     if (kind === 'establishing') {
       this.lastEstablish = input.time;
       if (candidate.landmark) this.establishVisits.set(candidate.landmark.id, (this.establishVisits.get(candidate.landmark.id) ?? 0) + 1);
     }
-    const shot: Shot = { kind, subject: candidate.subject, actors: actors.map((a) => a.id), rect, startedAt: input.time, cut, caption };
+    const shot: Shot = {
+      kind,
+      subject: candidate.subject,
+      actors: actors.map((a) => a.id),
+      rect,
+      startedAt: input.time,
+      cut,
+      caption,
+      ...(opts.pace ? { pace: opts.pace } : {}),
+      ...(opts.loose ? { loose: true } : {}),
+    };
     this.current = shot;
     this.history.push(shot);
     if (this.history.length > 500) this.history.shift();
@@ -289,30 +334,49 @@ export class Director {
     }
     if (!mine && cur.kind !== 'establishing') return cur;
 
-    // Within a conversation: a close shot on a strong line, sometimes a reaction, then back.
+    // Within a conversation: mostly hold the two-shot. Now and then a slow push in on a
+    // dramatic line, a cutaway to someone the line names, or a slow pull back.
     if (mine?.kind === 'two-shot') {
-      // A line can turn strong as it is spoken (its question mark comes last), so look at
-      // every line in progress that has not had its close shot yet.
-      const speaker = members.find((m) => m.line && strongLine(m.line) && !this.closedLines.has(`${m.id}:${m.lineId ?? m.line}`));
-      if (speaker && cur.kind === 'two-shot' && input.time - this.lastClose > 9) {
-        this.lastClose = input.time;
-        this.closedLines.add(`${speaker.id}:${speaker.lineId ?? speaker.line}`);
-        if (this.closedLines.size > 200) this.closedLines.clear();
-        return this.take(mine, 'close', [speaker], input, `${this.name(speaker.id)}`, true);
+      if (cur.kind === 'two-shot' && !cur.loose) {
+        const speaker = members.find((m) => m.line && dramaticLine(m.line) && !this.closedLines.has(`${m.id}:${m.lineId ?? m.line}`));
+        if (speaker && input.time - this.lastClose > CLOSE_EVERY && elapsed >= MIN_SHOT) {
+          this.lastClose = input.time;
+          this.closedLines.add(`${speaker.id}:${speaker.lineId ?? speaker.line}`);
+          if (this.closedLines.size > 200) this.closedLines.clear();
+          return this.take(mine, 'close', [speaker], input, `${this.name(speaker.id)}`, true, { pace: 'slow' });
+        }
+        // Someone the line names, who is not in the conversation: a short cutaway to them.
+        const talking = members.find((m) => m.line && lineChanged.has(m.id));
+        if (talking && input.time - this.lastCutaway > CUTAWAY_EVERY) {
+          const named = input.actors.find((a) => !members.some((m) => m.id === a.id) && this.mentions(talking.line!, a.id));
+          if (named) {
+            this.lastCutaway = input.time;
+            return this.take(mine, 'reaction', [named], input, `${this.name(named.id)}, spoken of`, true, { cut: true });
+          }
+        }
+        if (onSubject >= PULL_AFTER && input.time - this.lastPull > PULL_AFTER && elapsed >= MIN_SHOT) {
+          this.lastPull = input.time;
+          return this.take(mine, 'two-shot', members, input, `${mine.caption}, from further off`, true, { pace: 'slow', loose: true });
+        }
       }
-      if (cur.kind === 'close' && elapsed >= CLOSE_HOLD) {
-        const listener = members.find((m) => m.id !== cur.actors[0]);
-        const line = this.lastText.get(cur.actors[0]) ?? '';
-        if (listener && hash(line) < 0.4) return this.take(mine, 'reaction', [listener], input, `${this.name(listener.id)} listens`, true);
-        return this.take(mine, 'two-shot', members, input, mine.caption, true);
-      }
-      if (cur.kind === 'reaction' && elapsed >= REACTION_HOLD) return this.take(mine, 'two-shot', members, input, mine.caption, true);
+      if (cur.kind === 'close' && elapsed >= CLOSE_HOLD) return this.take(mine, 'two-shot', members, input, mine.caption, true, { pace: 'slow' });
+      if (cur.kind === 'reaction' && elapsed >= CUTAWAY_HOLD) return this.take(mine, 'two-shot', members, input, mine.caption, true, { cut: true });
+      if (cur.kind === 'two-shot' && cur.loose && elapsed >= PULL_HOLD) return this.take(mine, 'two-shot', members, input, mine.caption, true, { pace: 'slow' });
     }
 
     // Same shot: keep framing the subjects as they move.
     const tracked = cur.kind === 'close' || cur.kind === 'reaction' ? cur.actors.map((id) => byId.get(id)).filter((a): a is DirectorActor => Boolean(a)) : members;
     const landmark = cur.kind === 'establishing' ? input.landmarks.find((l) => `place:${l.id}` === cur.subject) : undefined;
-    this.current = { ...cur, rect: this.frame(cur.kind, tracked, input, landmark) };
+    const wanted = this.frame(cur.kind, tracked, input, landmark, cur.loose);
+    // While everyone in the shot is comfortably inside the frame, the camera holds still;
+    // it reframes only when someone nears the edge or the group grows or shrinks a lot.
+    const r = cur.rect;
+    const mx = r.w * SAFE_MARGIN;
+    const my = r.h * SAFE_MARGIN;
+    const framed = tracked.every((a) => a.x - 0.5 >= r.x + mx && a.x + 1.5 <= r.x + r.w - mx && a.y - 2 >= r.y + my && a.y + 1.5 <= r.y + r.h - my);
+    const sized = wanted.w <= r.w * 1.02 && wanted.w >= r.w * 0.62;
+    if (cur.kind !== 'establishing' && framed && sized) return cur;
+    this.current = { ...cur, rect: wanted };
     return this.current;
   }
 }

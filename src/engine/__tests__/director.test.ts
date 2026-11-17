@@ -66,22 +66,23 @@ describe('the director camera', () => {
     for (const r of subjectRuns.slice(0, -1)) expect(r).toBeLessThanOrEqual(MAX_SHOT + 0.2);
   });
 
-  it('cuts to a strong line in close, then returns to the two-shot', () => {
+  it('pushes in slowly on a dramatic line, then eases back to the two-shot', () => {
     const d = new Director();
     let line: string | undefined;
     const actors = (): DirectorActor[] => [
       { id: 'a', x: 20, y: 20, moving: false, conversationId: 'c1', line },
       { id: 'b', x: 26, y: 20, moving: false, conversationId: 'c1' },
     ];
-    run(d, 0, 6, actors);
+    run(d, 0, 12, actors);
     expect(d.current!.kind).toBe('two-shot');
-    line = 'Who poisoned the well?';
-    run(d, 6.1, 6.3, actors);
+    line = 'Who poisoned the well, and why did you stand there and watch it happen without a word?';
+    run(d, 12.1, 12.3, actors);
     expect(d.current!.kind).toBe('close');
+    expect(d.current!.pace).toBe('slow');
     expect(d.current!.actors).toEqual(['a']);
     expect(d.current!.rect.w).toBeLessThan(12);
     line = undefined;
-    run(d, 6.4, 12, actors);
+    run(d, 12.4, 20, actors);
     expect(d.current!.kind).toBe('two-shot');
   });
 
@@ -93,7 +94,7 @@ describe('the director camera', () => {
       { id: 'b', x: 26, y: 20, moving: false, conversationId: 'c1' },
     ];
     run(d, 0, 6, actors);
-    const words = 'Did you leave the scarlet thread by the well?'.split(' ');
+    const words = 'Did you leave the scarlet thread by the well, knowing full well what she would do with it?'.split(' ');
     let t = 6;
     for (let i = 1; i <= words.length; i++) {
       line = words.slice(0, i).join(' ');
@@ -174,5 +175,41 @@ describe('time on a subject', () => {
     ];
     run(d, 0, 50, actors);
     expect(new Set(d.history.map((s) => s.subject)).has('talk:c2')).toBe(true);
+  });
+
+  it('holds still while the people in the shot stay framed, and does not push in on every remark', () => {
+    const d = new Director();
+    let line: string | undefined = undefined;
+    let ax = 20;
+    const actors = (): DirectorActor[] => [
+      { id: 'a', x: ax, y: 20, moving: false, conversationId: 'c1', line },
+      { id: 'b', x: 26, y: 20, moving: false, conversationId: 'c1' },
+    ];
+    run(d, 0, 6, actors);
+    const held = d.current!.rect;
+    ax = 20.6;
+    line = 'Who is there?';
+    run(d, 6.1, 9, actors);
+    expect(d.current!.kind).toBe('two-shot');
+    expect(d.current!.rect).toEqual(held);
+  });
+
+  it('cuts away to someone a line names, then back', () => {
+    const d = new Director();
+    d.setNames(new Map([['a', 'Baba Rada'], ['b', 'Stoyan Yunak'], ['c', 'Kuker Marin']]));
+    let line: string | undefined = undefined;
+    const actors = (): DirectorActor[] => [
+      { id: 'a', x: 20, y: 20, moving: false, conversationId: 'c1', line, lineId: line ? 'l1' : undefined },
+      { id: 'b', x: 26, y: 20, moving: false, conversationId: 'c1' },
+      { id: 'c', x: 40, y: 8, moving: false },
+    ];
+    run(d, 0, 6, actors);
+    line = 'Marin was at the hearth all night.';
+    run(d, 6.1, 6.3, actors);
+    expect(d.current!.kind).toBe('reaction');
+    expect(d.current!.actors).toEqual(['c']);
+    expect(d.current!.cut).toBe(true);
+    run(d, 6.4, 10, actors);
+    expect(d.current!.kind).toBe('two-shot');
   });
 });

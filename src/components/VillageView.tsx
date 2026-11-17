@@ -138,7 +138,9 @@ function renderRichLabels(
       return (
         <strong
           key={`poi-${idx}`}
-          className={`font-bold ${variant === 'dark' ? 'text-amber-200' : 'text-amber-700 dark:text-amber-300'}`}
+          data-focus-place={seg.text}
+          title="Double-click to look there"
+          className={`cursor-pointer font-bold ${variant === 'dark' ? 'text-amber-200' : 'text-amber-700 dark:text-amber-300'}`}
         >
           {seg.text}
         </strong>
@@ -148,7 +150,9 @@ function renderRichLabels(
       return (
         <strong
           key={`at-${idx}`}
-          className={`font-bold ${variant === 'dark' ? 'text-sky-200' : 'text-indigoFolk'}`}
+          data-focus-actor={seg.text}
+          title="Double-click to look at them"
+          className={`cursor-pointer font-bold ${variant === 'dark' ? 'text-sky-200' : 'text-indigoFolk'}`}
         >
           {seg.text}
         </strong>
@@ -610,7 +614,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
     zoom: number;
     targetZoom: number;
     anchor: { dx: number; dy: number } | null;
-  }>({ x: 0, y: 0, zoom: 1.15, targetZoom: 1.15, anchor: null });
+    /** A place the camera is gliding to (world pixels), set by a double-click on a name. */
+    glide?: { x: number; y: number } | null;
+  }>({ x: 0, y: 0, zoom: 1.15, targetZoom: 1.15, anchor: null, glide: null });
   const lastActiveSpeedRef = useRef<number>(1);
   const dragRef = useRef<{ active: boolean; moved: boolean; lastX: number; lastY: number }>({
     active: false,
@@ -819,10 +825,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
               cam.zoom = zoom;
               cam.targetZoom = zoom;
             } else {
-              const k = 1 - Math.exp(-dt * 2.4);
+              // Glide: about a second for an ordinary move, about four for a push in or a pull
+              // back; zoom eases a little slower than position, so moves never feel like a lunge.
+              const rate = shot.pace === 'slow' ? 0.3 : 0.95;
+              const k = 1 - Math.exp(-dt * rate);
+              const kz = 1 - Math.exp(-dt * rate * 0.7);
               cam.x += (tx - cam.x) * k;
               cam.y += (ty - cam.y) * k;
-              cam.targetZoom += (zoom - cam.targetZoom) * k;
+              cam.targetZoom += (zoom - cam.targetZoom) * kz;
             }
             if (fresh) setShotCaption(`${shot.kind === 'two-shot' ? 'Two-shot' : shot.kind[0].toUpperCase() + shot.kind.slice(1)}: ${shot.caption}`);
           } else if (followSelected && selectedId) {
@@ -831,9 +841,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
               const tx = (rt.x + 0.5) * sim.map.tileDim;
               const ty = (rt.y + 0.5) * sim.map.tileDim;
               cam.anchor = null;
-              cam.x += (tx - cam.x) * 0.12;
-              cam.y += (ty - cam.y) * 0.12;
+              const k = 1 - Math.exp(-dt * 1.6);
+              cam.x += (tx - cam.x) * k;
+              cam.y += (ty - cam.y) * k;
             }
+          } else if (cam.glide) {
+            // A gentle glide to a place picked by name.
+            const k = 1 - Math.exp(-dt * 1.4);
+            cam.x += (cam.glide.x - cam.x) * k;
+            cam.y += (cam.glide.y - cam.y) * k;
+            if (Math.hypot(cam.glide.x - cam.x, cam.glide.y - cam.y) < 1) cam.glide = null;
           }
 
           const renderStart = performance.now();
@@ -1300,6 +1317,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
       takeOver();
     }
     cameraRef.current.anchor = null;
+    // Dragging takes the camera back from any glide in progress.
+    cameraRef.current.glide = null;
     cameraRef.current.x -= dx / cameraRef.current.zoom;
     cameraRef.current.y -= dy / cameraRef.current.zoom;
     dragRef.current.lastX = e.clientX;
@@ -1339,6 +1358,49 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
   };
 
+  /** Glides the camera gently to a cell, leaving story mode (the viewer has taken over). */
+  const glideToCell = (x: number, y: number, zoom = 1.8) => {
+    const cam = cameraRef.current;
+    takeOver();
+    setFollowSelected(false);
+    cam.anchor = null;
+    cam.glide = { x: (x + 0.5) * sim.map.tileDim, y: (y + 0.5) * sim.map.tileDim };
+    cam.targetZoom = Math.max(cam.targetZoom, zoom);
+  };
+  /** Frames a character and follows them, gently. */
+  const focusCharacter = (id: string) => {
+    const cam = cameraRef.current;
+    takeOver();
+    setSelectedId(id);
+    setFollowSelected(true);
+    cam.anchor = null;
+    cam.glide = null;
+    cam.targetZoom = Math.max(cam.targetZoom, 2.1);
+  };
+  /**
+   * Double-click a name anywhere in the village view (a villager in the roster, a character
+   * or a place named in the text) to guide the camera there gently.
+   */
+  const handleFocusDoubleClick = (e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-focus-place],[data-focus-actor],[data-focus-actor-id]');
+    if (!el) return;
+    e.preventDefault();
+    window.getSelection()?.removeAllRanges();
+    const byId = el.dataset.focusActorId;
+    const byName = el.dataset.focusActor?.toLowerCase();
+    if (byId || byName) {
+      const cfg = byId ? sim.configs.get(byId) : [...sim.configs.values()].find((c) => c.name.toLowerCase() === byName || c.name.toLowerCase().split(/\s+/)[0] === byName);
+      if (cfg) focusCharacter(cfg.id);
+      return;
+    }
+    const label = el.dataset.focusPlace?.toLowerCase() ?? '';
+    const pois = sim.map.pointsOfInterest ?? [];
+    const place =
+      pois.find((p) => p.label.toLowerCase() === label || p.tag?.toLowerCase() === label.replace(/^#/, '')) ??
+      pois.find((p) => p.label.toLowerCase().includes(label) || label.includes(p.label.toLowerCase()));
+    if (place) glideToCell(place.x, place.y);
+  };
+
   /** Double-click a character to frame and follow them, or a named place to frame it. */
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
@@ -1354,13 +1416,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
         villager = rt;
       }
     }
-    const cam = cameraRef.current;
     if (villager) {
-      takeOver();
-      setSelectedId(villager.id);
-      setFollowSelected(true);
-      cam.anchor = null;
-      cam.targetZoom = Math.max(cam.targetZoom, 2.2);
+      focusCharacter(villager.id);
       return;
     }
     let place: { x: number; y: number } | null = null;
@@ -1372,14 +1429,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         place = p;
       }
     }
-    if (place) {
-      takeOver();
-      setFollowSelected(false);
-      cam.anchor = null;
-      cam.x = (place.x + 0.5) * td;
-      cam.y = (place.y + 0.5) * td;
-      cam.targetZoom = Math.max(cam.targetZoom, 1.8);
-    }
+    if (place) glideToCell(place.x, place.y);
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -1794,6 +1844,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
   return (
     <div
+      onDoubleClickCapture={handleFocusDoubleClick}
       className="flex h-full flex-col lg:flex-row overflow-hidden"
       style={
         {
@@ -2274,6 +2325,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   <button
                     key={v.id}
                     type="button"
+                    data-focus-actor-id={v.id}
+                    title="Double-click to look at them"
                     onClick={() => setSelectedId(v.id)}
                     className={`flex w-full items-center gap-1.5 rounded-sm border py-0.5 pl-0.5 pr-2 text-left transition ${
                       active
@@ -2335,6 +2388,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
                   <button
                     key={v.id}
                     type="button"
+                    data-focus-actor-id={v.id}
+                    title="Double-click to look at them"
                     onClick={() => setSelectedId(v.id)}
                     className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition ${
                       active
