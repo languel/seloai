@@ -88,6 +88,8 @@ describe('VillageSimulation timeline rewind and slow/paused bubble scaling', () 
       [],
       { ...DEFAULT_MODEL_SETTINGS, autoConverse: false },
     );
+    // The story is already set here, so these turns test the story itself, not the greetings before it.
+    sim.storySet = true;
     const v0 = [...sim.runtimes.values()][0]!;
     const startX = v0.x;
     const startY = v0.y;

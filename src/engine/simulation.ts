@@ -233,6 +233,12 @@ export class VillageSimulation {
    * app holds the story until a voice is ready, so it does not begin in the browser's voice.
    */
   public holdStory = false;
+  /**
+   * Whether the Scribe has set the story. Until then characters only greet each other and
+   * make small talk, and no scene beats are told; the Scribe's prologue sets it.
+   */
+  public storySet = false;
+  private prologueRunning = false;
   /** Setting-specific knowledge supplied by the active world pack. */
   public world: WorldContext;
 
@@ -274,6 +280,8 @@ export class VillageSimulation {
     this.map = map;
     this.modelSettings = settings;
     this.conversations = conversations;
+    // A story already under way (the Scribe has spoken) is set; a fresh one waits for its prologue.
+    this.storySet = conversations.some((c) => c.messages.some((m) => m.kind === 'narration' || m.senderId === 'narrator'));
     const spawn = map.spawnPoints[0] ?? { x: Math.floor(map.width / 2), y: Math.floor(map.height / 2) };
     const safeSpawn = findNearestWalkableTile(map, spawn.x, spawn.y);
     this.player = {
@@ -614,6 +622,7 @@ export class VillageSimulation {
     this.conversations = [];
     this.focalWorldlineId = 'scribe';
     this.wellWater = null;
+    this.storySet = false;
     for (const [id, rt] of this.runtimes.entries()) {
       const cfg = this.configs.get(id);
       rt.activeConversationId = undefined;
@@ -665,6 +674,45 @@ export class VillageSimulation {
     this.player.y = safe.y;
     this.player.path = [];
     this.notify(true);
+  }
+
+  /**
+   * Once a voice is ready (the story is no longer held), the Scribe opens the story: a few
+   * sentences that set the scene. Until then characters only greet each other. Without a
+   * narrator, or if the prologue cannot be told, the story is simply set.
+   */
+  private maybeTellPrologue() {
+    if (this.storySet || this.prologueRunning || this.holdStory || this.paused) return;
+    if (!this.modelSettings.narratorEnabled) {
+      this.storySet = true;
+      return;
+    }
+    this.prologueRunning = true;
+    void (async () => {
+      try {
+        const conv = this.getOrCreateHumanConversation('narrator');
+        const res = await this.mind.generateNarratorReply({
+          world: this.world,
+          cast: this.castPronouns(),
+          prompt:
+            'Open the story. In two or three sentences, set the scene for everyone listening: the place, the trouble that hangs over it, and who is caught up in it. End on the moment the day begins.',
+          sceneContext: this.buildSceneContext(),
+          history: [],
+          settings: this.modelSettings,
+        });
+        const text = parseDialogueAndNarration(res.text, this.modelSettings.narratorName.trim() || 'Scribe').display.trim();
+        if (text) {
+          await this.emitNarrationTurn(conv, text, true, undefined, res.source);
+          for (const rt of this.runtimes.values()) this.appendWorldEvent(rt, `The story begins: ${text.slice(0, 160)}`);
+        }
+      } catch {
+        // A prologue that cannot be told does not hold the story back.
+      } finally {
+        this.storySet = true;
+        this.prologueRunning = false;
+        this.notify(true);
+      }
+    })();
   }
 
   /** Sets the well's water and tells everyone in the village. */
@@ -1378,6 +1426,7 @@ export class VillageSimulation {
   private runAutonomousDecisions() {
     const now = this.now();
     const runtimesList = [...this.runtimes.values()];
+    this.maybeTellPrologue();
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
     if (this.modelSettings.autoConverse && !this.holdStory) {
@@ -1798,7 +1847,7 @@ export class VillageSimulation {
       const hearThoughts = eavesdropEnabled && this.modelSettings.eavesdropThoughts;
       const landmarkName = this.getNearestLandmarkName((rtA.x + rtB.x) / 2, (rtA.y + rtB.y) / 2);
       await this.whenRunning();
-      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
+      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet) {
         const introBeat = await this.mind.generateSceneBeat({
         world: this.world,
         cast: this.castPronouns(),
@@ -1896,7 +1945,7 @@ export class VillageSimulation {
       });
       this.appendWorldEvent(rtB, bSummary);
 
-      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
+      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet) {
         const closing = await this.mind.generateSceneBeat({
         world: this.world,
         cast: this.castPronouns(),
@@ -2241,6 +2290,8 @@ export class VillageSimulation {
         villager: speakerCfg,
         runtime: speakerRt,
         partnerName,
+        // Before the story is set, only greetings, unless the player is in it: then they answer as the story.
+        phase: this.storySet || conv.participantIds.includes(this.player.id) ? 'story' : 'greetings',
         history: historySnapshot,
         settings: this.modelSettings,
         speakSpatialResolver: hearSpeech ? resolver : undefined,

@@ -449,6 +449,11 @@ class BrainRouter {
     world?: WorldContext;
     /** Everyone in the world with their pronouns, from the character sheets. */
     cast?: CastEntry[];
+    /**
+     * `greetings` before the Scribe has set the story: only hellos and small talk, no plot.
+     * `story` (the default) once it is under way.
+     */
+    phase?: 'greetings' | 'story';
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
     onBeforeSpeak?: (info: {
@@ -465,6 +470,7 @@ class BrainRouter {
   }> {
     const { villager, runtime, partnerName, history, settings } = params;
     const world = params.world ?? GENERIC_WORLD_CONTEXT;
+    const greetings = params.phase === 'greetings';
     const memories = runtime.memories
       .slice(-4)
       .map((m) => `- ${m.summary}`)
@@ -488,7 +494,17 @@ class BrainRouter {
           ? `Counter, question, or complicate what ${partnerName} just said—reveal a subtle detail, doubt, wager, or local rumor.`
           : `Steer the moment toward a decision: make a pact, warn ${partnerName}, change the subject sharply, or commit to what you'll do next.`;
 
-    const systemPrompt = [
+    const systemPrompt = greetings
+      ? [
+          `You are ${villager.name} in the ${describeSetting(world)}, on an ordinary moment before anything has happened.`,
+          `Who you are (keep implicit—NEVER recite your job title or copy this bio): ${villager.identity}`,
+          castPronounLine(params.cast),
+          `The story has not begun yet. Only greet ${partnerName} and make small talk: the weather, the day's work, family, a kind word. Do NOT raise any trouble, curse, demand, sacrifice, secret, plan or quest.`,
+          `Reply in one short, warm spoken sentence (under 20 words), in first person, plain dialogue only. Always write strictly in natural English. NEVER start with or utter your own name (never write "${villager.name}:").`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : [
       `You are ${villager.name} in the living ${describeSetting(world)}.`,
       world.premise ? `Situation: ${world.premise}` : '',
       `Background subtext (keep implicit—NEVER recite your job title or copy this bio): ${villager.identity}`,
@@ -576,7 +592,7 @@ class BrainRouter {
             const rawCleanText = parseDialogueAndNarration(res.text, villager.name).display;
             const repeated = isTextTooSimilar(rawCleanText, recentSelfLines, 0.58);
             const cleanText = repeated
-              ? synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world)
+              ? synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world, greetings)
               : rawCleanText;
 
             this.lastMetrics.lastOmniLatencyMs = res.durationMs;
@@ -723,7 +739,7 @@ class BrainRouter {
         if (retry && !isTextTooSimilar(retry.text, recentSelfLines, 0.58)) {
           routed = retry;
         } else {
-          const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world);
+          const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world, greetings);
           runtime.recentUtterances = pushRing(runtime.recentUtterances, fresh);
           return { ...routed, text: fresh };
         }
@@ -735,7 +751,7 @@ class BrainRouter {
     // Story-Sim deterministic persona fallback (instant, zero VRAM)
     const started = performance.now();
     await this.delay(180);
-    const reply = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world);
+    const reply = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world, greetings);
     runtime.recentUtterances = pushRing(runtime.recentUtterances, reply);
     const durationMs = Math.round(performance.now() - started);
     this.log({
@@ -1804,13 +1820,32 @@ function buildWorldLineCandidates(
   return templates.map((template) => fillTemplate(template, { partner: partnerName }));
 }
 
+/** Plain hellos and small talk, for before the story is set. `{name}` is the one greeted. */
+const GREETING_LINES = [
+  'Good morning, {name}! A fine day for it.',
+  'Ah, {name}, how is your family keeping?',
+  'Well met, {name}. The air smells of hay today.',
+  'Hello, {name}! Off to the square, are you?',
+  'Peace on your house, {name}.',
+  'Good day, {name}. Mind the mud by the lane.',
+  '{name}! I was hoping I would see you this morning.',
+  'A blessing on your bread today, {name}.',
+];
+
 function synthesizeStorySimReply(
   villager: VillagerConfig,
   partnerName: string,
   history: ChatMessage[],
   avoidLines: string[] = [],
   world: WorldContext = GENERIC_WORLD_CONTEXT,
+  greetings = false,
 ): string {
+  if (greetings) {
+    const first = partnerName.split(/\s+/)[0] || partnerName;
+    const pool = GREETING_LINES.map((l) => l.replace('{name}', first)).filter((l) => !avoidLines.includes(l));
+    const pick = pool.length ? pool : GREETING_LINES.map((l) => l.replace('{name}', first));
+    return pick[(history.length + villager.name.charCodeAt(0) + avoidLines.length) % pick.length];
+  }
   const spokenHistory = history.filter((m) => m.kind !== 'narration');
   const dmBeat = [...history].reverse().find((m) => m.kind === 'narration')?.text.toLowerCase() ?? '';
   const last = spokenHistory[spokenHistory.length - 1];

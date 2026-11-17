@@ -90,6 +90,8 @@ describe('Simulation', () => {
       narratorEnabled: true,
       narrateEvents: true,
     });
+    // The story is already set here, so these turns test the story itself, not the greetings before it.
+    sim.storySet = true;
 
     const vA = DEFAULT_VILLAGERS[0];
     const vB = DEFAULT_VILLAGERS[1];
@@ -209,6 +211,8 @@ describe('Simulation', () => {
       narratorEnabled: true,
       narrateEvents: true,
     });
+    // The story is already set here, so these turns test the story itself, not the greetings before it.
+    sim.storySet = true;
 
     const vA = DEFAULT_VILLAGERS[0];
     const vB = DEFAULT_VILLAGERS[3];
