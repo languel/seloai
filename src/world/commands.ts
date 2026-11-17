@@ -337,6 +337,9 @@ function checkEdit(edit: SceneEdit) {
     case 'houseScale':
       if (!(edit.scale >= 0.75 && edit.scale <= 4)) fail('houseScale is 0.75 to 4.');
       return;
+    case 'wellState':
+      if (!edit.id || (edit.state !== 'dry' && edit.state !== 'flowing' && edit.state !== null)) fail('wellState needs an id and "dry", "flowing" or null.');
+      return;
     case 'houseLook':
       if (!HOUSE_LOOKS.includes(edit.look)) fail(`houseLook is one of ${HOUSE_LOOKS.join(', ')}.`);
       return;

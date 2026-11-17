@@ -102,6 +102,8 @@ export interface SceneFeature {
   variant?: BuildingVariant;
   /** For a house: drawn or stitched, instead of the world's own house look. */
   look?: HouseLook;
+  /** For a well: dry or flowing. Unset, a well in dry ground is dry and any other flows. */
+  state?: 'dry' | 'flowing';
 }
 
 /**

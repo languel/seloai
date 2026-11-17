@@ -276,3 +276,18 @@ describe('places that belong to a feature', () => {
     expect(alone.features.find((f) => f.id === 'square-well')).toMatchObject({ x: well.x, y: well.y });
   });
 });
+
+describe('the well', () => {
+  it('is dry in dry ground unless set, and can be set dry or flowing', async () => {
+    const { wellIsDry } = await import('../../art/sceneArt');
+    const recipe = { generator: 'zmeyovo', params: {}, seed: 1 };
+    const base = bakeScene({ recipe, edits: [] }).model;
+    const well = base.features.find((f) => f.kind === 'well')!;
+    expect(well).toBeDefined();
+    expect(wellIsDry(well, base)).toBe(true);
+    const flowing = bakeScene({ recipe, edits: [{ op: 'wellState', id: well.id!, state: 'flowing' }] }).model;
+    expect(wellIsDry(flowing.features.find((f) => f.id === well.id)!, flowing)).toBe(false);
+    const back = bakeScene({ recipe, edits: [{ op: 'wellState', id: well.id!, state: 'flowing' }, { op: 'wellState', id: well.id!, state: null }] }).model;
+    expect(wellIsDry(back.features.find((f) => f.id === well.id)!, back)).toBe(true);
+  });
+});

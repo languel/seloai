@@ -68,20 +68,124 @@ function pine(feature: SceneFeature): Shape[] {
   return shapes;
 }
 
-function well(feature: SceneFeature): Shape[] {
-  const r = Math.min(feature.w, feature.h) * U * 0.36;
-  const shapes: Shape[] = [
-    { kind: 'area', points: circle([0, 0], r, 24), ink: 'dark', grain: 0 },
-    { kind: 'area', points: circle([0, 0], r * 0.68, 20), ink: 'secondary', grain: 0 },
-    { kind: 'line', points: circle([0, 0], r * 1.16, 24), ink: 'gold', weight: 0.7, closed: true },
-  ];
-  // The serpent: coils wound about the rim.
-  for (let i = 0; i < 4; i++) {
-    const a = (i * Math.PI) / 2 + Math.PI / 4;
-    const at: Pt = [Math.cos(a) * r * 1.5, Math.sin(a) * r * 1.5];
-    shapes.push({ kind: 'line', points: curl(at, r * 0.42, 1.1, i % 2 ? 1 : -1, a), ink: 'accent', weight: 0.8 });
+/** Whether a well is dry: as set, or else whether it stands in dry ground. */
+export function wellIsDry(feature: SceneFeature, model?: SceneModel): boolean {
+  if (feature.state) return feature.state === 'dry';
+  if (!model) return false;
+  let dry = 0;
+  let all = 0;
+  for (let x = feature.x - 2; x < feature.x + feature.w + 2; x++) {
+    for (let y = feature.y - 2; y < feature.y + feature.h + 2; y++) {
+      const t = model.terrain[x]?.[y];
+      if (!t) continue;
+      all++;
+      if (t === 'dry') dry++;
+    }
   }
-  shapes.push({ kind: 'knot', at: [0, 0], r: r * 0.16, ink: 'gold' });
+  return all > 0 && dry / all > 0.3;
+}
+
+/** Points along the front (lower) half of an ellipse, left to right. */
+function frontArc(cx: number, cy: number, rx: number, ry: number, steps = 14): Pt[] {
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const t = Math.PI - (i / steps) * Math.PI;
+    return [cx + Math.cos(t) * rx, cy + Math.sin(t) * ry] as Pt;
+  });
+}
+
+/**
+ * The well, seen from the front and a little above, standing on its footprint: a drum of
+ * stone courses with an embroidered rosette, two posts under a shingled roof, a windlass
+ * with its rope and bucket, and the serpent wound about the drum. Flowing, water shines in
+ * the mouth, the bucket hangs full at the rim and spills over into a puddle; dry, the
+ * mouth is dark and cracked, the bucket hangs empty and high, and the stones are cracked.
+ */
+function well(feature: SceneFeature, model?: SceneModel): Shape[] {
+  const dry = wellIsDry(feature, model);
+  const w = Math.min(feature.w, 3) * U * 0.82;
+  const half = w / 2;
+  const dh = w * 0.5;
+  const ry = w * 0.17;
+  const top = -dh;
+  const shapes: Shape[] = [];
+  // The drum: its front face between the bottom curve and the front of the rim.
+  const bottom = frontArc(0, 0, half, ry);
+  const rimFront = frontArc(0, top, half, ry).reverse();
+  shapes.push({ kind: 'area', points: [...bottom, ...rimFront], ink: 'primary', grain: 0 });
+  // Stone courses, following the drum's curve, and staggered joints between the stones.
+  for (const k of [1 / 3, 2 / 3]) {
+    shapes.push({ kind: 'line', points: frontArc(0, top * k, half, ry), ink: 'dark', weight: 0.35 });
+  }
+  for (let row = 0; row < 3; row++) {
+    const y0 = top * (row / 3);
+    const y1 = top * ((row + 1) / 3);
+    for (let j = 0; j < 4; j++) {
+      const t = (j + (row % 2 ? 0.5 : 0) + 0.25) / 4;
+      const x = -half + t * w;
+      const sag = Math.sqrt(Math.max(0, 1 - (x / half) ** 2)) * ry;
+      shapes.push({ kind: 'line', points: [[x, y0 + sag], [x, y1 + sag]], ink: 'dark', weight: 0.3 });
+    }
+  }
+  // An embroidered rosette on the face of the drum.
+  const rose: Pt = [0, top * 0.5 + ry * 0.9];
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    shapes.push({ kind: 'knot', at: [rose[0] + Math.cos(a) * w * 0.07, rose[1] + Math.sin(a) * w * 0.055], r: w * 0.022, ink: i % 2 ? 'gold' : 'secondary' });
+  }
+  shapes.push({ kind: 'knot', at: rose, r: w * 0.03, ink: 'gold' });
+  // The mouth: the far half of the rim behind, then water or a dark, cracked hollow.
+  shapes.push({ kind: 'area', points: circle([0, top], half * 0.82, 22).map(([x, y]): Pt => [x, top + (y - top) * (ry / half)]), ink: dry ? 'dark' : 'secondary', grain: 0 });
+  if (dry) {
+    shapes.push({ kind: 'line', points: [[-half * 0.4, top - ry * 0.1], [-half * 0.1, top + ry * 0.25], [half * 0.15, top - ry * 0.15], [half * 0.45, top + ry * 0.2]], ink: 'gold', weight: 0.25 });
+  } else {
+    shapes.push({ kind: 'knot', at: [-half * 0.3, top - ry * 0.15], r: w * 0.025, ink: 'gold' });
+    shapes.push({ kind: 'line', points: frontArc(0, top - ry * 0.05, half * 0.5, ry * 0.35, 8), ink: 'gold', weight: 0.25 });
+  }
+  shapes.push({ kind: 'line', points: [...frontArc(0, top, half, ry), ...frontArc(0, top, half, ry).map(([x, y]): Pt => [-x, top - (y - top)])], ink: 'gold', weight: 0.7, closed: true });
+  // Posts, the roof and the windlass.
+  const postH = w * 1.05;
+  const roofY = top - postH;
+  for (const side of [-1, 1]) {
+    shapes.push({ kind: 'line', points: [[side * half * 0.86, top + ry * 0.4], [side * half * 0.86, roofY + w * 0.04]], ink: 'dark', weight: 1.1 });
+  }
+  const eave = half * 1.25;
+  const peak = roofY - w * 0.42;
+  shapes.push({ kind: 'area', points: [[-eave, roofY + w * 0.06], [0, peak], [eave, roofY + w * 0.06]], ink: 'dark', grain: Math.PI / 2 });
+  for (let k = 1; k <= 3; k++) {
+    const t = k / 4;
+    shapes.push({ kind: 'line', points: [[-eave * (1 - t), roofY + w * 0.06 + (peak - roofY - w * 0.06) * t], [eave * (1 - t), roofY + w * 0.06 + (peak - roofY - w * 0.06) * t]], ink: 'gold', weight: 0.3 });
+  }
+  shapes.push({ kind: 'knot', at: [0, peak - w * 0.05], r: w * 0.045, ink: 'gold' });
+  const beamY = roofY + postH * 0.32;
+  shapes.push({ kind: 'line', points: [[-half * 0.86, beamY], [half * 0.86, beamY]], ink: 'gold', weight: 0.8 });
+  shapes.push({ kind: 'line', points: circle([half * 1.0, beamY], w * 0.07, 10), ink: 'dark', weight: 0.5, closed: true });
+  shapes.push({ kind: 'line', points: [[half * 1.0, beamY], [half * 1.13, beamY + w * 0.1]], ink: 'dark', weight: 0.5 });
+  // Rope and bucket: down to the water, full; or hanging high and empty.
+  const bucketY = dry ? beamY + postH * 0.3 : top - ry * 0.3;
+  shapes.push({ kind: 'line', points: [[0, beamY], [0, bucketY - w * 0.12]], ink: 'gold', weight: 0.35 });
+  const bw = w * 0.11;
+  shapes.push({ kind: 'area', points: [[-bw, bucketY - w * 0.12], [bw, bucketY - w * 0.12], [bw * 0.8, bucketY], [-bw * 0.8, bucketY]], ink: 'gold', grain: Math.PI / 2 });
+  if (!dry) shapes.push({ kind: 'line', points: [[-bw * 0.8, bucketY - w * 0.11], [bw * 0.8, bucketY - w * 0.11]], ink: 'secondary', weight: 0.5 });
+  // The serpent wound about the drum: a sinuous coil with a head at one end.
+  const coil: Pt[] = Array.from({ length: 17 }, (_, i) => {
+    const t = i / 16;
+    const x = -half * 1.05 + t * w * 1.05;
+    return [x, top * 0.62 + Math.sin(t * Math.PI * 3) * dh * 0.16 + Math.sqrt(Math.max(0, 1 - (x / half) ** 2)) * ry];
+  });
+  shapes.push({ kind: 'line', points: coil, ink: 'accent', weight: 0.9 });
+  shapes.push({ kind: 'knot', at: coil[coil.length - 1], r: w * 0.04, ink: 'accent' });
+  shapes.push({ kind: 'line', points: curl(coil[0], w * 0.08, 1.1, -1, Math.PI), ink: 'accent', weight: 0.6 });
+  if (dry) {
+    // Cracks in the stones, and dry tufts at the foot.
+    shapes.push({ kind: 'line', points: [[half * 0.35, top * 0.15 + ry], [half * 0.45, top * 0.35 + ry], [half * 0.3, top * 0.55 + ry]], ink: 'dark', weight: 0.3 });
+    for (const x of [-half * 1.15, half * 1.2]) shapes.push({ kind: 'line', points: [[x - w * 0.04, -w * 0.06], [x, 0], [x + w * 0.04, -w * 0.07]], ink: 'gold', weight: 0.3 });
+  } else {
+    // Water brims over the rim and runs down into a puddle at the foot.
+    const spill: Pt[] = Array.from({ length: 7 }, (_, i) => [half * 0.95 + Math.sin(i * 1.3) * w * 0.02, top + ry * 0.2 + (i / 6) * (dh - ry * 0.2)]);
+    shapes.push({ kind: 'line', points: spill, ink: 'secondary', weight: 0.6 });
+    shapes.push({ kind: 'area', points: circle([half * 1.15, ry * 0.4], w * 0.2, 14).map(([x, y]): Pt => [x, ry * 0.4 + (y - ry * 0.4) * 0.35]), ink: 'secondary', grain: 0 });
+    shapes.push({ kind: 'knot', at: [half * 1.02, top * 0.3], r: w * 0.018, ink: 'secondary' });
+  }
   return shapes;
 }
 
@@ -302,7 +406,8 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
     case 'pine':
       return place(pine(feature), { dx: footX, dy: footY });
     case 'well':
-      return place(well(feature), { dx: footX, dy: centreY });
+      // Seen from the front, standing on its footprint like a house.
+      return place(well(feature, model), { dx: footX, dy: footY });
     case 'hearth':
       return place(hearth(feature), { dx: footX, dy: centreY });
     case 'star': {

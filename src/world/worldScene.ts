@@ -31,6 +31,8 @@ export type SceneEdit =
   | { op: 'rotate'; id: string; angle: number }
   /** Move a feature to another layer. */
   | { op: 'layer'; id: string; layer: SceneLayer }
+  /** A well dry or flowing (null: as its ground decides). */
+  | { op: 'wellState'; id: string; state: 'dry' | 'flowing' | null }
   | { op: 'remove'; id: string }
   /** Many features cut away at once (an erase brush stroke), as one step. */
   | { op: 'removeMany'; ids: string[] }
@@ -158,6 +160,13 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
           model.features.push({ ...f, seed: hashString(`${f.kind}:${f.id}`) });
           touchRect(touched, f.x, f.y, f.w, f.h);
         }
+        return;
+      }
+      case 'wellState': {
+        const f = model.features.find((g) => g.id === edit.id);
+        if (!f || f.kind !== 'well') return void skipped.push({ index, reason: `no well called ${edit.id}` });
+        if (edit.state) f.state = edit.state;
+        else delete f.state;
         return;
       }
       case 'rotate':

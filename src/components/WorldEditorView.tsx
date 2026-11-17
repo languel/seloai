@@ -115,6 +115,8 @@ function describeEdit(edit: SceneEdit): string {
       return `Turned ${edit.id} to ${Math.round((edit.angle * 180) / Math.PI)}°`;
     case 'layer':
       return `Moved ${edit.id} to ${edit.layer}`;
+    case 'wellState':
+      return edit.state ? `Well ${edit.state}` : 'Well as its ground decides';
     case 'move':
       return `Moved ${edit.id} to ${edit.x}, ${edit.y}`;
     case 'remove':
@@ -1393,6 +1395,28 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
           </div>
         ) : (
           <span className="stitch-muted">Nothing. Pick the pointer and click a house, a tree or a well.</span>
+        )}
+        {selected?.id && selected.kind === 'well' && (
+          <div className="flex items-center gap-1">
+            <span className="stitch-muted">Water</span>
+            {(
+              [
+                [null, 'By its ground'],
+                ['flowing', 'Flowing'],
+                ['dry', 'Dry'],
+              ] as const
+            ).map(([state, label]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={(selected.state ?? null) === state}
+                className={`glyph-button rounded-sm px-1.5 py-0.5 ${(selected.state ?? null) === state ? 'glyph-on font-semibold' : ''}`}
+                onClick={() => edit({ op: 'wellState', id: selected.id!, state }, state ? `Well ${state}` : 'Well as its ground decides')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         )}
         {selected?.id && (
           <>
