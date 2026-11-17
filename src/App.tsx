@@ -117,6 +117,19 @@ export function App() {
   const dataDialogRef = useRef<HTMLDialogElement | null>(null);
   const autoLoadAttemptedRef = useRef(false);
   const [showVoiceNudge, setShowVoiceNudge] = useState(false);
+  // Until the startup check has decided which voice to load, the story waits.
+  const [voiceDecided, setVoiceDecided] = useState(false);
+  const [lightStatus, setLightStatus] = useState<ModelProgress>(kokoroEngine.getProgress());
+  useEffect(() => kokoroEngine.subscribe(setLightStatus), []);
+  // The story does not begin before a voice: hold it while the startup check runs, while a
+  // voice model loads, and while the voice card asks; let go once a voice is ready (or the
+  // card is dismissed, when the browser's voice will do).
+  const voiceReady = omniStatus.status === 'ready' || lightStatus.status === 'ready';
+  const voiceLoading = omniStatus.status === 'loading' || lightStatus.status === 'loading';
+  const holdStory = !voiceReady && (!voiceDecided || voiceLoading || showVoiceNudge);
+  useEffect(() => {
+    if (simRef.current) simRef.current.holdStory = holdStory;
+  }, [holdStory, ready]);
   const latestRef = useRef<{
     tab: WorkspaceTabId;
     map: VillageMap | null;
@@ -341,6 +354,7 @@ export function App() {
 
     resolveStartupAutoLoadCandidate(settings).then((candidate) => {
       if (cancelled) return;
+      setVoiceDecided(true);
       if (!candidate) {
         // No cached brain: load the light voice if it was chosen before, otherwise offer a voice.
         if (lightVoiceWasChosen()) kokoroEngine.load().catch(() => {});
@@ -751,6 +765,7 @@ export function App() {
       fresh.world,
       { timers: 'sim' },
     );
+    simRef.current.holdStory = holdStory;
     storeRef.current.reset({ map: fresh.map, cast: fresh.villagers, context: simRef.current.world });
     setSettings(fresh.modelSettings);
   };
@@ -811,6 +826,7 @@ export function App() {
     (theme === 'system' &&
       (aestheticSettings.worldLook === 'night' ||
         (aestheticSettings.worldLook === 'tiles' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches)));
+
 
   // Style: in the village it takes the inspector's place; elsewhere it docks on the right.
   const stylePanel = (fill: boolean) => (

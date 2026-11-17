@@ -10,6 +10,7 @@
  */
 import { withAmbience } from '../art/ambient';
 import type { BuildingVariant, FeatureKind, HouseLook, PatchKind, PatternMark, SceneFeature, SceneLayer, SceneModel, Terrain } from '../art/scene';
+import type { Ink } from '../art/shapes';
 import { mergePlots, plotInk, pointInPolygon, rasterizePatches, splitPlot } from './patchworkVillage';
 import { hashString } from '../core/rng';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
@@ -53,6 +54,8 @@ export type SceneEdit =
   | { op: 'stitch'; style: 'mixed' | 'cross' | 'satin' }
   /** The world's own threads (an id from WORLD_PALETTES). */
   | { op: 'palette'; palette: string }
+  /** One thread re-dyed (a hex colour), or back to the palette's own (null). */
+  | { op: 'threadColour'; ink: Ink; colour: string | null }
   /** How strongly the world is drawn behind the people, and whether the paths are quiet. */
   | { op: 'backdrop'; strength?: number; quietPaths?: boolean }
   /** A pattern stroke or fill laid with the brush. */
@@ -212,6 +215,13 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
       case 'palette':
         model.palette = edit.palette;
         return;
+      case 'threadColour': {
+        const colours = { ...(model.threadColours ?? {}) };
+        if (edit.colour) colours[edit.ink] = edit.colour;
+        else delete colours[edit.ink];
+        model.threadColours = Object.keys(colours).length ? colours : undefined;
+        return;
+      }
       case 'backdrop':
         if (edit.strength !== undefined) model.backdrop = edit.strength;
         if (edit.quietPaths !== undefined) model.quietPaths = edit.quietPaths;

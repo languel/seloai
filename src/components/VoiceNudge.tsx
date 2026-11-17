@@ -72,8 +72,8 @@ export function VoiceNudge({ settings, onClose }: VoiceNudgeProps) {
         </button>
       </div>
       <p className="mt-1 text-xs text-muted">
-        Until a voice is loaded, characters speak with the browser&apos;s built-in voice. Both models download once and stay
-        on this machine.
+        The story begins once a voice is ready. Both models download once and stay on this machine; &ldquo;Not now&rdquo;
+        starts it with the browser&apos;s built-in voice.
       </p>
       <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
         <button

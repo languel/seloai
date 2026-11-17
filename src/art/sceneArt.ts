@@ -114,7 +114,7 @@ function well(feature: SceneFeature, model?: SceneModel): Shape[] {
   shapes.push({ kind: 'area', points: [...bottom, ...rimFront], ink: 'primary', grain: 0 });
   // Stone courses, following the drum's curve, and staggered joints between the stones.
   for (const k of [1 / 3, 2 / 3]) {
-    shapes.push({ kind: 'line', points: frontArc(0, top * k, half, ry), ink: 'dark', weight: 0.35 });
+    shapes.push({ kind: 'line', points: frontArc(0, top * k, half, ry), ink: 'dark', weight: 0.3, fade: 0.5 });
   }
   for (let row = 0; row < 3; row++) {
     const y0 = top * (row / 3);
@@ -123,7 +123,7 @@ function well(feature: SceneFeature, model?: SceneModel): Shape[] {
       const t = (j + (row % 2 ? 0.5 : 0) + 0.25) / 4;
       const x = -half + t * w;
       const sag = Math.sqrt(Math.max(0, 1 - (x / half) ** 2)) * ry;
-      shapes.push({ kind: 'line', points: [[x, y0 + sag], [x, y1 + sag]], ink: 'dark', weight: 0.3 });
+      shapes.push({ kind: 'line', points: [[x, y0 + sag], [x, y1 + sag]], ink: 'dark', weight: 0.25, fade: 0.5 });
     }
   }
   // An embroidered rosette on the face of the drum.
@@ -146,7 +146,7 @@ function well(feature: SceneFeature, model?: SceneModel): Shape[] {
   const postH = w * 1.05;
   const roofY = top - postH;
   for (const side of [-1, 1]) {
-    shapes.push({ kind: 'line', points: [[side * half * 0.86, top + ry * 0.4], [side * half * 0.86, roofY + w * 0.04]], ink: 'dark', weight: 1.1 });
+    shapes.push({ kind: 'line', points: [[side * half * 0.86, top + ry * 0.4], [side * half * 0.86, roofY + w * 0.04]], ink: 'dark', weight: 0.9, fade: 0.3 });
   }
   const eave = half * 1.25;
   const peak = roofY - w * 0.42;
@@ -628,7 +628,7 @@ function terrainShapes(model: SceneModel): Shape[] {
         // A light trellis of gold crosses, at the world's thread scale, open enough that the
         // linen shows through and people walking on the road stay easy to read.
         const n = ROAD_STITCHES;
-        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((x * n + i + y * n + j) % 8 === 0 || (x * n + i - y * n - j + 4096) % 8 === 0) roadCells.push([x * n + i, y * n + j, 'gold']);
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((x * n + i + y * n + j) % 8 === 0 || (x * n + i - y * n - j + 4096) % 8 === 0) roadCells.push([x * n + i, y * n + j, 'light']);
       } else if (kind === 'wall') {
         // Masonry in fine stitches, at the road's scale: courses of staggered bricks with a
         // row of bare linen for the mortar, mostly dark with the odd red brick. Charted on the
@@ -676,8 +676,8 @@ function terrainShapes(model: SceneModel): Shape[] {
     }
   }
   shapes.push(...edgeLines(model));
-  // Roads sit close to the linen, so the people on them read first.
-  if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: roadCells, fade: 0.55 });
+  // Roads in the light thread, close to the linen, so the people on them read first.
+  if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: roadCells });
   if (wallCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: wallCells });
   return shapes;
 }
@@ -693,7 +693,7 @@ function edgeLines(model: SceneModel): Shape[] {
   const roadish = (t: Terrain | undefined) => t === 'road' || t === 'bridge';
   const waterish = (t: Terrain | undefined) => t === 'water' || t === 'bridge';
   const edges: Array<{ test: (t: Terrain | undefined) => boolean; ink: Ink; weight: number; inset: number; fade?: number }> = [
-    { test: roadish, ink: 'dark', weight: 0.45, inset: 0.06, fade: 0.6 },
+    { test: roadish, ink: 'dark', weight: 0.4, inset: 0.06, fade: 0.78 },
     { test: waterish, ink: 'secondary', weight: 0.55, inset: -0.04 },
   ];
   for (const edge of edges) {

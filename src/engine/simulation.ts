@@ -228,6 +228,11 @@ export class VillageSimulation {
    * drawn. The story sets it when a line says so plainly; a reset story clears it.
    */
   public wellWater: 'dry' | 'flowing' | null = null;
+  /**
+   * While true, no conversation or scene starts on its own (people still move about): the
+   * app holds the story until a voice is ready, so it does not begin in the browser's voice.
+   */
+  public holdStory = false;
   /** Setting-specific knowledge supplied by the active world pack. */
   public world: WorldContext;
 
@@ -1309,6 +1314,7 @@ export class VillageSimulation {
       res.blockerId &&
       res.blockerId !== this.player.id &&
       this.modelSettings.autoConverse &&
+      !this.holdStory &&
       !rt.activeConversationId
     ) {
       const otherRt = this.runtimes.get(res.blockerId);
@@ -1374,7 +1380,7 @@ export class VillageSimulation {
     const runtimesList = [...this.runtimes.values()];
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
-    if (this.modelSettings.autoConverse) {
+    if (this.modelSettings.autoConverse && !this.holdStory) {
       for (let i = 0; i < runtimesList.length; i++) {
         const a = runtimesList[i];
         if (

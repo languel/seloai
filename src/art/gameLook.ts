@@ -72,7 +72,7 @@ export function createWorldArt(
   const options: LookOptions = {
     unit: map.tileDim / UNITS_PER_TILE,
     origin: [0, 0],
-    palette: worldPalette(look, model.palette),
+    palette: worldPalette(look, model.palette, model.threadColours),
     seed: hashString(map.name),
     threadScale: model.threadWeight ?? 1,
     ...(strength < 1 ? { quiet: { thread: 0.35 + 0.65 * strength, sparse: Math.min(0.85, (1 - strength) * 1.4) } } : {}),

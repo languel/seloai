@@ -23,31 +23,31 @@ export const PALETTES = {
   /** Black ink on paper. */
   ink: {
     ground: '#f6f3ec',
-    inks: { primary: '#141312', secondary: '#141312', accent: '#141312', accent2: '#141312', gold: '#141312', dark: '#141312', skin: '#f6f3ec' },
+    inks: { primary: '#141312', secondary: '#141312', accent: '#141312', accent2: '#141312', gold: '#141312', dark: '#141312', skin: '#f6f3ec', light: '#141312' },
     skinTones: ['#f6f3ec'],
   },
   /** White line on black, the same drawing as a night plate. */
   night: {
     ground: '#121110',
-    inks: { primary: '#f2eee4', secondary: '#f2eee4', accent: '#f2eee4', accent2: '#f2eee4', gold: '#f2eee4', dark: '#f2eee4', skin: '#121110' },
+    inks: { primary: '#f2eee4', secondary: '#f2eee4', accent: '#f2eee4', accent2: '#f2eee4', gold: '#f2eee4', dark: '#f2eee4', skin: '#121110', light: '#f2eee4' },
     skinTones: ['#121110'],
   },
   /** Black thread on undyed linen. */
   blackwork: {
     ground: '#e4dac6',
-    inks: { primary: '#1c1a18', secondary: '#2b2826', accent: '#1c1a18', accent2: '#34302c', gold: '#3a352f', dark: '#141210', skin: '#cfc4ae' },
+    inks: { primary: '#1c1a18', secondary: '#2b2826', accent: '#1c1a18', accent2: '#34302c', gold: '#3a352f', dark: '#141210', skin: '#cfc4ae', light: '#f4eee2' },
     skinTones: ['#d8cdb8', '#bfb39c', '#a2957e', '#7d7160'],
   },
   /** The traditional register: red and black with one quiet accent. */
   redBlack: {
     ground: '#e6dcc8',
-    inks: { primary: '#a8201a', secondary: '#1d1a18', accent: '#7c1712', accent2: '#c0392b', gold: '#b08a3c', dark: '#1d1a18', skin: '#d2a679' },
+    inks: { primary: '#a8201a', secondary: '#1d1a18', accent: '#7c1712', accent2: '#c0392b', gold: '#b08a3c', dark: '#1d1a18', skin: '#d2a679', light: '#f5eedf' },
     skinTones: ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'],
   },
   /** The full festive palette of the museum pieces. */
   festive: {
     ground: '#e3d8c2',
-    inks: { primary: '#b0241c', secondary: '#27407f', accent: '#2f6a3c', accent2: '#a82e63', gold: '#b8923a', dark: '#231f1c', skin: '#d2a679' },
+    inks: { primary: '#b0241c', secondary: '#27407f', accent: '#2f6a3c', accent2: '#a82e63', gold: '#b8923a', dark: '#231f1c', skin: '#d2a679', light: '#f6efe0' },
     skinTones: ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'],
   },
 } satisfies Record<string, Palette>;
@@ -55,9 +55,10 @@ export const PALETTES = {
 export type PaletteName = keyof typeof PALETTES;
 
 const SKIN = ['#e8c9a4', '#d2a679', '#b07f52', '#7f5536', '#553623'];
-const threads = (ground: string, primary: string, secondary: string, accent: string, accent2: string, gold: string, dark: string): Palette => ({
+const threads = (ground: string, primary: string, secondary: string, accent: string, accent2: string, gold: string, dark: string, light?: string): Palette => ({
   ground,
-  inks: { primary, secondary, accent, accent2, gold, dark, skin: '#d2a679' },
+  // The light thread: an off-white a little brighter than the linen, so it shows on it.
+  inks: { primary, secondary, accent, accent2, gold, dark, skin: '#d2a679', light: light ?? towardGround(ground, '#ffffff', 0.62) },
   skinTones: SKIN,
 });
 
@@ -81,18 +82,25 @@ export const WORLD_PALETTES: Record<string, { name: string; palette: Palette }> 
  * palette as the world under them. Interface chrome keeps the look's own colours.
  */
 let activeWorldThreads: string | undefined;
+let activeThreadColours: ThreadColours | undefined;
 
-export function setActiveWorldThreads(id: string | undefined) {
+/** Threads re-dyed by hand: an ink role and its new colour (hex). */
+export type ThreadColours = Partial<Record<Ink, string>>;
+
+export function setActiveWorldThreads(id: string | undefined, colours?: ThreadColours) {
   activeWorldThreads = id && WORLD_PALETTES[id] ? id : undefined;
+  activeThreadColours = colours && Object.keys(colours).length ? colours : undefined;
 }
 
+/** Names the threads now on show, re-dyed ones included, for caches of drawn things. */
 export function activeWorldThreadsId(): string {
-  return activeWorldThreads ?? 'festive';
+  const base = activeWorldThreads ?? 'festive';
+  return activeThreadColours ? `${base}+${Object.entries(activeThreadColours).map(([k, v]) => `${k}${v}`).join(',')}` : base;
 }
 
 /** The palette for things drawn on the world's cloth (figures, threads, woven words). */
 export function clothPalette(look: PaletteName): Palette {
-  return worldPalette(look, activeWorldThreads);
+  return worldPalette(look, activeWorldThreads, activeThreadColours);
 }
 
 const rgb = (hex: string): [number, number, number] => {
@@ -126,9 +134,13 @@ export function clothAccent(hex: string | undefined, look: PaletteName | undefin
 }
 
 /** The palette a world is drawn in: its own threads under the full-colour look, else the look's. */
-export function worldPalette(look: PaletteName, own?: string): Palette {
-  if (look === 'festive' && own && WORLD_PALETTES[own]) return WORLD_PALETTES[own].palette;
-  return PALETTES[look];
+export function worldPalette(look: PaletteName, own?: string, colours?: ThreadColours): Palette {
+  if (look !== 'festive') return PALETTES[look];
+  const base = own && WORLD_PALETTES[own] ? WORLD_PALETTES[own].palette : PALETTES.festive;
+  if (!colours || !Object.keys(colours).length) return base;
+  const inks = { ...base.inks };
+  for (const [ink, colour] of Object.entries(colours) as Array<[Ink, string]>) if (/^#[0-9a-f]{6}$/i.test(colour)) inks[ink] = colour;
+  return { ...base, inks };
 }
 
 export interface LookOptions {
@@ -225,6 +237,7 @@ function pixelBox(points: Pt[], o: LookOptions) {
 /** How each role reads in a single ink: solid, hatched or left open. */
 const LINE_TONE: Record<Ink, 'solid' | 'hatch' | 'open'> = {
   skin: 'open',
+  light: 'open',
   primary: 'solid',
   dark: 'solid',
   secondary: 'hatch',

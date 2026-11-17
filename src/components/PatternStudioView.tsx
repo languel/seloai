@@ -40,8 +40,8 @@ function MotifCanvas({ grid, look, size, onClick, selected }: { grid: MotifGrid;
   );
 }
 
-const INK_LABEL: Record<Ink, string> = { primary: 'First', secondary: 'Second', accent: 'Third', accent2: 'Fourth', gold: 'Gold', dark: 'Dark', skin: 'Skin' };
-const INK_CHOICES: Ink[] = ['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark'];
+const INK_LABEL: Record<Ink, string> = { primary: 'First', secondary: 'Second', accent: 'Third', accent2: 'Fourth', gold: 'Gold', dark: 'Dark', skin: 'Skin', light: 'Light' };
+const INK_CHOICES: Ink[] = ['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark', 'light'];
 
 /**
  * The pattern studio: motifs generated from references (described styles), never digitised

@@ -226,6 +226,8 @@ export interface SceneModel {
    * laid out by `src/art/textileLayouts.ts`), drawn instead of the cell terrain.
    */
   textile?: TextileGround;
+  /** Threads re-dyed by hand over the world's palette: an ink role and its colour. */
+  threadColours?: Partial<Record<import('./shapes').Ink, string>>;
   /** Where the ambience may plant groves: anywhere (the default), or only near the edge, leaving the middle open. */
   groves?: 'anywhere' | 'edge';
   /** Bridges over a patchwork's stream. */

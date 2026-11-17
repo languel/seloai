@@ -321,6 +321,10 @@ function checkEdit(edit: SceneEdit) {
     case 'palette':
       if (!WORLD_PALETTES[edit.palette]) fail(`"${edit.palette}" is not a palette (${Object.keys(WORLD_PALETTES).join(', ')}).`);
       return;
+    case 'threadColour':
+      if (!['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark', 'light'].includes(edit.ink)) fail('threadColour ink is one of primary, secondary, accent, accent2, gold, dark, light.');
+      if (edit.colour !== null && !/^#[0-9a-f]{6}$/i.test(edit.colour)) fail('threadColour colour is a hex colour like #a4502f, or null.');
+      return;
     case 'backdrop':
       if (edit.strength !== undefined && !(edit.strength >= 0.3 && edit.strength <= 1)) fail('backdrop strength is 0.3 to 1.');
       if (edit.quietPaths !== undefined && typeof edit.quietPaths !== 'boolean') fail('quietPaths is true or false.');

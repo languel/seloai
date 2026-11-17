@@ -910,12 +910,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
       // over the view (the Scribe's band) ever sits on a dark void.
       {
         const look = aestheticSettings.worldLook;
-        const threads = sim.map.scene ? bakeScene(sim.map.scene).model.palette : undefined;
+        const sceneModel = sim.map.scene ? bakeScene(sim.map.scene).model : undefined;
+        const threads = sceneModel?.palette;
         // Everything drawn on this cloth this frame is worked in the world's own threads.
-        setActiveWorldThreads(threads);
+        setActiveWorldThreads(threads, sceneModel?.threadColours);
         // Classic tiles has no cloth of its own: use the festive linen, close to its parchment
         // tiles, rather than a dark void.
-        ctx.fillStyle = deepen(worldPalette((look === 'tiles' ? 'festive' : look) as PaletteName, threads).ground, 0.06);
+        ctx.fillStyle = deepen(worldPalette((look === 'tiles' ? 'festive' : look) as PaletteName, threads, sceneModel?.threadColours).ground, 0.06);
       }
       ctx.fillRect(0, 0, viewW, viewH);
 

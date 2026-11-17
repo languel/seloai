@@ -6,7 +6,7 @@
 export type Pt = [number, number];
 
 /** A role, not a colour: each look's palette decides what a role looks like. */
-export type Ink = 'primary' | 'secondary' | 'accent' | 'accent2' | 'gold' | 'dark' | 'skin';
+export type Ink = 'primary' | 'secondary' | 'accent' | 'accent2' | 'gold' | 'dark' | 'skin' | 'light';
 
 export type Shape = (
   /**

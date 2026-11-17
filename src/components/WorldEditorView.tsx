@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { renderWorldLayer } from '../art/gameLook';
 import type { PaletteName } from '../art/looks';
 import { BUILDING_VARIANTS, SCENE_LAYERS, kindsOnLayer, layerOf, type BuildingVariant, type FeatureKind, type HouseLook, type PatternMark, type SceneFeature, type SceneLayer, type Terrain } from '../art/scene';
-import { WORLD_PALETTES } from '../art/looks';
+import { WORLD_PALETTES, worldPalette } from '../art/looks';
+import type { Ink } from '../art/shapes';
 import { STITCH_STYLES } from '../art/stitchStyles';
 import { SHEVITSA_REFERENCES } from '../art/patternReferences';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
@@ -81,6 +82,44 @@ const FEATURE_NAMES: Partial<Record<FeatureKind, string>> = {
 
 const CELL = 32;
 
+const THREAD_INKS = ['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark', 'light'] as const;
+const INK_NAMES: Record<Ink, string> = { primary: 'first', secondary: 'second', accent: 'third', accent2: 'fourth', gold: 'gold', dark: 'dark', light: 'light', skin: 'skin' };
+
+/**
+ * One thread of the world's palette as a swatch: click to dye it with a colour picker. The
+ * change is kept when the picker closes (not on every drag); right-click puts it back.
+ */
+function ThreadSwatch({ ink, colour, dyed, onDye, onReset }: { ink: Ink; colour: string; dyed: boolean; onDye: (c: string) => void; onReset: () => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const ref = useRef<HTMLInputElement>(null);
+  const latest = useRef({ colour, onDye });
+  latest.current = { colour, onDye };
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const commit = () => {
+      setDraft(null);
+      if (el.value.toLowerCase() !== latest.current.colour.toLowerCase()) latest.current.onDye(el.value);
+    };
+    el.addEventListener('change', commit);
+    return () => el.removeEventListener('change', commit);
+  }, []);
+  const hex = /^#[0-9a-f]{6}$/i.test(colour) ? colour : '#888888';
+  return (
+    <label
+      className={`relative h-4 flex-1 cursor-pointer rounded-sm ${dyed ? 'ring-1 ring-ink/60' : ''}`}
+      style={{ background: draft ?? hex }}
+      title={`The ${INK_NAMES[ink]} thread${dyed ? ' (dyed by hand; right-click to put it back)' : ''}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onReset();
+      }}
+    >
+      <input ref={ref} type="color" value={draft ?? hex} onChange={(e) => setDraft(e.target.value)} aria-label={`Dye the ${INK_NAMES[ink]} thread`} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
+    </label>
+  );
+}
+
 function describeEdit(edit: SceneEdit): string {
   switch (edit.op) {
     case 'terrain':
@@ -103,6 +142,8 @@ function describeEdit(edit: SceneEdit): string {
       return edit.quietPaths !== undefined ? (edit.quietPaths ? 'Quiet paths' : 'Busy paths') : `Backdrop ${edit.strength}`;
     case 'palette':
       return `Threads: ${WORLD_PALETTES[edit.palette]?.name ?? edit.palette}`;
+    case 'threadColour':
+      return edit.colour ? `Dyed the ${INK_NAMES[edit.ink]} thread ${edit.colour}` : `${INK_NAMES[edit.ink]} thread as the palette's`;
     case 'patternMark':
       return `Pattern ${edit.mark.mode} (${edit.mark.points.length} ${edit.mark.mode === 'fill' ? 'cells' : 'points'})`;
     case 'removeMany':
@@ -928,13 +969,24 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                   </option>
                 ))}
               </select>
-              <span className="flex gap-0.5">
-                {(['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark'] as const).map((ink) => (
-                  <span key={ink} className="h-2.5 flex-1 rounded-sm" style={{ background: WORLD_PALETTES[baked?.model.palette ?? 'festive']?.palette.inks[ink] }} />
-                ))}
-              </span>
-              {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
             </label>
+            <span className="flex gap-0.5" title="Click a thread to dye it; right-click to put it back">
+              {THREAD_INKS.map((ink) => {
+                const own = baked?.model.threadColours?.[ink];
+                const colour = worldPalette('festive', baked?.model.palette, baked?.model.threadColours).inks[ink];
+                return (
+                  <ThreadSwatch
+                    key={ink}
+                    ink={ink}
+                    colour={colour}
+                    dyed={Boolean(own)}
+                    onDye={(next) => edit({ op: 'threadColour', ink, colour: next }, `Dye the ${INK_NAMES[ink]} thread`)}
+                    onReset={() => own && edit({ op: 'threadColour', ink, colour: null }, `${INK_NAMES[ink]} thread as the palette's`)}
+                  />
+                );
+              })}
+            </span>
+            {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
             <div className="flex flex-col gap-0.5" title="One family of stitch for every element: as drawn, all cross-stitch, or all satin and stem">
               <span className="stitch-muted text-[10px]">Stitch</span>
               <span className="flex flex-wrap gap-1">
