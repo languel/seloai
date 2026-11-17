@@ -2217,22 +2217,26 @@ export const VillageView: React.FC<VillageViewProps> = ({
           className="pixel-canvas h-full w-full cursor-grab active:cursor-grabbing touch-none"
         />
 
-        {quickSay ? (
+        {quickSay
+          ? createPortal(
           <StitchScope look={hudLook}>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 void sendQuickSay();
               }}
-              className={`${stitchHud ? 'stitch-panel' : 'rounded border border-borderFolk bg-surface shadow'} fixed z-50 px-3 py-2`}
+              className={`${stitchHud ? 'stitch-panel' : 'rounded border border-borderFolk bg-surface shadow'} z-50 px-3 py-2`}
               style={{
+                position: 'fixed',
                 left: Math.max(8, Math.min(quickSay.x - 12, window.innerWidth - 340)),
                 top: Math.max(8, Math.min(quickSay.y + 14, window.innerHeight - 70)),
                 width: 320,
               }}
             >
               <input
-                autoFocus
+                ref={(el) => {
+                  if (el && document.activeElement !== el) el.focus({ preventScroll: true });
+                }}
                 value={quickText}
                 onChange={(e) => setQuickText(e.target.value)}
                 onFocus={(e) => {
@@ -2251,8 +2255,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 className="w-full bg-transparent text-xs leading-relaxed text-ink placeholder:text-muted focus:outline-none"
               />
             </form>
-          </StitchScope>
-        ) : null}
+          </StitchScope>,
+          document.body,
+        )
+          : null}
 
         {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
         {toolbarSlot ? (
