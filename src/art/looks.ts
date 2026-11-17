@@ -138,6 +138,14 @@ export interface LookOptions {
   origin: Pt;
   palette: Palette;
   seed?: number;
+  /**
+   * Quieter work for the background, so the people stand out by texture rather than by
+   * fading: `thread` thins every thread (1 is the usual), `sparse` opens filled areas into
+   * spaced threads over the linen (0 is solid, 1 the most open).
+   */
+  quiet?: { thread: number; sparse: number };
+  /** The cloth's thread weight: one width for every stitch of the drawing (1 is the usual). */
+  threadScale?: number;
 }
 
 function toPx(p: Pt, o: LookOptions): Pt {
@@ -217,7 +225,7 @@ function wobble(points: Pt[], rng: Rng, amount: number): Pt[] {
 
 export function renderLineArt(ctx: CanvasRenderingContext2D, shapes: Shape[], o: LookOptions) {
   const rng = createSeededRng(o.seed ?? 1);
-  const line = Math.max(1, o.unit * 0.3);
+  const line = Math.max(0.8, o.unit * 0.3 * (o.quiet?.thread ?? 1) * (o.threadScale ?? 1));
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -384,7 +392,9 @@ function threadStroke(
 
 export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[], o: LookOptions) {
   const rng = createSeededRng(o.seed ?? 1);
-  const thread = Math.max(1.4, o.unit * 0.5);
+  const thin = o.quiet?.thread ?? 1;
+  const sparse = o.quiet?.sparse ?? 0;
+  const thread = Math.max(1.1, o.unit * 0.5 * thin * (o.threadScale ?? 1));
   const lift = Math.max(1, o.unit * 0.16);
 
   for (const shape of shapes) {
@@ -395,9 +405,9 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
     if (shape.kind === 'area') {
       // A hand never follows the drawn edge exactly.
       const points = shape.points.map(([x, y]): Pt => [x + (rng() - 0.5) * 0.22, y + (rng() - 0.5) * 0.22]);
-      if (shape.open) {
+      if (shape.open || sparse > 0) {
         // An open fill: spaced threads over a faint wash, so the linen shows through.
-        const open = Math.min(1, shape.open);
+        const open = Math.min(1, Math.max(shape.open ?? 0, sparse));
         ctx.save();
         tracePath(ctx, points, o, true);
         ctx.clip();
@@ -432,7 +442,7 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
       const pts = shape.points.map((p) => toPx(p, o));
       if (shape.closed) pts.push(pts[0]);
       // Fine lines (a mouth, a brow) take short, thin stitches; stems take long bold ones.
-      const width = Math.max(1.05, thread * (0.4 + shape.weight * 0.75));
+      const width = Math.max(0.9, thread * (0.4 + shape.weight * 0.75));
       const stitch = thread * (1.1 + shape.weight * 3);
       let carried = 0;
       for (let i = 1; i < pts.length; i++) {
@@ -462,7 +472,7 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
       }
     } else if (shape.kind === 'knot') {
       const [x, y] = toPx(shape.at, o);
-      const r = Math.max(1.6, shape.r * o.unit);
+      const r = Math.max(1.4, shape.r * o.unit * (0.55 + 0.45 * thin));
       ctx.fillStyle = 'rgba(40, 26, 12, 0.28)';
       ctx.beginPath();
       ctx.arc(x + lift, y + lift * 1.3, r, 0, Math.PI * 2);
@@ -477,7 +487,8 @@ export function renderEmbroidery(ctx: CanvasRenderingContext2D, shapes: Shape[],
     } else {
       const size = shape.cell * o.unit;
       const reach = size * 0.46;
-      const width = Math.max(1.2, size * 0.34);
+      // A cross is worked in the cloth's one thread, never fattened to fill a big cell.
+      const width = Math.max(0.9, Math.min(size * 0.45, thread * 0.9));
       const turned = Boolean(shape.rot);
       if (turned) {
         ctx.save();

@@ -259,6 +259,11 @@ function isDancing(sim: VillageSimulation, body: { id: string; tileX: number; ti
   return grounds.some(([x0, y0, x1, y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
 }
 
+/** The stitch kit's scope around a part of the interface, when the world is drawn as cloth. */
+function MaybeStitch({ on, look, children }: { on: boolean; look: PaletteName; children: React.ReactNode }) {
+  return on ? <StitchScope look={look}>{children}</StitchScope> : <>{children}</>;
+}
+
 function deepen(hex: string, amount: number): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex);
   if (!m) return hex;
@@ -491,6 +496,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
   );
   // The art looks draw the HUD as stitched cloth; the classic tiles keep their presets.
   const stitchHud = aestheticSettings.worldLook !== 'tiles';
+  // The chat panel's controls in the stitch kit when the world is drawn as cloth.
+  const chip = (on: boolean, plain: string, size = 'text-[10px]') =>
+    stitchHud ? `glyph-button relative rounded-sm px-1.5 py-0.5 ${size} font-medium ${on ? 'glyph-on text-ink' : 'stitch-muted'}` : plain;
+  const fieldClass = (plain: string) => (stitchHud ? `${plain.replace(/\bbg-\S+/g, '')} bg-transparent border-dashed` : plain);
   const hudLook = glyphLookFor(aestheticSettings.worldLook, isLightColour(aestheticTokens.hudTextColor));
   const hudKit = React.useMemo(() => stitchKit(hudLook), [hudLook]);
   const playerCustomSprite = React.useMemo(
@@ -2349,8 +2358,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
             )}
 
             {/* Active Conversation / World Script Stream */}
+            <MaybeStitch on={stitchHud} look={hudLook}>
             <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="border-b border-borderFolk bg-surface/80 px-3 py-2 space-y-1.5">
+              <div className={`border-b border-borderFolk px-3 py-2 space-y-1.5 ${stitchHud ? 'border-dashed' : 'bg-surface/80'}`}>
                 <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs text-muted">
                   <div className="flex items-center gap-1">
                     <button
@@ -2381,9 +2391,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
                           setScriptCollapsed(false);
                         }}
                         aria-pressed={feedMode === id}
-                        className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                          feedMode === id ? 'bg-indigoFolk text-white' : 'hover:bg-card'
-                        }`}
+                        className={chip(
+                          feedMode === id,
+                          `rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${feedMode === id ? 'bg-indigoFolk text-white' : 'hover:bg-card'}`,
+                          'text-[11px] font-display',
+                        )}
                       >
                         {label}
                       </button>
@@ -2395,11 +2407,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       onClick={() => onUpdateSettings({ eavesdropSpeech: !settings.eavesdropSpeech })}
                       aria-pressed={settings.eavesdropSpeech}
                       title="Hear spoken villager dialogue within eavesdrop radius"
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
-                        settings.eavesdropSpeech
-                          ? 'border-sage bg-sage/15 text-ink'
-                          : 'border-borderFolk bg-card text-muted hover:text-ink'
-                      }`}
+                      className={chip(
+                        settings.eavesdropSpeech,
+                        `rounded border px-1.5 py-0.5 text-[10px] font-medium ${settings.eavesdropSpeech ? 'border-sage bg-sage/15 text-ink' : 'border-borderFolk bg-card text-muted hover:text-ink'}`,
+                      )}
                     >
                       Speech {settings.eavesdropSpeech ? 'On' : 'Off'}
                     </button>
@@ -2408,11 +2419,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       onClick={() => onUpdateSettings({ eavesdropThoughts: !settings.eavesdropThoughts })}
                       aria-pressed={settings.eavesdropThoughts}
                       title="Eavesdrop on in-character villager thoughts within radius"
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${
-                        settings.eavesdropThoughts
-                          ? 'border-indigoFolk bg-indigoFolk/15 text-ink'
-                          : 'border-borderFolk bg-card text-muted hover:text-ink'
-                      }`}
+                      className={chip(
+                        settings.eavesdropThoughts,
+                        `rounded border px-1.5 py-0.5 text-[10px] font-medium ${settings.eavesdropThoughts ? 'border-indigoFolk bg-indigoFolk/15 text-ink' : 'border-borderFolk bg-card text-muted hover:text-ink'}`,
+                      )}
                     >
                       Thoughts {settings.eavesdropThoughts ? 'On' : 'Off'}
                     </button>
@@ -2421,11 +2431,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       onClick={() => onUpdateSettings({ showReasoning: !settings.showReasoning })}
                       aria-pressed={settings.showReasoning}
                       title="Toggle separate <think> reasoning mode (audio off by default)"
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
-                        settings.showReasoning
-                          ? 'border-ochre bg-ochre/15 text-ink'
-                          : 'border-borderFolk bg-card text-muted hover:text-ink'
-                      }`}
+                      className={chip(
+                        settings.showReasoning,
+                        `rounded border px-1.5 py-0.5 text-[10px] font-mono ${settings.showReasoning ? 'border-ochre bg-ochre/15 text-ink' : 'border-borderFolk bg-card text-muted hover:text-ink'}`,
+                      )}
                     >
                       &lt;think&gt; {settings.showReasoning ? 'On' : 'Off'}
                     </button>
@@ -2435,11 +2444,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         onClick={() => onUpdateSettings({ speakReasoning: !settings.speakReasoning })}
                         aria-pressed={settings.speakReasoning}
                         title="Read <think> reasoning aloud (off by default)"
-                        className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${
-                          settings.speakReasoning
-                            ? 'border-crimson bg-crimson/15 text-ink'
-                            : 'border-borderFolk bg-card text-muted hover:text-ink'
-                        }`}
+                        className={chip(
+                          settings.speakReasoning,
+                          `rounded border px-1.5 py-0.5 text-[10px] font-mono ${settings.speakReasoning ? 'border-crimson bg-crimson/15 text-ink' : 'border-borderFolk bg-card text-muted hover:text-ink'}`,
+                        )}
                       >
                         &lt;think&gt; Sound {settings.speakReasoning ? 'On' : 'Off'}
                       </button>
@@ -2454,7 +2462,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         });
                       }}
                       aria-pressed={settings.enableOmniTts}
-                      className="inline-flex items-center gap-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface"
+                      className={`inline-flex items-center gap-1 ${chip(settings.enableOmniTts, 'rounded border border-borderFolk bg-card px-2 py-0.5 text-[11px] hover:bg-surface')}`}
                     >
                       {settings.enableOmniTts ? (
                         <Volume2 className="h-3 w-3 text-sage" />
@@ -2468,7 +2476,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
 
                 {!scriptCollapsed && (
                   <div className="flex flex-wrap items-center gap-1 text-[10px]">
-                    <span className="text-muted mr-0.5">Show:</span>
+                    <span className={`${stitchHud ? 'stitch-muted' : 'text-muted'} mr-0.5`}>Show:</span>
                     {(
                       [
                         ['Speech', filterSpeech, setFilterSpeech],
@@ -2482,11 +2490,10 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         type="button"
                         onClick={() => setter((v) => !v)}
                         aria-pressed={active}
-                        className={`rounded-sm border px-1.5 py-0.5 font-medium ${
-                          active
-                            ? 'border-ink/40 bg-surface text-ink'
-                            : 'border-borderFolk bg-card text-muted line-through'
-                        }`}
+                        className={chip(
+                          active,
+                          `rounded-sm border px-1.5 py-0.5 font-medium ${active ? 'border-ink/40 bg-surface text-ink' : 'border-borderFolk bg-card text-muted line-through'}`,
+                        )}
                       >
                         {label}
                       </button>
@@ -2495,7 +2502,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       aria-label="Filter script by character"
                       value={scriptActorFilter}
                       onChange={(e) => setScriptActorFilter(e.target.value)}
-                      className="rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px]"
+                      className={fieldClass('rounded border border-borderFolk bg-card px-1.5 py-0.5 text-[10px]')}
                     >
                       <option value="all">All Actors</option>
                       {villagers.map((v) => (
@@ -2512,7 +2519,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       onChange={(e) => setScriptSearch(e.target.value)}
                       placeholder="Filter text…"
                       aria-label="Filter world script text"
-                      className="min-w-[88px] flex-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[10px]"
+                      className={fieldClass('min-w-[88px] flex-1 rounded border border-borderFolk bg-card px-2 py-0.5 text-[10px]')}
                     />
                   </div>
                 )}
@@ -2578,6 +2585,35 @@ export const VillageView: React.FC<VillageViewProps> = ({
                           Boolean(activeSpeech) &&
                           activeSpeech!.speakerId === msg.senderId &&
                           msg.text.includes(activeSpeech!.text.slice(0, 20));
+                        if (stitchHud) {
+                          // A line of the script, marked by a thread in the speaker's own colour.
+                          const thread = isNarration
+                            ? 'var(--stitch-thread)'
+                            : clothAccent(sim.configs.get(msg.senderId)?.accentColor, aestheticSettings.worldLook === "tiles" ? undefined : (aestheticSettings.worldLook as PaletteName)) ?? 'var(--stitch-ink)';
+                          return (
+                            <li
+                              key={msg.id}
+                              className={`border-l-[3px] py-1 pl-2.5 pr-1 text-xs ${isThought ? 'border-dashed italic opacity-90' : ''} ${isNarration ? 'italic' : ''} ${isHuman ? 'ml-3' : ''} ${isNowSpeaking ? 'layer-active' : ''}`}
+                              style={{ borderLeftColor: thread }}
+                            >
+                              <div className="mb-0.5 flex items-center justify-between gap-2 text-[10px] not-italic">
+                                <span className="font-display text-[12px] text-ink" style={{ color: isNarration ? undefined : thread }}>
+                                  {msg.senderName}
+                                  {isNowSpeaking && <span className="stitch-thread ml-1.5 text-[10px]">speaking</span>}
+                                </span>
+                                <span className="stitch-muted">{isNarration ? 'scribe' : isThought ? 'thought' : msg.source}</span>
+                              </div>
+                              <p className="leading-relaxed whitespace-pre-wrap">
+                                {msg.text ? renderRichLabels(msg.text, villagers, sim.map.pointsOfInterest ?? [], narratorName) : '…'}
+                              </p>
+                              {settings.showReasoning && msg.reasoning && (
+                                <aside aria-label="Model reasoning" className="stitch-muted mt-1 border-l border-dashed border-borderFolk pl-2 font-mono text-[10px] not-italic whitespace-pre-wrap">
+                                  &lt;think&gt; {msg.reasoning}
+                                </aside>
+                              )}
+                            </li>
+                          );
+                        }
                         return (
                           <li
                             key={msg.id}
@@ -2634,7 +2670,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       <button
                         type="button"
                         onClick={feedScroll.jumpToBottom}
-                        className="inline-flex items-center gap-1 rounded-full border border-borderFolk bg-card/95 px-2.5 py-1 text-[10px] font-medium text-ink shadow-md backdrop-blur hover:bg-surface"
+                        className={stitchHud ? 'stitch-panel glyph-button inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium' : 'inline-flex items-center gap-1 rounded-full border border-borderFolk bg-card/95 px-2.5 py-1 text-[10px] font-medium text-ink shadow-md backdrop-blur hover:bg-surface'}
                       >
                         <ArrowDown className="h-3 w-3 text-indigoFolk" />
                         <span>Jump to Latest</span>
@@ -2646,7 +2682,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             </div>
 
             {/* Composer & LFM3-Omni Voice Input */}
-            <div className="relative border-t border-borderFolk bg-card p-3 space-y-2">
+            <div className={`relative border-t border-borderFolk p-3 space-y-2 ${stitchHud ? 'border-dashed' : 'bg-card'}`}>
               {voiceError && (
                 <div role="alert" className="flex items-center justify-between gap-2 rounded border border-crimson/50 bg-crimson/10 px-2.5 py-1.5 text-[11px] text-crimson">
                   <span>{voiceError}</span>
@@ -2818,7 +2854,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         void handleSendText(e);
                       }
                     }}
-                    className="min-h-[82px] max-h-[168px] w-full overflow-y-auto thin-scroll rounded border border-borderFolk bg-surface px-2.5 py-2 text-xs leading-relaxed text-ink focus:outline-none focus:ring-1 focus:ring-indigoFolk whitespace-pre-wrap break-words"
+                    className={
+                      stitchHud
+                        ? 'stitch-panel min-h-[82px] max-h-[168px] w-full overflow-y-auto thin-scroll px-3 py-2.5 text-xs leading-relaxed text-ink focus:outline-none whitespace-pre-wrap break-words'
+                        : 'min-h-[82px] max-h-[168px] w-full overflow-y-auto thin-scroll rounded border border-borderFolk bg-surface px-2.5 py-2 text-xs leading-relaxed text-ink focus:outline-none focus:ring-1 focus:ring-indigoFolk whitespace-pre-wrap break-words'
+                    }
                   />
                 </div>
 
@@ -2830,7 +2870,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       onClick={handleTriggerAtMention}
                       aria-label="Address a character with @"
                       title="Insert @ character mention"
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
+                      className={stitchHud ? 'glyph-button relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm font-display text-sm text-ink' : 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40'}
                     >
                       @
                     </button>
@@ -2841,7 +2881,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                       onClick={handleTriggerHashMention}
                       aria-label="Reference a Point of Interest with #"
                       title="Insert # landmark place"
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40"
+                      className={stitchHud ? 'glyph-button relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm font-display text-sm text-ink' : 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-borderFolk bg-surface font-mono text-xs font-bold text-ink hover:border-ink/40'}
                     >
                       #
                     </button>
@@ -2853,17 +2893,17 @@ export const VillageView: React.FC<VillageViewProps> = ({
                         aria-pressed={recording}
                         aria-label={recording ? 'Stop voice recording and send' : 'Talk with microphone'}
                         title={recording ? 'Stop voice recording' : 'Voice message'}
-                        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border transition ${
-                          recording
-                            ? 'border-crimson bg-crimson text-white'
-                            : 'border-borderFolk bg-surface text-ink hover:border-crimson'
-                        }`}
+                        className={
+                          stitchHud
+                            ? `glyph-button relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm ${recording ? 'glyph-on stitch-thread' : 'text-ink'}`
+                            : `inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border transition ${recording ? 'border-crimson bg-crimson text-white' : 'border-borderFolk bg-surface text-ink hover:border-crimson'}`
+                        }
                       >
                         {recording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                       </button>
                     )}
 
-                    <span id="chat-mention-hint" className="text-[10px] text-muted truncate">
+                    <span id="chat-mention-hint" className={`text-[10px] truncate ${stitchHud ? 'stitch-muted' : 'text-muted'}`}>
                       Type <kbd className="font-mono">@</kbd> person · <kbd className="font-mono">#</kbd> place
                     </span>
                   </div>
@@ -2873,13 +2913,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     disabled={sending || !chatInput.trim()}
                     aria-label="Send message"
                     title="Send message"
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-ink/30 bg-ink text-linen hover:opacity-90 disabled:opacity-45"
+                    className={stitchHud ? 'glyph-button glyph-on relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm stitch-thread disabled:opacity-45' : 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-ink/30 bg-ink text-linen hover:opacity-90 disabled:opacity-45'}
                   >
                     <Send className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
                 </div>
               </form>
             </div>
+            </MaybeStitch>
           </>
         ) : (
           <div className="p-6 text-center text-xs text-muted">No villagers in the village yet.</div>

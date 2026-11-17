@@ -325,6 +325,9 @@ function checkEdit(edit: SceneEdit) {
       if (edit.strength !== undefined && !(edit.strength >= 0.3 && edit.strength <= 1)) fail('backdrop strength is 0.3 to 1.');
       if (edit.quietPaths !== undefined && typeof edit.quietPaths !== 'boolean') fail('quietPaths is true or false.');
       return;
+    case 'thread':
+      if (!(edit.weight >= 0.4 && edit.weight <= 2)) fail('thread weight is 0.4 to 2.');
+      return;
     case 'layout':
       if (edit.packing !== 'overlap' && edit.packing !== 'packed') fail('layout packing is "overlap" or "packed".');
       return;

@@ -239,6 +239,8 @@ export interface SceneModel {
    * wash of linen, so characters stay legible over a busy cloth.
    */
   backdrop?: number;
+  /** The cloth's thread weight: one width for every stitch in the world (default 1). */
+  threadWeight?: number;
   /** Wash the places people walk (streets, square, meadows) back to near-plain linen. */
   quietPaths?: boolean;
   /**

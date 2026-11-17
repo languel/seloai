@@ -9,7 +9,7 @@ import { FLAT_KINDS, SCENE_LAYERS, cellRng, isStitched, layerOf, type PatternMar
 import { bounds, circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
 import { patchworkShapes, standingBuilding } from './patchworkArt';
-import { STITCHES_PER_CELL, stitchedHouseGrid } from './stitchedHouse';
+import { STITCHES_PER_CELL, stitchedHouse } from './stitchedHouse';
 import type { MotifGrid } from './patternGrammar';
 import type { PatternReference } from './patternReferences';
 import { seedOf, transposed, worldBand, worldMedallion, worldReferences } from './worldMotifs';
@@ -259,11 +259,10 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       if (isStitched(look)) {
         // A counted house: upright on its footprint like a house on a sampler, or turned to
         // stand on the edge facing the road, like the drawn houses.
-        const cell = U / STITCHES_PER_CELL;
         const tall = feature.variant === 'tall' || feature.variant === 'church';
         const w = feature.w * U * (feature.variant ? 0.95 : 0.86 * HOUSE_SCALE) * hs;
         const h = (feature.variant ? U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) : feature.h * U * 0.92 * HOUSE_SCALE) * hs;
-        const grid = stitchedHouseGrid(feature.variant ?? 'folk', Math.round(w / cell), Math.round(h / cell), feature.seed);
+        const { grid, cell } = stitchedHouse(feature.variant ?? 'folk', w, h, feature.seed, U);
         if (look === 'stitched-turned' && model) {
           const rot = fit?.facing ?? houseFacing(feature, model);
           const cx = (feature.x + feature.w / 2) * U;
@@ -304,7 +303,9 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       return place(hearth(feature), { dx: footX, dy: centreY });
     case 'star': {
       // A dancing ground: a medallion grown from the world's patterns, filling the ground.
-      const motif = worldMedallion(feature.seed, refFor(feature, refs));
+      // As many stitches as the world's count allows at this size (the grammars top out).
+      const span = Math.min(feature.w, feature.h) * 0.9 * STITCHES_PER_CELL;
+      const motif = worldMedallion(feature.seed, refFor(feature, refs), Math.max(5, Math.min(14, Math.round((span - 1) / 2))));
       const cell = (Math.min(feature.w, feature.h) * U * 0.9) / Math.max(motif.w, motif.h);
       return place([motifShape(motif, cell)], { dx: footX, dy: centreY });
     }
@@ -488,6 +489,9 @@ function rosette(rng: () => number): Shape[] {
   ];
 }
 
+/** Stitches across a road cell. */
+const ROAD_STITCHES = 8;
+
 function terrainShapes(model: SceneModel): Shape[] {
   const shapes: Shape[] = [];
   const roadCells: Array<[number, number, Ink]> = [];
@@ -511,7 +515,9 @@ function terrainShapes(model: SceneModel): Shape[] {
           shapes.push({ kind: 'line', points, ink: 'secondary', weight: 0.75 });
         }
       } else if (kind === 'road') {
-        roadCells.push([x * 2, y * 2, 'gold'], [x * 2 + 1, y * 2 + 1, 'gold']);
+        // A fine trellis of gold crosses, at the world's thread scale.
+        const n = ROAD_STITCHES;
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((x * n + i + y * n + j) % 4 === 0 || (x * n + i - y * n - j + 4096) % 4 === 0) roadCells.push([x * n + i, y * n + j, 'gold']);
       } else if (kind === 'wall') {
         for (const [sx, sy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
           wallCells.push([x * 2 + sx, y * 2 + sy, (sx + sy) % 2 ? 'primary' : 'dark']);
@@ -546,7 +552,7 @@ function terrainShapes(model: SceneModel): Shape[] {
     }
   }
   shapes.push(...edgeLines(model));
-  if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / 4, U / 4], cell: U / 2, cells: roadCells });
+  if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: roadCells });
   if (wallCells.length > 0) shapes.push({ kind: 'counted', origin: [U / 4, U / 4], cell: U / 2, cells: wallCells });
   return shapes;
 }
@@ -617,7 +623,7 @@ function clothBorder(model: SceneModel, refs: PatternReference[]): Shape[] {
     { kind: 'line', points: [[inner, innerTop], [w - inner, innerTop], [w - inner, h - inner], [inner, h - inner]], ink: 'dark', weight: 0.45, closed: true },
   ];
   const seed = seedOf(model.title ?? 'cloth');
-  const bandH = 5;
+  const bandH = 7;
   const cell = ((inner - outer) * 0.86) / bandH;
   const band = (length: number) => worldBand(seed, refs, length / cell, bandH);
   const span = w - inner * 2;
@@ -672,7 +678,7 @@ function patternMarkShapes(marks: readonly PatternMark[], refs: PatternReference
     const isBand = own.length === 1 && BAND_GRAMMARS.has(own[0].grammar);
     const seed = seedOf(mark.id);
     // A motif fits its size: 2r + 1 stitches across at most size × stitches-per-cell.
-    const radius = Math.max(2, Math.floor((mark.size * STITCHES_PER_CELL - 1) / 2));
+    const radius = Math.max(2, Math.min(14, Math.floor((mark.size * STITCHES_PER_CELL - 1) / 2)));
     const step = Math.max(0.5, mark.size * mark.spacing);
     const stamp = (x: number, y: number, k: number) => shapes.push(...place([motifShape(medallion(seed + (k % 2), own, radius), cell)], { dx: x * U, dy: y * U }));
     if (mark.mode === 'fill') {
@@ -701,7 +707,7 @@ function patternMarkShapes(marks: readonly PatternMark[], refs: PatternReference
         const y = ay + ((by - ay) * t) / (len || 1);
         if (isBand) {
           const across = Math.abs(bx - ax) >= Math.abs(by - ay);
-          const piece = worldBand(seed, own, Math.round(step * STITCHES_PER_CELL), Math.max(3, Math.min(7, radius)));
+          const piece = worldBand(seed, own, Math.round(step * STITCHES_PER_CELL), Math.max(3, Math.min(9, radius)));
           shapes.push(...place([motifShape(across ? piece : transposed(piece), cell)], { dx: x * U, dy: y * U }));
         } else {
           stamp(x, y, k);

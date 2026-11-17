@@ -90,6 +90,8 @@ function describeEdit(edit: SceneEdit): string {
       return `Houses ${edit.scale}× size`;
     case 'layout':
       return edit.packing === 'packed' ? 'Packed layout' : 'Overlapping layout';
+    case 'thread':
+      return `Thread weight ${edit.weight}`;
     case 'backdrop':
       return edit.quietPaths !== undefined ? (edit.quietPaths ? 'Quiet paths' : 'Busy paths') : `Backdrop ${edit.strength}`;
     case 'palette':
@@ -805,6 +807,22 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               </span>
               {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
             </label>
+            <div className="flex flex-col gap-0.5" title="One thread for the whole cloth: every stitch of the world is worked in it">
+              <span className="stitch-muted text-[10px]">Thread</span>
+              <span className="flex gap-1">
+                {(
+                  [
+                    [0.7, 'Fine'],
+                    [1, 'Medium'],
+                    [1.4, 'Bold'],
+                  ] as const
+                ).map(([v, label]) => (
+                  <Chip key={v} on={(baked?.model.threadWeight ?? 1) === v} onClick={() => edit({ op: 'thread', weight: v }, `${label} thread`)}>
+                    {label}
+                  </Chip>
+                ))}
+              </span>
+            </div>
             <div className="flex flex-col gap-0.5" title="Overlapping: trees and houses crowd and cross. Packed: as in counted work, nothing on a layer touches.">
               <span className="stitch-muted text-[10px]">Layout</span>
               <span className="flex gap-1">
@@ -820,7 +838,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
                 ))}
               </span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5" title="Soft and Quiet work the world in thinner thread and sparser stitches, so the people stand out by texture, not by fading the cloth">
               <span className="stitch-muted text-[10px]">Behind the people</span>
               <span className="flex gap-1">
                 {(

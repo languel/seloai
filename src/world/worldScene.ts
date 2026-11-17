@@ -45,6 +45,8 @@ export type SceneEdit =
   | { op: 'houseScale'; scale: number }
   /** How things share the cloth: overlapping, or packed with nothing touching on a layer. */
   | { op: 'layout'; packing: 'overlap' | 'packed' }
+  /** The cloth's thread weight, one width for every stitch (1 is the usual). */
+  | { op: 'thread'; weight: number }
   /** The world's own threads (an id from WORLD_PALETTES). */
   | { op: 'palette'; palette: string }
   /** How strongly the world is drawn behind the people, and whether the paths are quiet. */
@@ -182,6 +184,9 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         return;
       case 'layout':
         model.packing = edit.packing;
+        return;
+      case 'thread':
+        model.threadWeight = edit.weight;
         return;
       case 'palette':
         model.palette = edit.palette;

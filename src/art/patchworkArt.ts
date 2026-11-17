@@ -13,7 +13,7 @@ import { createSeededRng, type Rng } from '../core/rng';
 import type { Bridge, Patch, SceneLayer, SceneModel, SpecialBuilding } from './scene';
 import { circle, place as placeShapes, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
-import { STITCHES_PER_CELL, stitchedHouseGrid } from './stitchedHouse';
+import { stitchedHouse } from './stitchedHouse';
 
 function pointIn([x, y]: Pt, poly: Pt[]): boolean {
   let hit = false;
@@ -388,8 +388,7 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
     if (stitched) {
       // Counted houses stand just inside the plot from the street: upright, as on a sampler,
       // or turned to rise along the plot.
-      const cell = U / STITCHES_PER_CELL;
-      const grid = stitchedHouseGrid(kind, Math.round(w / cell), Math.round(h / cell), Math.floor(rng() * 1e9));
+      const { grid, cell } = stitchedHouse(kind, w, h, Math.floor(rng() * 1e9), U);
       const at: Pt = [c[0] + cn[0] * grid.h * cell * 0.5, c[1] + cn[1] * grid.h * cell * 0.5];
       // Turned, the house rises from the street along the plot, like the drawn houses.
       const rot = stitched === 'turned' ? Math.atan2(cn[0], -cn[1]) : 0;

@@ -41,11 +41,15 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
   // A world authored as a scene is drawn from the scene itself (already with its ambience).
   const meanings = semantics ?? (map.tileMeanings?.length ? semanticsFromTable(map.tileMeanings) : undefined);
   const model = map.scene ? bakeScene(map.scene).model : withAmbience(buildSceneModel(map, meanings), hashString(map.name));
+  // Behind the people: quieter work in thinner, sparser thread rather than a faded cloth.
+  const strength = Math.max(0.3, Math.min(1, model.backdrop ?? 1));
   const options: LookOptions = {
     unit: map.tileDim / UNITS_PER_TILE,
     origin: [0, 0],
     palette: worldPalette(look, model.palette),
     seed: hashString(map.name),
+    threadScale: model.threadWeight ?? 1,
+    ...(strength < 1 ? { quiet: { thread: 0.35 + 0.65 * strength, sparse: Math.min(0.85, (1 - strength) * 1.4) } } : {}),
   };
   const draw = (shapes: Shape[]) => (isThread(look) ? renderEmbroidery(ctx, shapes, options) : renderLineArt(ctx, shapes, options));
   if (isThread(look)) paintLinen(ctx, canvas.width, canvas.height, options);
@@ -62,19 +66,7 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
   } else {
     draw(sceneShapes(model, hidden));
   }
-  quietBackdrop(ctx, canvas, model, options.palette.ground);
   return canvas;
-}
-
-/** Keeps the people legible: a wash of linen over the whole cloth (the backdrop strength). */
-function quietBackdrop(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, model: { backdrop?: number }, ground: string) {
-  const strength = Math.max(0.3, Math.min(1, model.backdrop ?? 1));
-  if (strength >= 1) return;
-  ctx.save();
-  ctx.globalAlpha = 1 - strength;
-  ctx.fillStyle = ground;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
 }
 
 /** Washes the places people walk back to near-plain linen, with soft edges. */

@@ -99,8 +99,16 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   hand comes up with their words. Arms go up only to dance: when what they are doing is a
   dance or a celebration, or when they stand still on a dancing ground (`stance` in
   `figureParts`, `dancing` in the figure's motion).
+- **Thread**: one thread for the whole cloth (Fine, Medium, Bold; `thread` edit,
+  `threadScale` in the look options). Every stitch of the world uses it: satin fills, stem
+  lines, and counted crosses, whose width comes from the thread and never grows to fill a
+  big cell. Counted work shares one count (`STITCHES_PER_CELL`); stitched houses are
+  charted straight at it, with one-stitch outlines and details in proportion; roads are a
+  fine trellis.
 - **Legibility**: characters must read against the cloth. "Behind the people" (Full, Soft,
-  Quiet) washes the whole world back toward the linen; "Quiet paths" washes only where
+  Quiet) works the world in thinner thread and sparser stitches (filled areas open into
+  spaced threads over the linen), so people stand out by texture, not by a faded cloth;
+  "Quiet paths" washes only where
   people walk, under the houses and trees, so the plots keep their detail and people stand
   on calm ground (`backdrop` edit).
 - **Rotate**: the selected feature turns in 15° steps (`[` and `]`, or the buttons), as a
