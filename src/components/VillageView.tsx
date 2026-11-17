@@ -2137,7 +2137,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             aria-label="Villager Inspector"
           >
         {/* Villager Quick Roster */}
-        <div className="border-b border-borderFolk bg-card p-2">
+        <div className="border-b border-borderFolk p-2">
           <div className={`flex items-center justify-between gap-2 ${rosterCollapsed ? '' : 'mb-2'}`}>
             <button
               type="button"
