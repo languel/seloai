@@ -884,12 +884,6 @@ export function App() {
       aria-label="World and data"
       className={`flex h-full ${fill ? 'w-full' : 'w-[min(92vw,22rem)] border-l border-borderFolk'} shrink-0 flex-col overflow-hidden bg-card text-ink`}
     >
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-borderFolk px-3 py-2">
-        <h2 className="text-sm font-bold">World &amp; Data</h2>
-        <button type="button" onClick={() => setSidePanel(null)} aria-label="Close World and Data" className="rounded-sm px-1.5 py-0.5 text-xs text-muted hover:text-ink">
-          Close
-        </button>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 thin-scroll">
         <div className="space-y-3 text-xs">
           {dataNotice && (
@@ -1129,6 +1123,45 @@ export function App() {
       </div>
     </aside>
   );
+  /** Opens the panel in a mode; in the village, the panel is shown if it was hidden. */
+  const openPanel = (mode: 'style' | 'data' | null) => {
+    if (mode === 'data') setDataNotice(null);
+    setSidePanel(mode);
+    if (mode && tab === 'village' && !sidebarOpen) toggleSidebarOpen();
+  };
+  /** The panel's modes, as tabs: Storyline (the village's own inspector), Style, World & Data. */
+  const panelTabs = (inVillage: boolean) => {
+    const modes: Array<[string, string, 'style' | 'data' | null]> = [
+      ...(inVillage ? [['storyline', 'Storyline', null] as [string, string, null]] : []),
+      ['style', 'Style', 'style'],
+      ['data', 'World & Data', 'data'],
+    ];
+    return (
+      <div role="tablist" aria-label="Panel" className="flex shrink-0 items-center gap-0.5 border-b border-borderFolk bg-card px-1.5 py-1 text-[12px]">
+        {modes.map(([id, label, mode]) => {
+          const on = sidePanel === mode;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => openPanel(mode)}
+              className={`rounded-sm px-2 py-0.5 ${on ? 'bg-surface font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'}`}
+            >
+              {label}
+            </button>
+          );
+        })}
+        {!inVillage && (
+          <button type="button" onClick={() => setSidePanel(null)} aria-label="Close the panel" className="ml-auto rounded-sm px-1.5 py-0.5 text-muted hover:text-ink">
+            Close
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : null);
 
   const stylePanel = (fill: boolean) => (
@@ -1196,10 +1229,7 @@ export function App() {
                   <GlyphButton
                     glyph="data"
                     label="World & Data: worlds, the story, saving, files and images"
-                    onClick={() => {
-                      setDataNotice(null);
-                      setSidePanel((p) => (p === 'data' ? null : 'data'));
-                    }}
+                    onClick={() => openPanel(sidePanel === 'data' ? null : 'data')}
                     pressed={sidePanel === 'data'}
                     size={17}
                   />
@@ -1214,7 +1244,7 @@ export function App() {
                   <GlyphButton
                     glyph="style"
                     label="Style: the look of the world and interface"
-                    onClick={() => setSidePanel((p) => (p === 'style' ? null : 'style'))}
+                    onClick={() => openPanel(sidePanel === 'style' ? null : 'style')}
                     pressed={sidePanel === 'style'}
                     size={17}
                   />
@@ -1306,6 +1336,7 @@ export function App() {
             onUpdateAesthetic={handleUpdateAesthetic}
             sidebarOpen={sidebarOpen}
             sidebarSwap={sidePanel ? sidePanelNode(true) : undefined}
+            panelTabs={panelTabs(true)}
             onResetStory={() => void handleResetStory()}
           />
         )}
@@ -1358,7 +1389,12 @@ export function App() {
         {tab === 'guides' && <AssetGuideView />}
       </main>
       {/* Style docks on the right beside whatever view is open, so changes show as they are made. */}
-      {sidePanel && tab !== 'village' && sidePanelNode(false)}
+      {sidePanel && tab !== 'village' && (
+        <div className="flex h-full w-[min(92vw,22rem)] shrink-0 flex-col overflow-hidden border-l border-borderFolk bg-card">
+          {panelTabs(false)}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{sidePanelNode(true)}</div>
+        </div>
+      )}
       </div>
 
 

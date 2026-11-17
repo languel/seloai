@@ -108,6 +108,8 @@ interface VillageViewProps {
    * stays mounted underneath, hidden, so it comes back as it was.
    */
   sidebarSwap?: React.ReactNode;
+  /** The panel's mode tabs (Storyline, Style, World & Data), shown above whichever is open. */
+  panelTabs?: React.ReactNode;
   /** Starts the story again in the world as it is now (backed up first). */
   onResetStory?: () => void;
 }
@@ -479,6 +481,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onUpdateAesthetic,
   sidebarOpen: sidebarOpenProp,
   sidebarSwap,
+  panelTabs,
   onResetStory,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -2278,11 +2281,14 @@ export const VillageView: React.FC<VillageViewProps> = ({
             className="hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center border-l border-borderFolk bg-surface hover:bg-ink/20 active:bg-ink/30 transition-colors"
           />
 
-          {/* Right: Villager Inspector + Voice & Chat */}
-          {sidebarSwap ? <div className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col overflow-hidden max-h-[52vh] lg:max-h-none">{sidebarSwap}</div> : null}
+          {/* Right: the panel, in one of its modes: the Storyline (characters and the story
+              as it unfolds), Style, or World & Data. */}
+          <div className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col overflow-hidden bg-surface max-h-[52vh] lg:max-h-none">
+          {panelTabs}
+          {sidebarSwap ? <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{sidebarSwap}</div> : null}
           <aside
-            className={`${sidebarSwap ? 'hidden' : 'flex'} w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col bg-surface overflow-hidden max-h-[52vh] lg:max-h-none`}
-            aria-label="Villager Inspector"
+            className={`${sidebarSwap ? 'hidden' : 'flex'} min-h-0 flex-1 flex-col bg-surface overflow-hidden`}
+            aria-label="Storyline"
           >
         {/* Villager Quick Roster */}
         <div className="border-b border-borderFolk p-2">
@@ -3107,6 +3113,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
           <div className="p-6 text-center text-xs text-muted">No villagers in the village yet.</div>
         )}
           </aside>
+          </div>
         </>
       )}
     </div>

@@ -69,7 +69,8 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
         />
       )}
 
-      {/* Header */}
+      {/* Header (in the panel, the mode tabs stand in for it) */}
+      {!fill && (
       <div
         className="flex shrink-0 items-center justify-between gap-2 px-3 py-2"
         style={{ borderBottom: `1px solid ${tokens.hudBorderColor}` }}
@@ -93,6 +94,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
           <X className="h-4 w-4" />
         </button>
       </div>
+      )}
 
       {/* Scrollable Sections */}
       <div className="thin-scroll flex-1 space-y-3.5 overflow-y-auto px-3 py-2.5 text-xs">
