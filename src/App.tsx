@@ -22,6 +22,8 @@ import { bonsaiEngine } from './ai/bonsaiEngine';
 import { brainRouter } from './ai/brainRouter';
 import { minicpmEngine } from './ai/minicpmEngine';
 import { resolveStartupAutoLoadCandidate } from './ai/modelCache';
+import { kokoroEngine, lightVoiceWasChosen } from './ai/kokoroEngine';
+import { VoiceNudge, voiceNudgeDismissed } from './components/VoiceNudge';
 import { omniEngine } from './ai/omniEngine';
 import { seloToolHost, type WorkspaceTabId } from './api/seloToolRegistry';
 import { installSeloWebMcpAndApi } from './api/webMcpBridge';
@@ -114,6 +116,7 @@ export function App() {
   const resetDialogRef = useRef<HTMLDialogElement | null>(null);
   const dataDialogRef = useRef<HTMLDialogElement | null>(null);
   const autoLoadAttemptedRef = useRef(false);
+  const [showVoiceNudge, setShowVoiceNudge] = useState(false);
   const latestRef = useRef<{
     tab: WorkspaceTabId;
     map: VillageMap | null;
@@ -337,7 +340,13 @@ export function App() {
     let cancelled = false;
 
     resolveStartupAutoLoadCandidate(settings).then((candidate) => {
-      if (cancelled || !candidate) return;
+      if (cancelled) return;
+      if (!candidate) {
+        // No cached brain: load the light voice if it was chosen before, otherwise offer a voice.
+        if (lightVoiceWasChosen()) kokoroEngine.load().catch(() => {});
+        else if (!voiceNudgeDismissed() && !omniEngine.isReady()) setShowVoiceNudge(true);
+        return;
+      }
       if (
         omniEngine.isReady() ||
         brainRouter.isTextModelReady() ||
@@ -805,6 +814,7 @@ export function App() {
   return (
     <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
     <div className={`flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
+      {showVoiceNudge && settings ? <VoiceNudge settings={settings} onClose={() => setShowVoiceNudge(false)} /> : null}
       <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
         {/* Navigation Tabs (glyph-only with hover labels) */}
         <nav aria-label="Workspace Views" className="flex items-center gap-1">

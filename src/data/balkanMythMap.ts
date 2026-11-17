@@ -606,7 +606,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voice: {
         gender: 'female',
         language: 'Swedish',
-        pitchSemitones: 2,
+        pitchSemitones: 0.5,
         speakingRate: 0.96,
         warmthDb: 1,
       },

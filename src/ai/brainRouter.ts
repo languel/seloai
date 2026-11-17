@@ -1,5 +1,6 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
 import { ttsInstruction } from './voiceAccent';
+import { kokoroEngine, kokoroVoiceFor } from './kokoroEngine';
 import type {
   BrainEngineKind,
   ChatMessage,
@@ -97,7 +98,7 @@ class BrainRouter {
     speakerId: string;
     speakerName: string;
     text: string;
-    engine: 'omni' | 'api-tts' | 'webspeech';
+    engine: 'omni' | 'kokoro' | 'api-tts' | 'webspeech';
     startedAt: number;
   } | null = null;
   private speechListeners = new Set<(info: BrainRouter['activeSpeechInfo']) => void>();
@@ -1487,6 +1488,54 @@ class BrainRouter {
             title: 'Omni TTS failed',
             detail: err?.message || String(err),
           });
+        }
+      }
+
+      // The light voice (Kokoro-82M) when Omni is not loaded: much fuller than browser speech.
+      if (settings.enableOmniTts !== false && kokoroEngine.isReady()) {
+        const previewCtx = preview && typeof AudioContext !== 'undefined' ? new AudioContext() : undefined;
+        try {
+          const kokoroVoice = kokoroVoiceFor(villager.id, voice);
+          const { audio, sampleRate } = await kokoroEngine.synthesize(cleanSpeech, kokoroVoice, voice.speakingRate);
+          // Speed is the model's own; the player adds only pitch and warmth.
+          const player = new StreamingPcmPlayer(
+            sampleRate,
+            () => {
+              if (this.activePlayer === player) {
+                this.activePlayer = null;
+                this.activeSpatialResolver = null;
+              }
+            },
+            initialMix,
+            { ...voice, speakingRate: 1 },
+            previewCtx,
+          );
+          if (!preview) this.activePlayer = player;
+          setActiveSpeech({
+            speakerId: villager.id,
+            speakerName: villager.name,
+            text: cleanSpeech,
+            engine: 'kokoro',
+            startedAt: Date.now(),
+          });
+          player.push(audio);
+          player.end();
+          this.log({
+            channel: 'audio',
+            level: 'success',
+            title: `Light voice (${villager.name} · ${kokoroVoice})`,
+            detail: cleanSpeech,
+          });
+          await player.waitForEnd();
+          if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
+            setActiveSpeech(null);
+          }
+          return;
+        } catch (err: any) {
+          setActiveSpeech(null);
+          this.log({ channel: 'audio', level: 'warn', title: 'Light voice failed', detail: err?.message || String(err) });
+        } finally {
+          await previewCtx?.close().catch(() => undefined);
         }
       }
 
