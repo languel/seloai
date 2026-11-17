@@ -4,6 +4,10 @@ import {
   createBalkanMythVillagers,
 } from '../../data/balkanMythMap';
 import type { WorldContext } from '../worldContext';
+import type { VillageMap } from '../../engine/types';
+import { generatedFromTileMap } from '../sceneGenerators';
+import { mapFromScene } from '../worldScene';
+import { ZMEYOVO_EDITS } from './zmeyovoEdits';
 import { WORLD_PACK_FORMAT, WORLD_PACK_VERSION, type WorldPackDefinition } from '../worldPack';
 
 const WELL_TOPIC = ['lamia', 'well'];
@@ -78,6 +82,17 @@ export const ZMEYOVO_CONTEXT: WorldContext = {
   },
 };
 
+/**
+ * The demo Zmeyovo: the authored tile map frozen into a place (as the World Editor does on
+ * the first edit), with the owner's hand edits on top. The default world.
+ */
+export function createZmeyovoDemoMap(): VillageMap {
+  const tiles = createBalkanMythMap();
+  const map = mapFromScene({ recipe: { generator: 'tiles', params: {}, seed: 0 }, edits: structuredClone(ZMEYOVO_EDITS), base: generatedFromTileMap(tiles) }, tiles.name);
+  // Keep the tileset it came from, so older saves and tools still know which world it is.
+  return { ...map, tileSetUrl: tiles.tileSetUrl, tileSetDimX: tiles.tileSetDimX, tileSetDimY: tiles.tileSetDimY };
+}
+
 export const zmeyovoPack: WorldPackDefinition = {
   id: 'balkan-myth',
   name: 'Zmeyovo: Well of the Lamia',
@@ -90,7 +105,7 @@ export const zmeyovoPack: WorldPackDefinition = {
     description: 'A drought-stricken Balkan village bargaining with the serpent in its well.',
     context: structuredClone(ZMEYOVO_CONTEXT),
     story: { openingDirective: BALKAN_MYTH_OPENING_DIRECTIVE, focalCharacterId: 'lamia' },
-    map: createBalkanMythMap(),
+    map: createZmeyovoDemoMap(),
     cast: createBalkanMythVillagers(),
   }),
 };

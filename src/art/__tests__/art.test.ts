@@ -1,3 +1,4 @@
+import { createBalkanMythMap } from '../../data/balkanMythMap';
 import { describe, expect, it } from 'vitest';
 import { createSeededRng } from '../../core/rng';
 import { findWorldPack, tileSemanticsForMap } from '../../world/packs';
@@ -65,7 +66,7 @@ describe('Generative art', () => {
   });
 
   it('reads a world for what is there, with or without tile meanings', () => {
-    const zmeyovo = findWorldPack('balkan-myth')!.build().map;
+    const zmeyovo = createBalkanMythMap();
     const model = buildSceneModel(zmeyovo, tileSemanticsForMap(zmeyovo));
     const kinds = new Set(model.features.map((f) => f.kind));
     expect(kinds.has('house') && kinds.has('well') && kinds.has('tree')).toBe(true);
@@ -273,7 +274,7 @@ describe('tile meanings in world packs', () => {
 
   it('gives maps saved before tables existed the bundled table for their tileset', async () => {
     const { withBundledTileMeanings } = await import('../../world/packs');
-    const old = { ...findWorldPack('balkan-myth')!.build().map, tileMeanings: undefined };
+    const old = { ...createBalkanMythMap(), tileMeanings: undefined };
     expect(withBundledTileMeanings(old).tileMeanings?.length).toBeGreaterThan(0);
     const custom = { ...old, tileSetUrl: '/assets/mine.png' };
     expect(withBundledTileMeanings(custom).tileMeanings).toBeUndefined();
@@ -310,7 +311,7 @@ describe('ambient density', () => {
 
   it('keeps groves to the outskirts when the world asks for an open middle', async () => {
     const { withAmbience } = await import('../ambient');
-    const map = findWorldPack('balkan-myth')!.build().map;
+    const map = createBalkanMythMap();
     expect(map.groves).toBe('edge');
     const model = buildSceneModel(map, tileSemanticsForMap(map));
     const original = new Set(model.features.map((f) => `${f.kind}:${f.x}:${f.y}`));
