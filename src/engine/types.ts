@@ -417,6 +417,8 @@ export interface ModelSettings {
    * filled in. Empty uses the built-in wording.
    */
   ttsInstructionTemplate: string;
+  /** How the Traveler is drawn in the stitched looks: the same figure villagers have. */
+  playerFigure?: VillagerConfig['figure'];
   /** Speak the Traveler's typed lines aloud before the reply. */
   speakPlayerLines: boolean;
 }

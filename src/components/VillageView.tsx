@@ -1006,7 +1006,13 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 time: timeSec,
               };
               const cfg = sim.configs.get(body.id);
-              const looks = cfg ? figureLooksFor(cfg) : { build: playerFigureBuild(aestheticSettings.player.attire), kind: 'human' as const };
+              // The Traveler wears the figure set in their roster entry (with no build chosen, the
+              // voice's gender decides, as for villagers); before one is set, the old attire choice.
+              const looks = cfg
+                ? figureLooksFor(cfg)
+                : settings.playerFigure
+                  ? figureLooksFor({ figure: settings.playerFigure, voice: settings.playerVoice })
+                  : { build: playerFigureBuild(aestheticSettings.player.attire), kind: 'human' as const };
               const heightPx = body.tileDim * body.scale * FIGURE_HEIGHT_SCALE;
               // Far away a person is a counted sign on the cloth; close in, the full figure.
               const near = aestheticSettings.figureFarSigns ? figureNearness(heightPx, cam.zoom) : 1;

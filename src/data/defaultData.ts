@@ -185,6 +185,7 @@ export function buildTravelerConfig(settings: ModelSettings, worldPlayerName = '
     identity: 'The visitor the player steers through the world.',
     plan: '',
     voiceStyle: 'Plain, curious, unhurried.',
+    figure: settings.playerFigure,
     voice: {
       ...DEFAULT_MODEL_SETTINGS.playerVoice,
       ...(settings.playerVoice ?? {}),

@@ -8,6 +8,9 @@ import { Volume2 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { DEFAULT_MODEL_SETTINGS, OMNI_SPEECH_LANGUAGES, buildNarratorConfig, buildTravelerConfig } from '../data/defaultData';
 import type { ModelSettings, VillagerVoiceProfile, VoiceGender } from '../engine/types';
+import { FigureAppearance } from './FigureAppearance';
+import { figureBuildFor, type WorldLook } from '../art/gameLook';
+import type { FigureKind } from '../art/figures';
 import { TTS_TEMPLATE_DEFAULT, ttsInstruction } from '../ai/voiceAccent';
 
 export type CastMember = 'scribe' | 'traveler';
@@ -18,11 +21,13 @@ interface CastPanelProps {
   member: CastMember;
   settings: ModelSettings;
   onUpdateSettings: (patch: Partial<ModelSettings>) => void;
+  /** The world look, so the Traveler's figure is previewed as the village draws it. */
+  worldLook?: WorldLook;
 }
 
 const field = 'w-full rounded border border-borderFolk bg-surface px-2.5 py-1.5 text-xs';
 
-export function CastPanel({ member, settings, onUpdateSettings }: CastPanelProps) {
+export function CastPanel({ member, settings, onUpdateSettings, worldLook = 'tiles' }: CastPanelProps) {
   const [testing, setTesting] = useState(false);
   const scribe = member === 'scribe';
   const voiceKey = scribe ? 'narratorVoice' : 'playerVoice';
@@ -51,9 +56,61 @@ export function CastPanel({ member, settings, onUpdateSettings }: CastPanelProps
         <p className="text-xs text-muted">
           {scribe
             ? 'The voice that tells the story: it narrates scene beats and answers when addressed with @Scribe.'
-            : 'You, as the village sees you. The figure is set in the Style panel.'}
+            : 'You, as the village sees you: your figure, name and voice.'}
         </p>
       </div>
+
+      {!scribe && (
+        <div className="rushnyk-card rounded-sm p-2.5 space-y-2.5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">The figure</h2>
+          <div className="flex flex-wrap items-center gap-1 text-[11px]">
+            {(
+              [
+                [undefined, 'Auto'],
+                ['skirted', 'Skirted'],
+                ['trousered', 'Trousered'],
+              ] as const
+            ).map(([build, label]) => {
+              const on = settings.playerFigure?.build === build;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={on}
+                  title={build ? `Draw as ${label.toLowerCase()}` : 'Decide from the voice'}
+                  onClick={() => onUpdateSettings({ playerFigure: { ...settings.playerFigure, build } })}
+                  className={`rounded px-2 py-0.5 glyph-button ${on ? 'glyph-on font-semibold' : ''}`}
+                >
+                  {label}
+                  {!build && on ? ` (${figureBuildFor({ ...cfg, figure: { kind: cfg.figure?.kind } })})` : ''}
+                </button>
+              );
+            })}
+            <label className="ml-3 inline-flex items-center gap-1">
+              <span className="text-muted">Kind</span>
+              <select
+                value={settings.playerFigure?.kind ?? 'human'}
+                onChange={(e) =>
+                  onUpdateSettings({
+                    playerFigure: { ...settings.playerFigure, kind: e.target.value === 'human' ? undefined : (e.target.value as FigureKind) },
+                  })
+                }
+                className="rounded border border-borderFolk bg-surface px-1 py-0.5 text-[11px]"
+              >
+                <option value="human">Villager</option>
+                <option value="serpent">Serpent (lamia)</option>
+                <option value="kuker">Kuker mummer</option>
+                <option value="samodiva">Samodiva</option>
+              </select>
+            </label>
+          </div>
+          {worldLook !== 'tiles' ? (
+            <FigureAppearance villager={cfg} look={worldLook} onChange={(figure) => onUpdateSettings({ playerFigure: figure })} />
+          ) : (
+            <p className="text-[11px] text-muted">The figure shows in the stitched looks; Classic tiles draws the old pixel Traveler.</p>
+          )}
+        </div>
+      )}
 
       <div className="rushnyk-card rounded-sm p-2.5 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

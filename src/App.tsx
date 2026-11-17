@@ -862,7 +862,7 @@ export function App() {
                 <React.Fragment key={id}>
                   <GlyphButton
                     glyph="style"
-                    label="Style, theme and player appearance"
+                    label="Style: the look of the world and interface"
                     onClick={() => setStylePanelOpen((o) => !o)}
                     pressed={stylePanelOpen}
                     size={17}
@@ -962,19 +962,8 @@ export function App() {
         </div>
       </header>
 
-      <main className="relative flex-1 min-h-0 overflow-hidden">
-        {stylePanelOpen && (
-          <AestheticStudioPanel
-            settings={aestheticSettings}
-            tokens={aestheticTokens}
-            playerSprite={playerCustomSprite}
-            worldName={map.name}
-            appTheme={theme}
-            onChangeAppTheme={setTheme}
-            onChange={handleUpdateAesthetic}
-            onClose={() => setStylePanelOpen(false)}
-          />
-        )}
+      <div className="flex flex-1 min-h-0">
+      <main className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
         {tab === 'village' && (
           <VillageView
             sim={simRef.current}
@@ -1035,6 +1024,19 @@ export function App() {
         )}
         {tab === 'guides' && <AssetGuideView />}
       </main>
+      {/* Style docks on the right beside whatever view is open, so changes show as they are made. */}
+      {stylePanelOpen && (
+          <AestheticStudioPanel
+            settings={aestheticSettings}
+            tokens={aestheticTokens}
+            worldName={map.name}
+            appTheme={theme}
+            onChangeAppTheme={setTheme}
+            onChange={handleUpdateAesthetic}
+            onClose={() => setStylePanelOpen(false)}
+          />
+        )}
+      </div>
 
       {/* World, Story & Data Management Modal */}
       <dialog

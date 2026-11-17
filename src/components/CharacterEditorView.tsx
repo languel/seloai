@@ -463,7 +463,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
       {/* Main Character Form & Sprite Preview */}
       <section className="overflow-y-auto bg-linen p-3 thin-scroll">
         {castMember(selectedId) && onUpdateSettings ? (
-          <CastPanel member={castMember(selectedId)!} settings={settings} onUpdateSettings={onUpdateSettings} />
+          <CastPanel member={castMember(selectedId)!} settings={settings} onUpdateSettings={onUpdateSettings} worldLook={worldLook} />
         ) : current ? (
           <div className="mx-auto max-w-3xl space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borderFolk pb-3">

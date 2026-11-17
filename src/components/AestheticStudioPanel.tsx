@@ -1,20 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Dices, Monitor, Moon, RotateCcw, Sparkles, Sun, X } from 'lucide-react';
+import React from 'react';
+import { Monitor, Moon, RotateCcw, Sparkles, Sun, X } from 'lucide-react';
 import { WORLD_LOOK_OPTIONS } from '../art/gameLook';
-import type { CustomSpriteSheet, Direction } from '../engine/types';
 import {
   BUBBLE_STYLE_OPTIONS,
   DEFAULT_AESTHETIC_SETTINGS,
   DEFAULT_PLAYER_APPEARANCE,
   FONT_PRESET_OPTIONS,
-  PLAYER_ACCENT_SWATCHES,
   UI_DECORATION_OPTIONS,
   type AestheticSettings,
-  type PlayerAttirePreset,
-  type PlayerHairPreset,
-  type PlayerHeadgearPreset,
-  type PlayerPropPreset,
-  type PlayerSkinPreset,
   type ResolvedAestheticTokens,
 } from '../utils/aestheticThemes';
 
@@ -23,7 +16,6 @@ export type AppThemeMode = 'system' | 'light' | 'dark';
 interface AestheticStudioPanelProps {
   settings: AestheticSettings;
   tokens: ResolvedAestheticTokens;
-  playerSprite: CustomSpriteSheet;
   worldName: string;
   appTheme?: AppThemeMode;
   onChangeAppTheme?: (next: AppThemeMode) => void;
@@ -31,143 +23,15 @@ interface AestheticStudioPanelProps {
   onClose: () => void;
 }
 
-const PREVIEW_DIRS: Direction[] = ['down', 'left', 'right', 'up'];
-
-const ATTIRE_OPTIONS: ReadonlyArray<{ id: PlayerAttirePreset; label: string }> = [
-  { id: 'auto', label: 'Match World' },
-  { id: 'balkan-yunak', label: 'Yunak Vest' },
-  { id: 'balkan-weaver', label: 'Folk Weaver' },
-  { id: 'shevitsa-embroiderer', label: 'Shevitsa' },
-  { id: 'kuker-wanderer', label: 'Kuker Kozhuh' },
-  { id: 'forest-samodiva', label: 'Samodiva' },
-  { id: 'classic-traveler', label: 'Wayfarer' },
-];
-
-const HEADGEAR_OPTIONS: ReadonlyArray<{ id: PlayerHeadgearPreset; label: string }> = [
-  { id: 'auto', label: 'World Auto' },
-  { id: 'none', label: 'None' },
-  { id: 'kalpak', label: 'Kalpak' },
-  { id: 'kerchief', label: 'Kerchief' },
-  { id: 'flower-venets', label: 'Flower Crown' },
-  { id: 'traveler-hood', label: 'Hood' },
-];
-
-const PROP_OPTIONS: ReadonlyArray<{ id: PlayerPropPreset; label: string }> = [
-  { id: 'auto', label: 'World Auto' },
-  { id: 'none', label: 'Empty Hand' },
-  { id: 'lantern', label: 'Lantern' },
-  { id: 'staff', label: 'Oak Staff' },
-  { id: 'shuttle', label: 'Shuttle' },
-  { id: 'rose', label: 'Rose' },
-];
-
-const HAIR_OPTIONS: ReadonlyArray<{ id: PlayerHairPreset; label: string }> = [
-  { id: 'auto', label: 'Auto' },
-  { id: 'dark', label: 'Dark' },
-  { id: 'chestnut', label: 'Chestnut' },
-  { id: 'auburn', label: 'Auburn' },
-  { id: 'gold', label: 'Gold' },
-  { id: 'silver', label: 'Silver' },
-];
-
-const SKIN_OPTIONS: ReadonlyArray<{ id: PlayerSkinPreset; label: string }> = [
-  { id: 'auto', label: 'Auto' },
-  { id: 'warm', label: 'Warm' },
-  { id: 'pale', label: 'Fair' },
-  { id: 'olive', label: 'Olive' },
-  { id: 'deep', label: 'Deep' },
-];
-
 export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
   settings,
   tokens,
-  playerSprite,
   worldName,
   appTheme,
   onChangeAppTheme,
   onChange,
   onClose,
 }) => {
-  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [previewDirIdx, setPreviewDirIdx] = useState(0);
-  const [walkingPreview, setWalkingPreview] = useState(true);
-
-  useEffect(() => {
-    const canvas = previewCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const img = new Image();
-    img.src = playerSprite.textureUrl;
-    let frame = 0;
-    let timerId: number | null = null;
-
-    const drawFrame = () => {
-      ctx.clearRect(0, 0, 64, 64);
-      ctx.imageSmoothingEnabled = false;
-      if (!img.complete || img.naturalWidth === 0) return;
-      const dir = PREVIEW_DIRS[previewDirIdx];
-      const row = playerSprite.rowMap[dir] ?? 0;
-      const col = walkingPreview ? frame % 4 : 0;
-      const sx = col * playerSprite.frameWidth;
-      const sy = row * playerSprite.frameHeight;
-      ctx.drawImage(
-        img,
-        sx,
-        sy,
-        playerSprite.frameWidth,
-        playerSprite.frameHeight,
-        0,
-        0,
-        64,
-        64,
-      );
-    };
-
-    img.onload = drawFrame;
-    drawFrame();
-    if (walkingPreview) {
-      timerId = window.setInterval(() => {
-        frame = (frame + 1) % 4;
-        drawFrame();
-      }, 210);
-    }
-
-    return () => {
-      if (timerId !== null) window.clearInterval(timerId);
-    };
-  }, [playerSprite, previewDirIdx, walkingPreview]);
-
-  const updatePlayer = (patch: Partial<AestheticSettings['player']>) => {
-    onChange({
-      ...settings,
-      player: { ...settings.player, ...patch },
-    });
-  };
-
-  const handleRandomizePlayer = () => {
-    const attireChoices = ATTIRE_OPTIONS.slice(1).map((o) => o.id);
-    const swatchChoices = PLAYER_ACCENT_SWATCHES.slice(1).map((o) => o.hex);
-    const hatChoices = HEADGEAR_OPTIONS.slice(1).map((o) => o.id);
-    const propChoices = PROP_OPTIONS.slice(1).map((o) => o.id);
-    const hairChoices = HAIR_OPTIONS.slice(1).map((o) => o.id);
-    const skinChoices = SKIN_OPTIONS.slice(1).map((o) => o.id);
-    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-    onChange({
-      ...settings,
-      player: {
-        attire: pick(attireChoices),
-        accentColor: pick(swatchChoices),
-        headgear: pick(hatChoices),
-        propItem: pick(propChoices),
-        hairColor: pick(hairChoices),
-        skinTone: pick(skinChoices),
-        seed: Math.floor(Math.random() * 9999) + 1,
-      },
-    });
-  };
-
   const worldThemeBadge =
     tokens.worldTheme === 'balkan-myth'
       ? 'Balkan Folklore'
@@ -190,10 +54,9 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
 
   return (
     <aside
-      role="dialog"
-      aria-label="Appearance and Player Studio"
+      aria-label="Style"
       style={tokens.panelStyle}
-      className="thin-scroll absolute right-2 top-2 z-40 flex max-h-[calc(100%-1rem)] w-[min(92vw,24rem)] flex-col overflow-hidden rounded-lg shadow-2xl"
+      className="flex h-full w-[min(92vw,22rem)] shrink-0 flex-col overflow-hidden border-l border-borderFolk"
     >
       {settings.showDecorations && (
         <div
@@ -211,7 +74,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 text-xs font-semibold">
             <Sparkles className="h-3.5 w-3.5 shrink-0" style={{ color: tokens.poiHighlightHex }} />
-            <span className="truncate">Appearance &amp; Player Studio</span>
+            <span className="truncate">Style</span>
           </div>
           <div className="truncate text-[10px]" style={{ color: tokens.hudMutedColor }}>
             {worldName} · {worldThemeBadge}
@@ -220,7 +83,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close Appearance Studio"
+          aria-label="Close Style"
           className="rounded p-1 transition hover:opacity-80"
           style={{ color: tokens.hudMutedColor }}
         >
@@ -238,68 +101,12 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
             border: `1px solid ${tokens.hudBorderColor}`,
           }}
         >
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: tokens.poiHighlightHex }}>
-              Traveler Character
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => updatePlayer({ ...DEFAULT_PLAYER_APPEARANCE })}
-                title="Reset traveler appearance to match the active world theme"
-                className="rounded border px-1.5 py-0.5 text-[10px] font-medium transition hover:opacity-85"
-                style={{
-                  borderColor: tokens.hudBorderColor,
-                  backgroundColor: tokens.hudChipIdleBg,
-                  color: tokens.hudTextColor,
-                }}
-              >
-                Match World
-              </button>
-              <button
-                type="button"
-                onClick={handleRandomizePlayer}
-                title="Randomize traveler appearance"
-                className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition hover:opacity-85"
-                style={{
-                  borderColor: tokens.hudBorderColor,
-                  backgroundColor: tokens.hudChipIdleBg,
-                  color: tokens.hudTextColor,
-                }}
-              >
-                <Dices className="h-3 w-3" />
-                Random
-              </button>
-            </div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: tokens.poiHighlightHex }}>
+            The world&apos;s look
           </div>
 
-          <div className="mb-2.5 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setPreviewDirIdx((d) => (d + 1) % PREVIEW_DIRS.length)}
-              title="Click to rotate traveler preview"
-              className="pixel-canvas relative flex h-16 w-16 shrink-0 items-center justify-center rounded-md border"
-              style={{
-                borderColor: tokens.hudBorderColor,
-                backgroundColor: tokens.isLightSurface ? 'rgba(38, 30, 22, 0.10)' : 'rgba(0, 0, 0, 0.28)',
-              }}
-            >
-              <canvas ref={previewCanvasRef} width={64} height={64} className="pixel-canvas h-16 w-16" />
-            </button>
-            <div className="flex-1 space-y-1.5">
-              <div className="flex items-center justify-between text-[11px]">
-                <span style={{ color: tokens.hudMutedColor }}>
-                  View: <strong style={{ color: tokens.hudTextColor }}>{PREVIEW_DIRS[previewDirIdx]}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setWalkingPreview((w) => !w)}
-                  className="rounded border px-1.5 py-0.5 text-[10px]"
-                  style={pillBtnStyle(walkingPreview)}
-                >
-                  {walkingPreview ? 'Walking' : 'Idle'}
-                </button>
-              </div>
+          <div>
+            <div className="space-y-1.5">
               <div>
                 <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
                   World Look
@@ -544,134 +351,6 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <div>
-              <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>Attire</div>
-              <div className="flex flex-wrap gap-1">
-                {ATTIRE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => updatePlayer({ attire: opt.id })}
-                    className="rounded border px-1.5 py-0.5 text-[10px] font-medium transition"
-                    style={pillBtnStyle(settings.player.attire === opt.id)}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>Vest / Cloak Accent</div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {PLAYER_ACCENT_SWATCHES.map((sw) => {
-                  const selected = settings.player.accentColor === sw.hex;
-                  return (
-                    <button
-                      key={sw.id}
-                      type="button"
-                      onClick={() => updatePlayer({ accentColor: sw.hex })}
-                      title={sw.label}
-                      aria-label={`Accent ${sw.label}`}
-                      className="flex h-5 items-center justify-center rounded-full border px-1.5 text-[10px] font-medium transition"
-                      style={{
-                        borderColor: selected ? '#ffffff' : tokens.hudBorderColor,
-                        boxShadow: selected ? `0 0 0 2px ${tokens.accentHex}` : undefined,
-                        backgroundColor: sw.hex === 'auto' ? tokens.hudChipIdleBg : sw.hex,
-                        color: '#ffffff',
-                        minWidth: sw.hex === 'auto' ? 'auto' : '22px',
-                      }}
-                    >
-                      {sw.hex === 'auto' ? 'Auto' : ''}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="space-y-1">
-                <span className="block text-[10px]" style={{ color: tokens.hudMutedColor }}>Headgear</span>
-                <select
-                  value={settings.player.headgear}
-                  onChange={(e) => updatePlayer({ headgear: e.target.value as PlayerHeadgearPreset })}
-                  className="w-full rounded border px-1.5 py-1 text-[11px]"
-                  style={{
-                    backgroundColor: tokens.isLightSurface ? 'rgba(255,255,255,0.7)' : 'rgba(12,12,16,0.75)',
-                    borderColor: tokens.hudBorderColor,
-                    color: tokens.hudTextColor,
-                  }}
-                >
-                  {HEADGEAR_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="space-y-1">
-                <span className="block text-[10px]" style={{ color: tokens.hudMutedColor }}>Handheld Token</span>
-                <select
-                  value={settings.player.propItem}
-                  onChange={(e) => updatePlayer({ propItem: e.target.value as PlayerPropPreset })}
-                  className="w-full rounded border px-1.5 py-1 text-[11px]"
-                  style={{
-                    backgroundColor: tokens.isLightSurface ? 'rgba(255,255,255,0.7)' : 'rgba(12,12,16,0.75)',
-                    borderColor: tokens.hudBorderColor,
-                    color: tokens.hudTextColor,
-                  }}
-                >
-                  {PROP_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="space-y-1">
-                <span className="block text-[10px]" style={{ color: tokens.hudMutedColor }}>Hair Tone</span>
-                <select
-                  value={settings.player.hairColor}
-                  onChange={(e) => updatePlayer({ hairColor: e.target.value as PlayerHairPreset })}
-                  className="w-full rounded border px-1.5 py-1 text-[11px]"
-                  style={{
-                    backgroundColor: tokens.isLightSurface ? 'rgba(255,255,255,0.7)' : 'rgba(12,12,16,0.75)',
-                    borderColor: tokens.hudBorderColor,
-                    color: tokens.hudTextColor,
-                  }}
-                >
-                  {HAIR_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="space-y-1">
-                <span className="block text-[10px]" style={{ color: tokens.hudMutedColor }}>Complexion</span>
-                <select
-                  value={settings.player.skinTone}
-                  onChange={(e) => updatePlayer({ skinTone: e.target.value as PlayerSkinPreset })}
-                  className="w-full rounded border px-1.5 py-1 text-[11px]"
-                  style={{
-                    backgroundColor: tokens.isLightSurface ? 'rgba(255,255,255,0.7)' : 'rgba(12,12,16,0.75)',
-                    borderColor: tokens.hudBorderColor,
-                    color: tokens.hudTextColor,
-                  }}
-                >
-                  {SKIN_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
         </section>
 
         {/* Section 2: UI Theme & Glass */}
@@ -888,7 +567,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
           className="rounded px-3 py-1 text-[11px] font-semibold text-white transition hover:opacity-90"
           style={{ backgroundColor: tokens.accentHex }}
         >
-          Done
+          Close
         </button>
       </div>
     </aside>
