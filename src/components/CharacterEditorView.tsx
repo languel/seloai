@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Dices, Plus, Sparkles, Trash2, Upload, Users, Volume2 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import {
+  buildTravelerConfig,
   getEffectiveVoice,
   OMNI_SPEECH_LANGUAGES,
 } from '../data/defaultData';
@@ -403,7 +404,11 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
                         : 'border-transparent hover:border-borderFolk hover:bg-card/60'
                     }`}
                   >
-                    <Volume2 className="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+                    {member === 'traveler' && worldLook !== 'tiles' ? (
+                      <RosterPortrait villager={buildTravelerConfig(settings)} look={worldLook} />
+                    ) : (
+                      <Volume2 className="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+                    )}
                     <div className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-semibold">{name}</span>
                       <span className="block truncate text-[11px] text-muted">{role}</span>
