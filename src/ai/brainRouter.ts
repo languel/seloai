@@ -1,6 +1,7 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
 import { ttsInstruction } from './voiceAccent';
 import { kokoroEngine, kokoroVoiceFor } from './kokoroEngine';
+import { castPronounLine, type CastEntry } from './castPronouns';
 import type {
   BrainEngineKind,
   ChatMessage,
@@ -446,6 +447,8 @@ class BrainRouter {
     history: ChatMessage[];
     /** Setting-specific knowledge; a neutral default is used when omitted. */
     world?: WorldContext;
+    /** Everyone in the world with their pronouns, from the character sheets. */
+    cast?: CastEntry[];
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
     onBeforeSpeak?: (info: {
@@ -490,6 +493,7 @@ class BrainRouter {
       world.premise ? `Situation: ${world.premise}` : '',
       `Background subtext (keep implicit—NEVER recite your job title or copy this bio): ${villager.identity}`,
       `Current drive: ${runtime.currentIntention || villager.plan}`,
+      castPronounLine(params.cast),
       memories ? `Personal memories:\n${memories}` : '',
       worldEvents ? `Recent world events & rumors:\n${worldEvents}` : '',
       recentSelfLines.length
@@ -963,6 +967,8 @@ class BrainRouter {
     history: ChatMessage[];
     /** Setting-specific knowledge; a neutral default is used when omitted. */
     world?: WorldContext;
+    /** Everyone in the world with their pronouns, from the character sheets. */
+    cast?: CastEntry[];
     settings: ModelSettings;
     onChunk?: (chunk: string) => void;
   }): Promise<{ text: string; source: ChatMessage['source']; durationMs: number }> {
@@ -983,6 +989,7 @@ class BrainRouter {
           `Default focus: stay grounded in the focal location, nearby characters, and the recent nearby narrative flow—unless the user explicitly instructs you to zoom out, look elsewhere, or shift scenes.`,
           `Rules: NEVER output <think> tags or meta-commentary. NEVER parrot job titles, dump coordinates, or use filler like "they step close to speak". Weave sensory atmosphere, unspoken tension, or story momentum directly from what is unfolding nearby.`,
           `Never prefix your own name like "${narratorName}:" or break character. Always write strictly in English.`,
+          castPronounLine(params.cast),
           params.sceneContext ? `Nearby context & narrative flow:\n${params.sceneContext}` : '',
         ]
           .filter(Boolean)
@@ -1049,6 +1056,8 @@ class BrainRouter {
     history?: ChatMessage[];
     /** Setting-specific knowledge; a neutral default is used when omitted. */
     world?: WorldContext;
+    /** Everyone in the world with their pronouns, from the character sheets. */
+    cast?: CastEntry[];
     settings: ModelSettings;
   }): Promise<string> {
     const narratorName = params.settings.narratorName.trim() || 'Scribe';
@@ -1078,6 +1087,7 @@ class BrainRouter {
         `${params.villagerB.name}'s current drive: ${params.runtimeB.currentIntention || params.villagerB.plan}`,
         recentAvoidNote,
         snippet ? `What just passed between them: ${snippet}` : '',
+        castPronounLine(params.cast),
       ]
         .filter(Boolean)
         .join('\n');

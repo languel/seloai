@@ -331,6 +331,14 @@ export class VillageSimulation {
     this.notify(true);
   }
 
+  /** Everyone's pronouns from the character sheets (the voice's gender), for the story prompts. */
+  private castPronouns(): { name: string; gender?: string }[] {
+    return [
+      ...Array.from(this.configs.values()).map((c) => ({ name: c.name, gender: c.voice?.gender })),
+      { name: this.player.name, gender: this.modelSettings.playerVoice?.gender },
+    ];
+  }
+
   updateSettings(settings: ModelSettings) {
     this.modelSettings = settings;
     this.player.name = settings.playerName?.trim() || this.world.playerName;
@@ -1646,6 +1654,7 @@ export class VillageSimulation {
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
         const introBeat = await this.mind.generateSceneBeat({
         world: this.world,
+        cast: this.castPronouns(),
           phase: 'opening',
           villagerA: cfgA,
           runtimeA: rtA,
@@ -1743,6 +1752,7 @@ export class VillageSimulation {
       if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents) {
         const closing = await this.mind.generateSceneBeat({
         world: this.world,
+        cast: this.castPronouns(),
           phase: 'closing',
           villagerA: cfgA,
           runtimeA: rtA,
@@ -2078,6 +2088,7 @@ export class VillageSimulation {
     try {
       const res = await this.mind.generateVillagerReply({
         world: this.world,
+        cast: this.castPronouns(),
         villager: speakerCfg,
         runtime: speakerRt,
         partnerName,
@@ -2302,6 +2313,7 @@ export class VillageSimulation {
     let rawNarStream = '';
     const res = await this.mind.generateNarratorReply({
         world: this.world,
+        cast: this.castPronouns(),
       prompt: userText,
       sceneContext: this.buildSceneContext(),
       history: conv.messages.slice(0, -1),
