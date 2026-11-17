@@ -375,7 +375,7 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
   // Houses may stand taller than their plot is deep (they overlap what is behind, as on an
   // old map), so the room is set by the house size, not only by the plot.
   const s = scale;
-  const room = Math.max(Math.min(fr.depth, U * 4.2 * s), U * 2.4 * s);
+  const room = Math.min(U * 4.2 * s, Math.max(fr.depth * 1.1, U * 2.2 * s));
   const mid = pts.reduce<Pt>((acc, q) => [acc[0] + q[0] / pts.length, acc[1] + q[1] / pts.length], [0, 0]);
   const place = (ra: Pt, ru: Pt, rn: Pt, along: number, w: number, h: number, kind: HouseKind | SpecialBuilding) => {
     const tilt = (rng() - 0.5) * 0.3; // a Chagall lean
@@ -412,7 +412,7 @@ function houseRow(shapes: Shape[], p: Patch, pts: Pt[], fr: Frame, rng: Rng, U: 
     place(fr.a, fr.u, fr.n, built === 0 && w > fr.len ? (fr.len - w) / 2 : along, w, h, kind);
     built++;
     // Neighbours sometimes overlap a little, sometimes leave a gap.
-    along += w + U * (rng() < 0.35 ? -0.25 : 0.05 + rng() * 0.2);
+    along += w + U * (rng() < 0.25 ? -0.15 : 0.1 + rng() * 0.25);
   }
   // A corner house on the side street, turned to face it.
   if (fr.depth > U * 3.2 * s && rng() < 0.6) {

@@ -85,7 +85,10 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   colour is re-dyed to the nearest thread role (`clothAccent`).
 - **House size**: Small (the old size), Large (the default: twice as wide and tall, so a
   door is a person's height) or Huge (`houseScale` edit). Patchwork plots default larger
-  to make room, and houses may overlap what stands behind them.
+  to make room. In grid worlds each house is fitted to its space (`fittedHouses`): drawn
+  as large as the world asks, smaller (down to a little under the old size) where it
+  would cover roads, water or other houses, and a crowded house lying on its side stands
+  upright instead. The scatter brush keeps buildings and trees off water and roads.
 - **Stance**: people stand with their arms down and swing them as they walk; the speaking
   hand comes up with their words. Arms go up only to dance: when what they are doing is a
   dance or a celebration, or when they stand still on a dancing ground (`stance` in

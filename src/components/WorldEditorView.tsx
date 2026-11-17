@@ -289,7 +289,15 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       const y = Math.round(cy + Math.sin(a) * d - h / 2);
       if (!inside([x, y]) || !inside([x + w - 1, y + h - 1])) continue;
       let free = true;
-      for (let i = x; i < x + w && free; i++) for (let j = y; j < y + h; j++) if (taken.has(i * 100003 + j)) free = false;
+      // Nothing is sown on water or walls, and nothing standing (a house, a tree) on a road.
+      const flat = ['field', 'vineyard', 'star', 'rosette', 'flowers'].includes(featureKind);
+      for (let i = x; i < x + w && free; i++) {
+        for (let j = y; j < y + h; j++) {
+          const t = baked?.model.terrain[i]?.[j];
+          // (A patchwork's plots are not walked, so there only water and streets are kept clear.)
+          if (taken.has(i * 100003 + j) || t === 'water' || t === 'bridge' || (t === 'wall' && !baked?.model.patches) || (!flat && t === 'road')) free = false;
+        }
+      }
       if (!free) continue;
       let id = uniqueId(`my-${featureKind}`);
       for (let n = 1; used.has(id); n++) id = `${uniqueId(`my-${featureKind}`)}-${n}`;

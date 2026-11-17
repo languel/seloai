@@ -131,6 +131,103 @@ export function houseScaleOf(model?: { houseScale?: number }): number {
   return model?.houseScale ?? 2;
 }
 
+/**
+ * The drawn extent of a house, in cells, at a given size: what it covers on the cloth, not
+ * its footprint. Folk houses stand on the edge facing the road (turned to face it); named
+ * and stitched houses stand upright on the foot of their footprint.
+ */
+function houseExtent(f: SceneFeature, model: SceneModel, scale: number, facing?: number): [number, number, number, number] {
+  const upright = Boolean(f.variant) || (f.look ?? model.houseLook) === 'stitched';
+  const cx = f.x + f.w / 2;
+  if (upright) {
+    const tall = f.variant === 'tall' || f.variant === 'church';
+    const W = f.w * (f.variant ? 0.95 : 0.86 * HOUSE_SCALE) * scale * 1.1;
+    const H = (f.variant ? (tall ? 3.6 : f.variant === 'long' || f.variant === 'barn' ? 2.6 : 3) : f.h * 0.92 * HOUSE_SCALE) * scale;
+    const foot = f.y + f.h;
+    return [cx - W / 2, foot - H, cx + W / 2, foot];
+  }
+  const rot = facing ?? houseFacing(f, model);
+  const W = f.w * 0.86 * HOUSE_SCALE * scale * 1.2; // the eaves reach past the walls
+  const H = f.h * 0.92 * HOUSE_SCALE * scale;
+  const cy = f.y + f.h / 2;
+  if (rot === 0) return [cx - W / 2, f.y + f.h - H, cx + W / 2, f.y + f.h];
+  if (rot === Math.PI) return [cx - W / 2, f.y, cx + W / 2, f.y + H];
+  // Lying on its side, it rises away from the road it faces.
+  if (rot < 0) return [f.x + f.w - H, cy - W / 2, f.x + f.w, cy + W / 2];
+  return [f.x, cy - W / 2, f.x + H, cy + W / 2];
+}
+
+const fittedCache = new WeakMap<SceneModel, Map<SceneFeature, { scale: number; facing?: number }>>();
+
+/**
+ * How large each house of a grid world can be drawn without crowding: from the world's
+ * house size down (never below the old size) until what it covers is almost free of roads,
+ * water, walls, other houses' footprints and the houses already placed. Houses are fitted
+ * in turn, so two never grow into the same gap.
+ */
+export function fittedHouses(model: SceneModel): Map<SceneFeature, { scale: number; facing?: number }> {
+  const hit = fittedCache.get(model);
+  if (hit) return hit;
+  const out = new Map<SceneFeature, { scale: number; facing?: number }>();
+  const target = houseScaleOf(model);
+  const houses = model.features.filter((f) => f.kind === 'house');
+  if (model.patches || target <= 1 || houses.length === 0) {
+    fittedCache.set(model, out);
+    return out;
+  }
+  const { width, height } = model;
+  const taken = new Uint8Array(width * height);
+  for (let x = 0; x < width; x++) for (let y = 0; y < height; y++) {
+    const t = model.terrain[x][y];
+    if (t === 'road' || t === 'water' || t === 'bridge' || t === 'wall') taken[x * height + y] = 1;
+  }
+  const own = new Map<SceneFeature, Set<number>>();
+  for (const f of houses) {
+    const cells = new Set<number>();
+    for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y; y < f.y + f.h; y++) if (x >= 0 && y >= 0 && x < width && y < height) {
+      cells.add(x * height + y);
+      taken[x * height + y] = 2;
+    }
+    own.set(f, cells);
+  }
+  const crowding = (box: [number, number, number, number], mine: Set<number>) => {
+    let all = 0;
+    let busy = 0;
+    for (let x = Math.floor(box[0]); x < Math.ceil(box[2]); x++) for (let y = Math.floor(box[1]); y < Math.ceil(box[3]); y++) {
+      all++;
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      const k = x * height + y;
+      if (taken[k] && !mine.has(k)) busy++;
+    }
+    return all ? busy / all : 0;
+  };
+  const ordered = [...houses].sort((a, b) => a.y - b.y || a.x - b.x);
+  for (const f of ordered) {
+    const mine = own.get(f)!;
+    const natural = houseFacing(f, model);
+    const upright = Boolean(f.variant) || (f.look ?? model.houseLook) === 'stitched';
+    // A house lying on its side may stand upright instead when that crowds less.
+    const facings = upright || natural === 0 ? [natural] : [natural, 0];
+    let best = { scale: 0.8, facing: natural, crowd: Infinity };
+    search: for (let s = target; s >= 0.8 - 1e-6; s -= 0.15) {
+      for (const facing of facings) {
+        const crowd = crowding(houseExtent(f, model, s, facing), mine);
+        if (crowd <= 0.08) {
+          best = { scale: s, facing, crowd };
+          break search;
+        }
+        if (s - 0.15 < 0.8 - 1e-6 && crowd < best.crowd) best = { scale: s, facing, crowd };
+      }
+    }
+    out.set(f, best.facing === natural ? { scale: best.scale } : { scale: best.scale, facing: best.facing });
+    // What it now covers is taken, so the next house does not grow into it.
+    const box = houseExtent(f, model, best.scale, best.facing);
+    for (let x = Math.floor(box[0]); x < Math.ceil(box[2]); x++) for (let y = Math.floor(box[1]); y < Math.ceil(box[3]); y++) if (x >= 0 && y >= 0 && x < width && y < height) taken[x * height + y] = taken[x * height + y] || 3;
+  }
+  fittedCache.set(model, out);
+  return out;
+}
+
 /** The references a feature's pattern grows from: its own, if it names one. */
 function refFor(feature: SceneFeature, refs: PatternReference[]): PatternReference[] {
   if (!feature.ref) return refs;
@@ -154,7 +251,8 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
   const rng = createSeededRng(feature.seed);
   switch (feature.kind) {
     case 'house': {
-      const hs = houseScaleOf(model);
+      const fit = model ? fittedHouses(model).get(feature) : undefined;
+      const hs = fit?.scale ?? houseScaleOf(model);
       if ((feature.look ?? model?.houseLook) === 'stitched') {
         // A counted house, standing upright on its footprint like a house on a sampler.
         const cell = U / STITCHES_PER_CELL;
@@ -173,7 +271,7 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
       }
     {
       // Stand the house on the edge of its footprint that faces the road, turned to face it.
-      const rot = houseFacing(feature, model);
+      const rot = fit?.facing ?? houseFacing(feature, model);
       const cx = (feature.x + feature.w / 2) * U;
       const cy = (feature.y + feature.h / 2) * U;
       const halfW = (feature.w * U) / 2;
