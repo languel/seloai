@@ -22,6 +22,7 @@ import type {
   VoiceGender,
 } from '../engine/types';
 import { ModularCharacterCreator } from './ModularCharacterCreator';
+import { CAST_IDS, CastPanel, type CastMember } from './RosterCastPanels';
 import { FigureAppearance } from './FigureAppearance';
 import {
   FIGURE_HEIGHT_SCALE,
@@ -41,6 +42,8 @@ interface CharacterEditorViewProps {
   map: VillageMap;
   settings: ModelSettings;
   onApplyVillagers: (next: VillagerConfig[]) => void;
+  /** Saves the Scribe's and the Traveler's settings. */
+  onUpdateSettings?: (patch: Partial<ModelSettings>) => void;
   /** The world look, so the preview shows the figure exactly as the village draws it. */
   worldLook?: WorldLook;
   figureTurns?: boolean;
@@ -64,11 +67,17 @@ const PREVIEW_H = 108;
 
 const DIRECTIONS: Direction[] = ['down', 'left', 'right', 'up'];
 
+/** The cast member a roster selection names, if it is the Scribe or the Traveler. */
+function castMember(id: string): CastMember | undefined {
+  return (Object.keys(CAST_IDS) as CastMember[]).find((m) => CAST_IDS[m] === id);
+}
+
 export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
   villagers,
   map,
   settings,
   onApplyVillagers,
+  onUpdateSettings,
   worldLook = 'tiles',
   figureTurns = true,
   figureQuirks = true,
@@ -84,6 +93,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
   }, [villagers]);
 
   useEffect(() => {
+    if (castMember(selectedId)) return;
     if (!drafts.some((d) => d.id === selectedId) && drafts[0]) {
       setSelectedId(drafts[0].id);
     }
@@ -202,7 +212,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
 
   const updateCurrentVoice = (patch: Partial<VillagerVoiceProfile>) => {
     if (!current) return;
-    const base = getEffectiveVoice(current);
+    const base = getEffectiveVoice(current, settings.worldLanguage);
     updateCurrent({ voice: { ...base, ...patch } });
   };
 
@@ -211,7 +221,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
     setTestingVoice(true);
     try {
       const sample = `Greetings! I am ${current.name}, the ${current.role} of Selo village.`;
-      await brainRouter.speakLine(sample, current, settings);
+      await brainRouter.speakLine(sample, current, settings, undefined, { preview: true });
     } finally {
       setTestingVoice(false);
     }
@@ -376,6 +386,33 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
         </div>
 
         <ul className="flex-1 overflow-y-auto p-2 space-y-1.5 thin-scroll">
+          {onUpdateSettings
+            ? (
+                [
+                  ['scribe', settings.narratorName?.trim() || 'Scribe', 'Narrator'],
+                  ['traveler', settings.playerName?.trim() || 'Traveler', 'You, the player'],
+                ] as const
+              ).map(([member, name, role]) => (
+                <li key={member}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(CAST_IDS[member])}
+                    className={`flex w-full items-center gap-2.5 rounded-md border px-2.5 py-2 text-left transition ${
+                      selectedId === CAST_IDS[member]
+                        ? 'border-crimson bg-card shadow-sm'
+                        : 'border-transparent hover:border-borderFolk hover:bg-card/60'
+                    }`}
+                  >
+                    <Volume2 className="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-semibold">{name}</span>
+                      <span className="block truncate text-[11px] text-muted">{role}</span>
+                    </div>
+                  </button>
+                </li>
+              ))
+            : null}
+          {onUpdateSettings ? <li aria-hidden="true" className="mx-1 border-t border-borderFolk" /> : null}
           {drafts.map((v) => (
             <li key={v.id}>
               <button
@@ -425,7 +462,9 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
 
       {/* Main Character Form & Sprite Preview */}
       <section className="overflow-y-auto bg-linen p-3 thin-scroll">
-        {current ? (
+        {castMember(selectedId) && onUpdateSettings ? (
+          <CastPanel member={castMember(selectedId)!} settings={settings} onUpdateSettings={onUpdateSettings} />
+        ) : current ? (
           <div className="mx-auto max-w-3xl space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borderFolk pb-3">
               <div>
@@ -661,7 +700,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
 
             {/* LFM3-Omni Voice & Acoustic Dials */}
             {(() => {
-              const voice = getEffectiveVoice(current);
+              const voice = getEffectiveVoice(current, settings.worldLanguage);
               return (
                 <div className="rushnyk-card rounded-sm p-2.5 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -705,7 +744,7 @@ export const CharacterEditorView: React.FC<CharacterEditorViewProps> = ({
 
                     <div>
                       <label htmlFor="char-voice-lang" className="block text-xs font-medium mb-1">
-                        Speech Locale / Accent (19 Omni Languages)
+                        Speech locale
                       </label>
                       <select
                         id="char-voice-lang"

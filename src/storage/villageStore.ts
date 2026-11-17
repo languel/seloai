@@ -160,6 +160,10 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
             ...DEFAULT_MODEL_SETTINGS.narratorVoice,
             ...(stored.modelSettings?.narratorVoice ?? {}),
           },
+          playerVoice: {
+            ...DEFAULT_MODEL_SETTINGS.playerVoice,
+            ...(stored.modelSettings?.playerVoice ?? {}),
+          },
         },
         conversations: Array.isArray(stored.conversations) ? stored.conversations : [],
         characterHistories:

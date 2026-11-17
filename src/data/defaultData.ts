@@ -133,10 +133,16 @@ export const OMNI_SPEECH_LANGUAGES = [
   'Chinese',
 ] as const;
 
-export function getEffectiveVoice(v: Pick<VillagerConfig, 'voice'>): VillagerVoiceProfile {
+/** The accent a voice with none set speaks in: the world's own language (English: American English). */
+export function worldAccent(worldLanguage?: string): string {
+  const world = worldLanguage?.trim() || 'English';
+  return world.toLowerCase() === 'english' ? 'American English' : world;
+}
+
+export function getEffectiveVoice(v: Pick<VillagerConfig, 'voice'>, worldLanguage?: string): VillagerVoiceProfile {
   return {
     gender: v.voice?.gender ?? 'female',
-    language: v.voice?.language ?? 'American English',
+    language: v.voice?.language ?? worldAccent(worldLanguage),
     pitchSemitones: v.voice?.pitchSemitones ?? 0,
     speakingRate: v.voice?.speakingRate ?? 1.0,
     warmthDb: v.voice?.warmthDb ?? 0,
@@ -164,6 +170,26 @@ export function buildNarratorConfig(settings: ModelSettings): VillagerConfig {
       ...(settings.narratorVoice ?? {}),
     },
     homeTile: { x: 16, y: 12 },
+    speed: 0,
+  };
+}
+
+/** The Traveler (the player) as a speaker, so their own lines can be voiced and tested. */
+export function buildTravelerConfig(settings: ModelSettings, worldPlayerName = 'Traveler'): VillagerConfig {
+  return {
+    id: 'human-visitor',
+    name: settings.playerName?.trim() || worldPlayerName,
+    role: 'Traveler',
+    spritesheetId: 'custom',
+    accentColor: '#3b5b8c',
+    identity: 'The visitor the player steers through the world.',
+    plan: '',
+    voiceStyle: 'Plain, curious, unhurried.',
+    voice: {
+      ...DEFAULT_MODEL_SETTINGS.playerVoice,
+      ...(settings.playerVoice ?? {}),
+    },
+    homeTile: { x: 0, y: 0 },
     speed: 0,
   };
 }
@@ -280,4 +306,15 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
     speakingRate: 0.94,
     warmthDb: 2.5,
   },
+  playerName: '',
+  playerVoice: {
+    gender: 'female',
+    language: 'American English',
+    pitchSemitones: 0,
+    speakingRate: 1.0,
+    warmthDb: 0,
+  },
+  speakPlayerLines: false,
+  worldLanguage: 'English',
+  ttsInstructionTemplate: '',
 };

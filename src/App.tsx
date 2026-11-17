@@ -1009,6 +1009,7 @@ export function App() {
             map={map}
             settings={settings}
             onApplyVillagers={handleApplyVillagers}
+            onUpdateSettings={handleUpdateSettings}
             worldLook={aestheticSettings.worldLook}
             figureTurns={aestheticSettings.figureTurns}
             figureQuirks={aestheticSettings.figureQuirks}

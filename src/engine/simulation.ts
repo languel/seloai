@@ -240,7 +240,7 @@ export class VillageSimulation {
     const safeSpawn = findNearestWalkableTile(map, spawn.x, spawn.y);
     this.player = {
       id: 'human-visitor',
-      name: this.world.playerName,
+      name: settings.playerName?.trim() || this.world.playerName,
       x: safeSpawn.x,
       y: safeSpawn.y,
       facing: 'down',
@@ -327,12 +327,13 @@ export class VillageSimulation {
   /** Switches the setting-specific knowledge, e.g. when a different world pack is loaded. */
   setWorld(world: WorldContext) {
     this.world = world;
-    this.player.name = world.playerName;
+    this.player.name = this.modelSettings.playerName?.trim() || world.playerName;
     this.notify(true);
   }
 
   updateSettings(settings: ModelSettings) {
     this.modelSettings = settings;
+    this.player.name = settings.playerName?.trim() || this.world.playerName;
     this.notify(true);
   }
 
@@ -2326,10 +2327,35 @@ export class VillageSimulation {
     }
   }
 
-  async sendUserTextToVillager(villagerId: string, text: string, speakReply = true): Promise<void> {
+  /** Speaks the Traveler's own line aloud, when that is switched on. */
+  private async voicePlayerLine(text: string, speakReply: boolean): Promise<void> {
+    if (!speakReply || !this.modelSettings.speakPlayerLines || !text.trim()) return;
+    const traveler: VillagerConfig = {
+      id: this.player.id,
+      name: this.player.name,
+      role: 'Traveler',
+      spritesheetId: 'custom',
+      accentColor: '#3b5b8c',
+      identity: '',
+      plan: '',
+      voiceStyle: '',
+      voice: this.modelSettings.playerVoice,
+      homeTile: { x: 0, y: 0 },
+      speed: 0,
+    };
+    await this.mind.speakLine(text, traveler, this.modelSettings);
+  }
+
+  async sendUserTextToVillager(
+    villagerId: string,
+    text: string,
+    speakReply = true,
+    voiceOwnLine = true,
+  ): Promise<void> {
     const cfg = this.configs.get(villagerId);
     const rt = this.runtimes.get(villagerId);
     if (!cfg || !rt) return;
+    if (voiceOwnLine) await this.voicePlayerLine(text, speakReply);
 
     const conv = this.getOrCreateHumanConversation(villagerId);
     this.pushConversationMessage(conv, {
@@ -2359,6 +2385,7 @@ export class VillageSimulation {
       Array.from(this.configs.values()),
       this.modelSettings,
     );
+    await this.voicePlayerLine(text, speakReply);
 
     if (targets.length === 0) {
       if (activeTargetId === 'narrator') {
@@ -2376,13 +2403,13 @@ export class VillageSimulation {
         return { focusedTargetId: 'narrator' };
       }
       if (activeTargetId) {
-        await this.sendUserTextToVillager(activeTargetId, text, speakReply);
+        await this.sendUserTextToVillager(activeTargetId, text, speakReply, false);
       }
       return { focusedTargetId: activeTargetId };
     }
 
     if (targets.length === 1 && targets[0].kind === 'villager') {
-      await this.sendUserTextToVillager(targets[0].id, text, speakReply);
+      await this.sendUserTextToVillager(targets[0].id, text, speakReply, false);
       return { focusedTargetId: targets[0].id };
     }
 

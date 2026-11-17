@@ -519,7 +519,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voiceStyle: 'sibilant, resonant, ancient dragon-spirit',
       voice: {
         gender: 'female',
-        language: 'American English',
+        language: 'Greek',
         pitchSemitones: -3,
         speakingRate: 0.92,
         warmthDb: 3,
@@ -540,7 +540,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voiceStyle: 'raspy, knowing, grandmotherly',
       voice: {
         gender: 'female',
-        language: 'American English',
+        language: 'Turkish',
         pitchSemitones: -1,
         speakingRate: 0.9,
         warmthDb: 4,
@@ -562,7 +562,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voiceStyle: 'booming, jovial, bell-rattling bravado',
       voice: {
         gender: 'male',
-        language: 'American English',
+        language: 'Polish',
         pitchSemitones: -2,
         speakingRate: 1.02,
         warmthDb: 4,
@@ -583,7 +583,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voiceStyle: 'steady, gallant, stubborn baritone',
       voice: {
         gender: 'male',
-        language: 'American English',
+        language: 'Italian',
         pitchSemitones: -1,
         speakingRate: 0.98,
         warmthDb: 2,
@@ -605,7 +605,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voiceStyle: 'musical, elusive, woodland whisper',
       voice: {
         gender: 'female',
-        language: 'American English',
+        language: 'Swedish',
         pitchSemitones: 2,
         speakingRate: 0.96,
         warmthDb: 1,
@@ -626,7 +626,7 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
       voiceStyle: 'clear, lyrical, observant needleworker',
       voice: {
         gender: 'female',
-        language: 'American English',
+        language: 'Greek',
         pitchSemitones: 1,
         speakingRate: 1.0,
         warmthDb: 2,

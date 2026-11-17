@@ -320,7 +320,7 @@ export const MonitorView: React.FC<MonitorViewProps> = ({
         homeTile: { x: 20, y: 15 },
         speed: 0.75,
       };
-      await brainRouter.speakLine(ttsInput.trim(), v, settings);
+      await brainRouter.speakLine(ttsInput.trim(), v, settings, undefined, { preview: true });
     } catch (err: any) {
       setStudioError(err?.message || String(err));
     } finally {

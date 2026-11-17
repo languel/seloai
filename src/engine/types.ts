@@ -401,6 +401,22 @@ export interface ModelSettings {
   narratorStyle: 'dungeon-master' | 'storybook' | 'chronicler';
   narrateEvents: boolean;
   narratorVoice: VillagerVoiceProfile;
+  /** The Traveler's name; empty keeps the name the world gives the player. */
+  playerName: string;
+  /** The voice the Traveler's own lines are spoken in. */
+  playerVoice: VillagerVoiceProfile;
+  /**
+   * The language every line is written and spoken in. A voice's speech locale only sets the
+   * accent it is read with, so a Greek voice reads English lines with a Greek accent.
+   */
+  worldLanguage: string;
+  /**
+   * The instruction the voice model reads each line with, with {world}, {accent} and {gender}
+   * filled in. Empty uses the built-in wording.
+   */
+  ttsInstructionTemplate: string;
+  /** Speak the Traveler's typed lines aloud before the reply. */
+  speakPlayerLines: boolean;
 }
 
 export type ModelStatus = 'unloaded' | 'loading' | 'ready' | 'error';

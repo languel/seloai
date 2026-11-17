@@ -1,3 +1,4 @@
+import { ttsInstruction } from './voiceAccent';
 import type { ModelProgress } from '../engine/types';
 import { resolveOriginUrl } from '../utils/assetUrl';
 import { headBinaryAssetExists, saveLastLoadedModel } from './modelCache';
@@ -305,6 +306,10 @@ class OmniEngine {
           voiceStyle?: string;
           gender?: 'female' | 'male';
           language?: string;
+          /** The language the line is written in; `language` is then only the accent. */
+          worldLanguage?: string;
+          /** Overrides the instruction; see ModelSettings.ttsInstructionTemplate. */
+          instructionTemplate?: string;
         },
     onAudioChunk: (pcm: Float32Array) => void,
     signal?: AbortSignal,
@@ -313,10 +318,8 @@ class OmniEngine {
     const opts = typeof options === 'string' ? { voiceStyle: options } : options;
     const language = opts.language?.trim() || 'American English';
     const gender = opts.gender ?? 'female';
-    const styleSuffix = opts.voiceStyle?.trim() ? ` Delivery style: ${opts.voiceStyle.trim()}` : '';
-    const accentCue = language.toLowerCase().includes('english')
-      ? language
-      : `English with a subtle ${language} accent`;
+    // Delivery style is left out: any extra instruction makes the model drop or garble the line.
+    const instruction = ttsInstruction(language, opts.worldLanguage, gender, opts.instructionTemplate);
 
     return this.enqueue(async () => {
       const session = this.model!.create_session();
@@ -325,7 +328,7 @@ class OmniEngine {
         const messages = [
           {
             role: 'system',
-            content: `Read the user text aloud verbatim in ${accentCue} using a ${gender} voice.${styleSuffix}`,
+            content: instruction,
           },
           {
             role: 'user',

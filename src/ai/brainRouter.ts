@@ -1,4 +1,5 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
+import { ttsInstruction } from './voiceAccent';
 import type {
   BrainEngineKind,
   ChatMessage,
@@ -531,20 +532,19 @@ class BrainRouter {
 
     if (preferOmniBrain) {
       if (omniEngine.isReady()) {
-        const voice = getEffectiveVoice(villager);
+        const voice = getEffectiveVoice(villager, settings.worldLanguage);
         const mix = params.speakSpatialResolver?.();
         const wantVoice = Boolean(
           params.speakSpatialResolver && settings.enableOmniTts && mix?.inRange,
         );
 
-        const accentCue = voice.language.toLowerCase().includes('english')
-          ? voice.language
-          : `English (with a subtle ${voice.language} cadence/accent, never translating out of English)`;
+        // The voice gets the user's instruction template and nothing else about how to speak.
+        const voiceInstruction = ttsInstruction(voice.language, settings.worldLanguage, voice.gender, settings.ttsInstructionTemplate);
         const omniMessages = wantVoice
           ? [
               {
                 role: 'system' as const,
-                content: `Respond with interleaved text and audio. Always write and speak strictly in ${accentCue} using a ${voice.gender} voice.\n${systemPrompt}`,
+                content: `Respond with interleaved text and audio. ${voiceInstruction}\n${systemPrompt}`,
               },
               ...chatMessages.slice(1),
             ]
@@ -1313,16 +1313,23 @@ class BrainRouter {
     villager: VillagerConfig,
     settings: ModelSettings,
     spatialResolver?: () => SpatialMix,
+    options: { preview?: boolean } = {},
   ): Promise<void> {
     const cleanSpeech = parseDialogueAndNarration(text, villager.name).display;
     if (!cleanSpeech.trim()) return;
+    // A preview (a voice test in an editor) plays at once on audio of its own: it does not
+    // wait behind the world's lines, and pausing the world does not hold it.
+    const preview = Boolean(options.preview);
 
-    await this.enqueueSpeechTurn(async () => {
+    const turn = async () => {
       const initialMix = spatialResolver?.() ?? { gain: 1, pan: 0, distance: 0, inRange: true };
       if (!initialMix.inRange) return;
 
-      this.activeSpatialResolver = spatialResolver ?? null;
-      const voice = getEffectiveVoice(villager);
+      if (!preview) this.activeSpatialResolver = spatialResolver ?? null;
+      const voice = getEffectiveVoice(villager, settings.worldLanguage);
+      const setActiveSpeech = (info: Parameters<typeof this.setActiveSpeech>[0]) => {
+        if (!preview) this.setActiveSpeech(info);
+      };
 
       if (
         settings.voiceApiEnabled &&
@@ -1330,7 +1337,7 @@ class BrainRouter {
         settings.voiceProvider !== 'local-omni-webspeech' &&
         settings.voiceApiUrl?.trim()
       ) {
-        this.setActiveSpeech({
+        setActiveSpeech({
           speakerId: villager.id,
           speakerName: villager.name,
           text: cleanSpeech,
@@ -1348,7 +1355,7 @@ class BrainRouter {
           });
           if (typeof AudioContext !== 'undefined') {
             const ctx = new AudioContext();
-            const untrack = trackPlaybackContext(ctx);
+            const untrack = preview ? () => undefined : trackPlaybackContext(ctx);
             let src: AudioBufferSourceNode | null = null;
             let gainNode: GainNode | null = null;
             let panner: StereoPannerNode | null = null;
@@ -1395,11 +1402,11 @@ class BrainRouter {
             durationMs: synth.durationMs,
           });
           if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
-            this.setActiveSpeech(null);
+            setActiveSpeech(null);
           }
           return;
         } catch (err: any) {
-          this.setActiveSpeech(null);
+          setActiveSpeech(null);
           this.log({
             channel: 'voice-api',
             level: 'warn',
@@ -1410,6 +1417,7 @@ class BrainRouter {
       }
 
       if (settings.enableOmniTts && omniEngine.isReady()) {
+        const previewCtx = preview && typeof AudioContext !== 'undefined' ? new AudioContext() : undefined;
         const player = new StreamingPcmPlayer(
           omniEngine.audioSampleRate,
           () => {
@@ -1420,9 +1428,10 @@ class BrainRouter {
           },
           initialMix,
           voice,
+          previewCtx,
         );
-        this.activePlayer = player;
-        this.setActiveSpeech({
+        if (!preview) this.activePlayer = player;
+        setActiveSpeech({
           speakerId: villager.id,
           speakerName: villager.name,
           text: cleanSpeech,
@@ -1436,6 +1445,8 @@ class BrainRouter {
               voiceStyle: villager.voiceStyle,
               gender: voice.gender,
               language: voice.language,
+              worldLanguage: settings.worldLanguage,
+              instructionTemplate: settings.ttsInstructionTemplate,
             },
             (pcm) => {
               player.push(pcm);
@@ -1451,17 +1462,19 @@ class BrainRouter {
             durationMs: res.durationMs,
           });
           await player.waitForEnd();
+          await previewCtx?.close().catch(() => undefined);
           if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
-            this.setActiveSpeech(null);
+            setActiveSpeech(null);
           }
           return;
         } catch (err: any) {
           player.stop();
+          await previewCtx?.close().catch(() => undefined);
           if (this.activePlayer === player) {
             this.activePlayer = null;
             this.activeSpatialResolver = null;
           }
-          this.setActiveSpeech(null);
+          setActiveSpeech(null);
           this.log({
             channel: 'lfm3-omni',
             level: 'warn',
@@ -1472,7 +1485,7 @@ class BrainRouter {
       }
 
       if (settings.enableWebSpeechFallback) {
-        this.setActiveSpeech({
+        setActiveSpeech({
           speakerId: villager.id,
           speakerName: villager.name,
           text: cleanSpeech,
@@ -1486,14 +1499,15 @@ class BrainRouter {
           detail: `${cleanSpeech} [vol ${Math.round(initialMix.gain * 100)}%]`,
         });
         try {
-          await speakWebSpeechAsync(cleanSpeech, initialMix.gain, voice);
+          await speakWebSpeechAsync(cleanSpeech, initialMix.gain, voice, { ignorePause: preview });
         } finally {
           if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
-            this.setActiveSpeech(null);
+            setActiveSpeech(null);
           }
         }
       }
-    });
+    };
+    await (preview ? turn() : this.enqueueSpeechTurn(turn));
   }
 
   /**
@@ -1585,14 +1599,12 @@ class BrainRouter {
     });
 
     // 2. Generate villager's interleaved voice + text response strictly in turn
-    const voice = getEffectiveVoice(params.villager);
-    const accentCue = voice.language.toLowerCase().includes('english')
-      ? voice.language
-      : `English (with a subtle ${voice.language} accent, never switching written or spoken language away from English)`;
+    const voice = getEffectiveVoice(params.villager, params.settings.worldLanguage);
+    const voiceInstruction = ttsInstruction(voice.language, params.settings.worldLanguage, voice.gender, params.settings.ttsInstructionTemplate);
     const systemPrompt = [
       `You are ${params.villager.name}, the ${params.villager.role} in the ${describeSetting(params.world ?? GENERIC_WORLD_CONTEXT)}.`,
       params.villager.identity,
-      `Always respond and speak strictly in ${accentCue} using a ${voice.gender} voice. Style: ${params.villager.voiceStyle}.`,
+      voiceInstruction,
       `Respond naturally to the visitor in 1 to 2 short spoken sentences. NEVER utter or prefix your own name.`,
     ].join(' ');
 

@@ -195,14 +195,17 @@ export class StreamingPcmPlayer {
   private endWaiters: Array<() => void> = [];
   private pitchSemitones: number;
   private speakingRate: number;
+  private ctx: AudioContext;
 
+  /** `ctx` plays on a context of its own (a preview the world's pause must not hold). */
   constructor(
     sampleRate = 24000,
     onEnd?: () => void,
     spatial?: { gain: number; pan: number },
     acoustic?: AcousticShaping,
+    ctx: AudioContext = getAudioContext(),
   ) {
-    const ctx = getAudioContext();
+    this.ctx = ctx;
     this.sampleRate = sampleRate;
     this.onEnd = onEnd;
     this.pitchSemitones = Math.max(-6, Math.min(6, acoustic?.pitchSemitones ?? 0));
@@ -235,7 +238,7 @@ export class StreamingPcmPlayer {
   }
 
   setSpatial(gain: number, pan: number) {
-    const ctx = getAudioContext();
+    const ctx = this.ctx;
     const clampedGain = Math.max(0, Math.min(1, gain));
     const clampedPan = Math.max(-1, Math.min(1, pan));
     this.output.gain.setTargetAtTime(clampedGain, ctx.currentTime, 0.05);
@@ -245,7 +248,7 @@ export class StreamingPcmPlayer {
   }
 
   push(chunk: Float32Array) {
-    const ctx = getAudioContext();
+    const ctx = this.ctx;
     if (this.playhead < ctx.currentTime) {
       this.playhead = ctx.currentTime + 0.02;
     }
@@ -355,7 +358,9 @@ export function speakWebSpeechFallback(
   volume = 1,
   acoustic?: AcousticShaping,
   onEnd?: () => void,
+  options: { ignorePause?: boolean } = {},
 ): boolean {
+  const held = audioPaused && !options.ignorePause;
   if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
     onEnd?.();
     return false;
@@ -391,8 +396,12 @@ export function speakWebSpeechFallback(
       },
       disarm: () => clearTimeout(guardTimer),
     };
-    webSpeechGuard = guard;
-    if (!audioPaused) guard.arm();
+    // A preview plays through a paused world, so the pause must not hold its guard.
+    if (options.ignorePause) guard.arm();
+    else {
+      webSpeechGuard = guard;
+      if (!held) guard.arm();
+    }
     activeWebSpeechAbort = finish;
 
     window.speechSynthesis.cancel();
@@ -402,8 +411,9 @@ export function speakWebSpeechFallback(
     utter.volume = clamped;
     utter.onend = finish;
     utter.onerror = finish;
+    if (!held && window.speechSynthesis.paused) window.speechSynthesis.resume();
     window.speechSynthesis.speak(utter);
-    if (audioPaused) window.speechSynthesis.pause();
+    if (held) window.speechSynthesis.pause();
     return true;
   } catch {
     onEnd?.();
@@ -415,11 +425,12 @@ export function speakWebSpeechAsync(
   text: string,
   volume = 1,
   acoustic?: AcousticShaping,
+  options: { ignorePause?: boolean } = {},
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const started = speakWebSpeechFallback(text, volume, acoustic, () => {
       resolve(true);
-    });
+    }, options);
     if (!started) {
       resolve(false);
     }
