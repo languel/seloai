@@ -239,6 +239,8 @@ export interface SceneModel {
    * wash of linen, so characters stay legible over a busy cloth.
    */
   backdrop?: number;
+  /** One family of stitch for the whole cloth (see `src/art/stitchStyles.ts`; default mixed). */
+  stitch?: 'mixed' | 'cross' | 'satin';
   /** The cloth's thread weight: one width for every stitch in the world (default 1). */
   threadWeight?: number;
   /** Wash the places people walk (streets, square, meadows) back to near-plain linen. */

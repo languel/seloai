@@ -47,6 +47,8 @@ export type SceneEdit =
   | { op: 'layout'; packing: 'overlap' | 'packed' }
   /** The cloth's thread weight, one width for every stitch (1 is the usual). */
   | { op: 'thread'; weight: number }
+  /** One family of stitch for the whole cloth: mixed, cross-stitch, or satin and stem. */
+  | { op: 'stitch'; style: 'mixed' | 'cross' | 'satin' }
   /** The world's own threads (an id from WORLD_PALETTES). */
   | { op: 'palette'; palette: string }
   /** How strongly the world is drawn behind the people, and whether the paths are quiet. */
@@ -187,6 +189,9 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         return;
       case 'thread':
         model.threadWeight = edit.weight;
+        return;
+      case 'stitch':
+        model.stitch = edit.style;
         return;
       case 'palette':
         model.palette = edit.palette;

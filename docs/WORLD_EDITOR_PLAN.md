@@ -99,6 +99,11 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
   hand comes up with their words. Arms go up only to dance: when what they are doing is a
   dance or a celebration, or when they stand still on a dancing ground (`stance` in
   `figureParts`, `dancing` in the figure's motion).
+- **Stitch**: one family of stitch for every element (`stitch` edit, `src/art/stitchStyles.ts`):
+  mixed (as drawn), cross-stitch (solid areas, lines and knots charted onto the world's
+  stitch grid; open washes stay open), or satin and stem (counted work becomes satin bars,
+  each run of one colour in a row one block). A pass over the shapes before rendering, so
+  every generator gets it for free.
 - **Thread**: one thread for the whole cloth (Fine, Medium, Bold; `thread` edit,
   `threadScale` in the look options). Every stitch of the world uses it: satin fills, stem
   lines, and counted crosses, whose width comes from the thread and never grows to fill a

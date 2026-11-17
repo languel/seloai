@@ -3,6 +3,7 @@ import { renderWorldLayer } from '../art/gameLook';
 import type { PaletteName } from '../art/looks';
 import { BUILDING_VARIANTS, SCENE_LAYERS, kindsOnLayer, layerOf, type BuildingVariant, type FeatureKind, type HouseLook, type PatternMark, type SceneFeature, type SceneLayer, type Terrain } from '../art/scene';
 import { WORLD_PALETTES } from '../art/looks';
+import { STITCH_STYLES } from '../art/stitchStyles';
 import { SHEVITSA_REFERENCES } from '../art/patternReferences';
 import type { VillageMap } from '../engine/types';
 import { PLACEABLE_FEATURES, type WorldCommand } from '../world/commands';
@@ -92,6 +93,8 @@ function describeEdit(edit: SceneEdit): string {
       return edit.packing === 'packed' ? 'Packed layout' : 'Overlapping layout';
     case 'thread':
       return `Thread weight ${edit.weight}`;
+    case 'stitch':
+      return `Stitch: ${STITCH_STYLES.find((st) => st.id === edit.style)?.name ?? edit.style}`;
     case 'backdrop':
       return edit.quietPaths !== undefined ? (edit.quietPaths ? 'Quiet paths' : 'Busy paths') : `Backdrop ${edit.strength}`;
     case 'palette':
@@ -807,6 +810,16 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               </span>
               {look !== 'festive' && <span className="stitch-muted text-[10px] leading-snug">Shown under the full-colour look (Festive in the style menu).</span>}
             </label>
+            <div className="flex flex-col gap-0.5" title="One family of stitch for every element: as drawn, all cross-stitch, or all satin and stem">
+              <span className="stitch-muted text-[10px]">Stitch</span>
+              <span className="flex flex-wrap gap-1">
+                {STITCH_STYLES.map(({ id, name }) => (
+                  <Chip key={id} on={(baked?.model.stitch ?? 'mixed') === id} onClick={() => edit({ op: 'stitch', style: id }, `Stitch: ${name}`)}>
+                    {name}
+                  </Chip>
+                ))}
+              </span>
+            </div>
             <div className="flex flex-col gap-0.5" title="One thread for the whole cloth: every stitch of the world is worked in it">
               <span className="stitch-muted text-[10px]">Thread</span>
               <span className="flex gap-1">

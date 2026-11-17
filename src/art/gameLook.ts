@@ -10,6 +10,8 @@ import { withAmbience } from './ambient';
 import { bakeScene } from '../world/worldScene';
 import { buildSceneModel, semanticsFromTable, type SceneLayer, type TileSemantics } from './scene';
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
+import { restitch } from './stitchStyles';
+import { STITCHES_PER_CELL } from './stitchedHouse';
 import { bounds, type Pt, type Shape } from './shapes';
 
 /** 'tiles' is the original tileset renderer; every other value is a look of the art system. */
@@ -51,7 +53,12 @@ export function renderWorldLayer(map: VillageMap, look: PaletteName, semantics?:
     threadScale: model.threadWeight ?? 1,
     ...(strength < 1 ? { quiet: { thread: 0.35 + 0.65 * strength, sparse: Math.min(0.85, (1 - strength) * 1.4) } } : {}),
   };
-  const draw = (shapes: Shape[]) => (isThread(look) ? renderEmbroidery(ctx, shapes, options) : renderLineArt(ctx, shapes, options));
+  // Every element in one family of stitch, charted on the world's stitch grid.
+  const stitchCell = UNITS_PER_TILE / STITCHES_PER_CELL;
+  const draw = (raw: Shape[]) => {
+    const shapes = restitch(raw, model.stitch, stitchCell);
+    return isThread(look) ? renderEmbroidery(ctx, shapes, options) : renderLineArt(ctx, shapes, options);
+  };
   if (isThread(look)) paintLinen(ctx, canvas.width, canvas.height, options);
   else {
     ctx.fillStyle = options.palette.ground;
