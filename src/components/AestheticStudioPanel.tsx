@@ -491,6 +491,33 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
                   ))}
                 </div>
               </div>
+              {(
+                [
+                  ['figureSolid', 'Figures over the cloth', [[true, 'Solid', 'A figure hides the stitches behind it'], [false, 'See-through', 'The cloth shows between a figure\'s threads']]],
+                  ['figureFarSigns', 'People from afar', [[false, 'Always in full', 'People are drawn in full at every distance'], [true, 'Stitched signs', 'Seen from afar, people are small counted figures on the cloth\'s own grid; close in, they are drawn in full']]],
+                ] as const
+              ).map(([key, title, options]) => (
+                <div key={key}>
+                  <div className="mb-1 text-[10px]" style={{ color: tokens.hudMutedColor }}>
+                    {title}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {options.map(([value, label, hint]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        title={hint}
+                        aria-pressed={settings[key] === value}
+                        onClick={() => onChange({ ...settings, [key]: value })}
+                        className="rounded border px-1.5 py-1 text-[10px]"
+                        style={pillBtnStyle(settings[key] === value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
               <div>
                 <div className="mb-0.5 flex items-center justify-between text-[10px]">
                   <span style={{ color: tokens.hudMutedColor }}>All Character Size</span>

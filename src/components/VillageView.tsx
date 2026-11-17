@@ -9,6 +9,8 @@ import {
   expressionFor,
   getFigureRig,
   paintRig,
+  paintFigureSign,
+  figureNearness,
   renderWorldLayer,
   type WorldLook,
 } from '../art/gameLook';
@@ -993,14 +995,32 @@ export const VillageView: React.FC<VillageViewProps> = ({
               const cfg = sim.configs.get(body.id);
               const looks = cfg ? figureLooksFor(cfg) : { build: playerFigureBuild(aestheticSettings.player.attire), kind: 'human' as const };
               const heightPx = body.tileDim * body.scale * FIGURE_HEIGHT_SCALE;
-              const rig = getFigureRig(body.id, worldLook, heightPx, expressionFor(body.state, body.line), {
-                ...looks,
-                view: chooseFigureView(motion, aestheticSettings.figureTurns),
-                quirks: aestheticSettings.figureQuirks,
-                // The zoom being eased toward, so a figure does not flip detail mid-zoom twice.
-                detail: figureDetailFor(heightPx, cam.targetZoom),
-              });
-              paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, motion);
+              // Far away a person is a counted sign on the cloth; close in, the full figure.
+              const near = aestheticSettings.figureFarSigns ? figureNearness(heightPx, cam.zoom) : 1;
+              const alpha = bodyCtx.globalAlpha;
+              if (near < 1) {
+                bodyCtx.globalAlpha = alpha * (1 - near);
+                paintFigureSign(bodyCtx, body.id, worldLook, body.tileX, body.tileY, body.tileDim, heightPx, {
+                  build: looks.build,
+                  kind: looks.kind,
+                  moving: body.moving,
+                  animFrame: body.animFrame,
+                  solid: aestheticSettings.figureSolid,
+                });
+              }
+              if (near > 0) {
+                const rig = getFigureRig(body.id, worldLook, heightPx, expressionFor(body.state, body.line), {
+                  ...looks,
+                  view: chooseFigureView(motion, aestheticSettings.figureTurns),
+                  quirks: aestheticSettings.figureQuirks,
+                  solid: aestheticSettings.figureSolid,
+                  // The zoom being eased toward, so a figure does not flip detail mid-zoom twice.
+                  detail: figureDetailFor(heightPx, cam.targetZoom),
+                });
+                bodyCtx.globalAlpha = alpha * near;
+                paintRig(bodyCtx, rig, body.tileX, body.tileY, body.tileDim, motion);
+              }
+              bodyCtx.globalAlpha = alpha;
             };
 
       // Collect deferred Y-sorted character sprites + measure labels and bubbles

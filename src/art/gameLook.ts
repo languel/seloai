@@ -12,7 +12,9 @@ import { buildSceneModel, semanticsFromTable, type SceneLayer, type TileSemantic
 import { UNITS_PER_TILE, sceneShapes } from './sceneArt';
 import { restitch } from './stitchStyles';
 import { STITCHES_PER_CELL } from './stitchedHouse';
-import { bounds, type Pt, type Shape } from './shapes';
+import { bounds, type Ink, type Pt, type Shape } from './shapes';
+import { motifShape } from './patternGrammar';
+import { personSign } from './textileLexicon';
 
 /** 'tiles' is the original tileset renderer; every other value is a look of the art system. */
 export type WorldLook = 'tiles' | PaletteName;
@@ -129,6 +131,8 @@ export interface FigureLooks {
   seed?: number;
   /** Traits chosen by hand. */
   traits?: FigureTraits;
+  /** Hide the cloth behind the figure (the default) instead of letting it show between threads. */
+  solid?: boolean;
 }
 
 /** Below this on-screen height a figure is drawn bold so its face still reads. */
@@ -146,7 +150,48 @@ const FIGURE_UNITS = 30;
 const DENSITY = 3;
 const rigCache = new Map<string, FigureRig>();
 
-function renderPart(shapes: Shape[], look: PaletteName, unit: number, seed: number): PartSprite {
+/**
+ * Cloth-coloured backing under a drawing, so what lies beneath does not show between its
+ * threads: the figure reads as worked on its own piece of linen, laid over the world.
+ */
+function paintBacking(ctx: CanvasRenderingContext2D, shapes: Shape[], unit: number, origin: [number, number], colour: string) {
+  const px = (p: Pt): Pt => [p[0] * unit + origin[0], p[1] * unit + origin[1]];
+  const trace = (points: Pt[], closed: boolean) => {
+    ctx.beginPath();
+    points.forEach((p, i) => (i ? ctx.lineTo(...px(p)) : ctx.moveTo(...px(p))));
+    if (closed) ctx.closePath();
+  };
+  ctx.save();
+  ctx.fillStyle = colour;
+  ctx.strokeStyle = colour;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  for (const shape of shapes) {
+    if (shape.kind === 'area') {
+      trace(shape.points, true);
+      ctx.lineWidth = unit * 0.5;
+      ctx.fill();
+      ctx.stroke();
+    } else if (shape.kind === 'line') {
+      trace(shape.points, Boolean(shape.closed));
+      ctx.lineWidth = unit * (shape.weight * 0.9 + 0.45);
+      // A closed outline is a garment worked in white (a chemise sleeve, an outlined skirt): cloth, not air.
+      if (shape.closed) ctx.fill();
+      ctx.stroke();
+    } else if (shape.kind === 'knot') {
+      ctx.beginPath();
+      ctx.arc(...px(shape.at), shape.r * unit * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (!shape.rot) {
+      const c = shape.cell * unit;
+      const [x0, y0] = px(shape.origin);
+      for (const [x, y] of shape.cells) ctx.fillRect(x0 + (x - 0.5) * c - 0.5, y0 + (y - 0.5) * c - 0.5, c + 1, c + 1);
+    }
+  }
+  ctx.restore();
+}
+
+function renderPart(shapes: Shape[], look: PaletteName, unit: number, seed: number, solid = false): PartSprite {
   const box = bounds(shapes);
   const pad = 2.5;
   const canvas = document.createElement('canvas');
@@ -160,6 +205,7 @@ function renderPart(shapes: Shape[], look: PaletteName, unit: number, seed: numb
   const origin: [number, number] = [(-box.minX + pad) * unit, (-box.minY + pad) * unit];
   const ctx = canvas.getContext('2d')!;
   const options: LookOptions = { unit, origin, palette: clothPalette(look), seed };
+  if (solid) paintBacking(ctx, shapes, unit, origin, options.palette.ground);
   if (isThread(look)) renderEmbroidery(ctx, shapes, options);
   else renderLineArt(ctx, shapes, options);
   return { canvas, ox: origin[0], oy: origin[1] };
@@ -174,11 +220,11 @@ export function getFigureRig(
   look: PaletteName,
   heightPx: number,
   expression?: Expression,
-  { build = 'skirted', view = 'front', kind = 'human', detail = 'full', quirks = true, seed: chosenSeed, traits }: FigureLooks = {},
+  { build = 'skirted', view = 'front', kind = 'human', detail = 'full', quirks = true, seed: chosenSeed, traits, solid = true }: FigureLooks = {},
 ): FigureRig {
   const size = Math.max(16, Math.round(heightPx));
   const seed = chosenSeed ?? hashString(id);
-  const who = `${id}|${seed}|${traits ? JSON.stringify(traits) : ''}`;
+  const who = `${id}|${seed}|${solid ? 'solid' : 'open'}|${traits ? JSON.stringify(traits) : ''}`;
   // Everyday arms are down; the raised arms are kept apart for dancing.
   const resting = figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits, stance: 'everyday' });
   const mood = expression ?? resting.restingExpression;
@@ -191,9 +237,9 @@ export function getFigureRig(
   let body = rigCache.get(bodyKey);
   if (!body) {
     const parts = {} as Record<PartName, PartSprite>;
-    for (const name of PART_ORDER) parts[name] = renderPart(resting[name], look, unit, seed);
+    for (const name of PART_ORDER) parts[name] = renderPart(resting[name], look, unit, seed, solid);
     const dancing = view === 'side' ? null : figureParts(createSeededRng(seed), { height: FIGURE_UNITS, build, view, kind, detail, quirks, traits, stance: 'dancing' });
-    const danceArms = dancing ? { left: renderPart(dancing.armLeft, look, unit, seed), right: renderPart(dancing.armRight, look, unit, seed) } : undefined;
+    const danceArms = dancing ? { left: renderPart(dancing.armLeft, look, unit, seed, solid), right: renderPart(dancing.armRight, look, unit, seed, solid) } : undefined;
     const toPx = (p: Pt): Pt => [(p[0] * size) / FIGURE_UNITS, (p[1] * size) / FIGURE_UNITS];
     body = {
       parts,
@@ -221,12 +267,70 @@ export function getFigureRig(
           ...body,
           parts: {
             ...body.parts,
-            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks, traits, stance: 'everyday' }).head, look, unit, seed),
+            head: renderPart(figureParts(createSeededRng(seed), { height: FIGURE_UNITS, expression: mood, build, view, kind, detail, quirks, traits, stance: 'everyday' }).head, look, unit, seed, solid),
           },
         };
   if (rigCache.size > 400) rigCache.clear();
   rigCache.set(key, rig);
   return rig;
+}
+
+/** A sign is this many stitches tall (see `personSign`), counting the row kept for a crown. */
+const SIGN_ROWS = 8;
+const SIGN_GARMENTS: readonly Ink[] = ['primary', 'secondary', 'accent', 'accent2'];
+const signCache = new Map<string, HTMLCanvasElement>();
+
+/**
+ * How much of the full figure to show for its height on screen: 0 is the counted sign
+ * alone (far away), 1 the full figure alone (close), with a short blend between.
+ */
+export function figureNearness(heightPx: number, zoom: number): number {
+  const t = Math.max(0, Math.min(1, (heightPx * zoom - 46) / 18));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * A character as a small counted sign, for the far view: the same person written the way
+ * the cloth writes everything else. It stands as tall as the full figure, treads as it
+ * walks, and moves stitch by stitch on its own grid.
+ */
+export function paintFigureSign(
+  ctx: CanvasRenderingContext2D,
+  id: string,
+  look: PaletteName,
+  tileX: number,
+  tileY: number,
+  tileDim: number,
+  heightPx: number,
+  options: { build?: FigureBuild; kind?: FigureKind; moving?: boolean; animFrame?: number; solid?: boolean } = {},
+) {
+  const { build = 'skirted', kind = 'human', solid = true } = options;
+  const stitch = Math.max(2, Math.round(heightPx / (SIGN_ROWS - 1)));
+  const step = Boolean(options.moving) && Math.floor((options.animFrame ?? 0) * 1.1) % 2 === 1;
+  const key = `${id}|${look}:${activeWorldThreadsId()}|${stitch}|${build}|${kind}|${step}|${solid}`;
+  let canvas = signCache.get(key);
+  if (!canvas) {
+    const garment = SIGN_GARMENTS[hashString(id) % SIGN_GARMENTS.length];
+    const grid = personSign(build === 'trousered' ? 'trousered' : 'skirted', garment, step, kind !== 'human');
+    const unit = stitch * DENSITY;
+    canvas = document.createElement('canvas');
+    canvas.width = grid.w * unit;
+    canvas.height = grid.h * unit;
+    const signCtx = canvas.getContext('2d')!;
+    const shapes = [motifShape(grid, 1)];
+    const origin: [number, number] = [canvas.width / 2, canvas.height / 2];
+    const lookOptions: LookOptions = { unit, origin, palette: clothPalette(look), seed: hashString(id) };
+    if (solid) paintBacking(signCtx, shapes, unit, origin, lookOptions.palette.ground);
+    if (isThread(look)) renderEmbroidery(signCtx, shapes, lookOptions);
+    else renderLineArt(signCtx, shapes, lookOptions);
+    if (signCache.size > 300) signCache.clear();
+    signCache.set(key, canvas);
+  }
+  const w = canvas.width / DENSITY;
+  const h = canvas.height / DENSITY;
+  // On its own stitch grid: a sign moves a whole stitch at a time.
+  const snap = (v: number) => Math.round(v / stitch) * stitch;
+  ctx.drawImage(canvas, snap(tileX + tileDim / 2 - w / 2), snap(tileY + tileDim - 3 - h), w, h);
 }
 
 const SAD_WORDS = /\b(no|never|not|drought|curse|cursed|blood|fear|afraid|dark|lie|lied|liar|beware|sacrifice|demand|dead|death|thirst|steal|stole|angry|hush|warn)\b/i;

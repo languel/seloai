@@ -78,6 +78,22 @@ What the museum pieces actually look like, which the current work is modelled on
 - Colour: red dominant; deep blue, green, magenta, metallic gold; black for outline.
 - Dense. A maker fills gaps rather than leave bare cloth.
 
+**Composition turn (owner, later).** "At some point the scene became too dense and busy. We
+really want to focus on composition and composability", and "an approach that is less
+collage and more worldbuilding within the constraints of the traditional craft". Where this
+conflicts with "dense" above and with ambient density (item 10 of section 1), composition
+wins: see section 6.2. Two more references ground it, studied for structure and meaning and
+never traced:
+
+- *Album of Ukrainian Embroidery Patterns from 1886* (ed. Helen Hough, 2022, on
+  archive.org). The 1886 plates are public domain; the 2022 edition is CC BY-NC-SA. Its
+  table of contents is a grammar of composition: bands sorted by height (1 to 70 stitches),
+  birds, corners and frames, medallions, alphabets, proverbs. Most of every page is bare.
+- Tables of named Iranian and Serbian kilim motifs from a comparative study (the drawings
+  are that paper's author's): ram's horn, comb, fetter, water, tree, turtle, eye, shuttle,
+  sofra, mihrab, apron. A lexicon: each sign has a name and a meaning. Its "Chalipa" is a
+  hooked cross form and stays excluded by the rule below.
+
 Symbol vocabulary from the folklore source, for motif grammars: the Tree of Life (three
 tiers: crown for the heavens, trunk for the earth, roots for the underworld), the
 mother-goddess figure (a birthing woman flanked by sun and moon), the kanatitsa (a rhombus
@@ -284,6 +300,61 @@ When adding motifs:
 - Fill gaps with knots or small sprigs, as a maker would.
 - Missing and worth adding: the kanatitsa, the mother-goddess with sun and moon, birds,
   a vine border that turns corners, a proper Lamia (serpent) and other creature forms.
+
+### 6.2 Composition: the world laid out as a textile (first pass, in the lab)
+
+Lab: `/art-lab.html?only=compose&seed=7`. The idea: a cloth has its own layout grammar, and
+a world should be written in it, not arranged on top of it.
+
+- **Rules of the craft**: one thread grid (mirrors and quarter turns only, no free
+  rotation); three scales (one medallion, bands, small signs); motifs repeat whole and are
+  never cut; a band ends on the motif it began with; alternation by exchanged threads; a
+  stitch budget (both layouts work about a tenth of the cloth; tests hold them under a
+  fifth); two inks and one accent.
+- **Operators** (`src/art/compose.ts`): `repeat` (a band), `beside` (a row on one ground
+  line), `stack` (tiers on an axis), `nest`, `mirrorX`/`mirrorY`/`turn`, `recolor`, `frame`
+  (the band turns the corner on a designed motif), `rule`/`post` (guide lines), `coverage`.
+- **Lexicon** (`src/art/textileLexicon.ts`): signs with meanings, grown from parameters:
+  water, tree of life, house (the sign in the gable is the household), sofra (the square),
+  eye and comb (wards for openings), star, wheat, birds, woman and man (in a row, the
+  dance), bridge. The meanings table should move into the world pack when worlds use it.
+- **Layouts** (`src/art/textileLayouts.ts`), both from one `VillageBrief` (counts, not
+  positions): the **carpet** (frame, the square as the central medallion on the crossing of
+  two streets, everything mirrored about the axis) and the **sampler** (registers from sky
+  to hem between guide lines).
+- **A playable world** (`src/world/textileVillage.ts`, generator `textile`, "Textile
+  village" in the World Editor: layout, households, orchard, fields, river). The cloth is
+  the ground (`SceneModel.textile`, drawn by `textileShapes` in place of cell terrain, with
+  the name lettered into it and no separate border or ambient detail). Four stitches make a
+  cell. The layout reports the signs it placed; the frame, house walls, tree trunks and
+  water stop a walker, the bridge and all bare linen are open, and the square, the bridge,
+  each house door, the orchard and the fields are named places. The cast walks it as the
+  usual folk figures, which read well against the sparse cloth.
+- **Owner on seeing it**: "this is a great style. would love to keep this as a look but
+  also be able to zoom in on characters interacting and get more facial expressions,
+  emotions and interesting motion." So two distances: far, the cloth and its signs; near
+  (the director's close shots), the expressive figures. Next for this: people as counted
+  signs when the view is far, changing to the full figures as it closes in.
+- **Two distances, done** (`figureNearness`, `paintFigureSign` in `src/art/gameLook.ts`;
+  `personSign` in the lexicon): below about 46 px on screen a person is a counted sign as
+  tall as the full figure, in a garment thread of their own, treading as they walk and
+  moving a stitch at a time; above about 64 px the full figure; a blend between. Style
+  panel, "People from afar": Always in full (default) or Stitched signs. Off by default for now, on the owner's word (2026-11-17). Works in every
+  world, not only textile ones.
+- **Solid figures, done** (owner: "characters that are generally not transparent"): each
+  part of a figure, and each sign, is backed with cloth colour under its threads, closed
+  outlines included (white skirts, chemise sleeves), so the world's stitches do not show
+  through. Style panel, "Figures over the cloth": Solid (default) or See-through.
+- **Scale of ornament against people** (owner request): the generator's "Pattern scale"
+  (stitches to a cell, 2 to 8, default 4; fewer makes every sign larger against the people
+  and the world smaller in cells), and the cloth's thread weight, now Hair, Fine, Medium,
+  Bold or Heavy (0.5 to 1.9).
+- **Not yet**: signs of their own for the lamia, kuker and samodiva (they get a gold stitch
+  above the head); the sign's thread following the world's thread weight; a sharper cloth
+  in close shots (the world is drawn once at 32 px a cell and scaled up); interlaced crossings; snowflake
+  (radial) compositions; narrative bands (events adding to the cloth); the Pattern Studio
+  using the operators; hand edits to the cloth itself (terrain painting does not redraw it);
+  the lexicon's meanings in the world pack.
 
 ### 6.1 Lettering (`src/art/lettering.ts`)
 
@@ -825,7 +896,7 @@ one has missed the point.
     worlds as scenes, the World Editor with layers, the patchwork village, pattern
     brushes, stitched houses (upright or turned), world thread palettes, house size,
     packed or overlapping layout, and legibility settings (backdrop, quiet paths).
-11a. **Composable patterns** (owner request, next): snowflake (radial) and tree-of-life
+11a. **Composable patterns** (owner request; first pass in the lab, section 6.2): snowflake (radial) and tree-of-life
     (branching) structures composed from motifs, with interwoven crossings, grown in the
     Pattern Studio and usable everywhere a reference is. Motifs on the ground are never
     strewn like stickers: large one-offs or regular lattices.

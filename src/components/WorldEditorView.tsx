@@ -825,9 +825,11 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               <span className="flex gap-1">
                 {(
                   [
+                    [0.5, 'Hair'],
                     [0.7, 'Fine'],
                     [1, 'Medium'],
                     [1.4, 'Bold'],
+                    [1.9, 'Heavy'],
                   ] as const
                 ).map(([v, label]) => (
                   <Chip key={v} on={(baked?.model.threadWeight ?? 1) === v} onClick={() => edit({ op: 'thread', weight: v }, `${label} thread`)}>

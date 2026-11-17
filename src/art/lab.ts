@@ -18,6 +18,9 @@ import { WovenText, advanceOf, type WovenSpeaker } from './wovenText';
 import { SHEVITSA_REFERENCES, motifFromReference } from './patternReferences';
 import { ThreadRope, drawThread } from './threadRope';
 import { motifShape } from './patternGrammar';
+import { beside, frame, mirrorX, nest, repeat, stack } from './compose';
+import { LEXICON, comb, eye, lozenge, star, tree, woman, man } from './textileLexicon';
+import { carpetCloth, samplerCloth, type TextileCloth, type VillageBrief } from './textileLayouts';
 import { DUCTUS_X_HEIGHT, drawWovenLetter, type WovenHand, type WovenStyle } from './wovenGlyphs';
 import { ductusAdvance, ductusStrokes, drawDuctus } from './ductus';
 
@@ -95,6 +98,57 @@ if (only === 'patterns') {
       `${ref.label} (${ref.region}): ${ref.description}`,
       (['festive', 'blackwork'] as const).map((palette) => panel(palette, 760, 200, 'thread', palette, 4, [62, 100], shapes)),
     );
+  }
+}
+
+// Composition: a village laid out as a textile (a carpet and a sampler), written in a
+// lexicon of signs with the composition operators. /art-lab.html?only=compose&seed=7
+if (only === 'compose') {
+  const note = (text: string) => {
+    const p = document.createElement('p');
+    p.style.cssText = 'max-width:900px;margin:4px 0 0;color:#a9a294;font-size:12px';
+    p.textContent = text;
+    root.append(p);
+  };
+  const unit = 5;
+  const gridPanel = (title: string, grid: { w: number; h: number; cells: (import('./shapes').Ink | null)[][] }, palette: PaletteName, extra: Shape[] = [], pad = 3, u = unit) => {
+    const w = (grid.w + pad * 2) * u;
+    const h = (grid.h + pad * 2) * u;
+    return panel(title, w, h, 'thread', palette, u, [w / 2, h / 2], [motifShape(grid, 1), ...extra]);
+  };
+
+  row(
+    'The lexicon: signs with meanings. A world is written in these, not illustrated.',
+    LEXICON.map((entry) => gridPanel(`${entry.name}: ${entry.says}`, entry.grow(), 'redBlack', [], 3, 6)),
+  );
+
+  const alt = { primary: 'secondary', secondary: 'primary' } as const;
+  row('The operators: how signs become a cloth. Whole repeats, mirrors and quarter turns only.', [
+    gridPanel('repeat: a band, motifs never cut', repeat([eye()], 45, { gap: 3 }), 'festive'),
+    gridPanel('repeat with alternation: A B A, exchanged threads', repeat([eye(), comb(3)], 61, { gap: 3, alternate: alt, align: 'centre' }), 'festive'),
+    gridPanel('beside: a row on one ground line (the dance)', beside([woman(), man('secondary'), woman(), man('secondary'), woman()], 0), 'festive'),
+    gridPanel('stack: tiers on an axis (2, 3 and 5 tiers)', beside([tree(2, 2), tree(3, 3), tree(5, 3)], 4), 'festive'),
+    gridPanel('nest: a star held in a toothed lozenge', nest(lozenge(9, 'primary', { teeth: true, thickness: 2 }), star(2, 'secondary', 'dark')), 'festive'),
+    gridPanel('mirror: a pair about an axis', beside([tree(2, 2, { bough: 'secondary', bud: 'primary' }), stack([star(2)]), mirrorX(tree(2, 2, { bough: 'secondary', bud: 'primary' }))], 3, 'centre'), 'festive'),
+    gridPanel('frame: the band turns the corner on a designed motif', frame(57, 45, [eye(), comb(3)], { corner: star(2), gap: 4 }), 'festive'),
+  ]);
+
+  const brief: VillageBrief = { name: 'MALKO BRDO', households: 4, people: 6, river: true, orchard: 3, fields: 4 };
+  const cloths: Array<[string, TextileCloth]> = [
+    ['Carpet: a frame, the square as the medallion, everything mirrored about the axis', carpetCloth(brief, seed)],
+    ['Sampler: registers from the sky to the hem, read like lines of a page', samplerCloth(brief, seed)],
+  ];
+  for (const [title, cloth] of cloths) {
+    const name = place(lettering(brief.name, { cell: 1, ink: 'primary', align: 'centre' }), {
+      dx: cloth.title.cx - cloth.grid.w / 2 + 0.5,
+      dy: cloth.title.y - cloth.grid.h / 2 + 0.5,
+    });
+    const worked = `${Math.round(cloth.coverage * 100)}% of the cloth is worked`;
+    row(
+      `${title} (${worked})`,
+      (['redBlack', 'festive', 'blackwork'] as const).map((palette) => gridPanel(palette, cloth.grid, palette, name, 4, 4)),
+    );
+    note(`Reading it: ${cloth.reading.join('. ')}.`);
   }
 }
 

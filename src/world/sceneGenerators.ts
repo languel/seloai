@@ -10,6 +10,7 @@ import { createBalkanMythMap } from '../data/balkanMythMap';
 import { createBulgarianShevitsaMap } from '../data/shevitsaMap';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
 import { generatePatchworkVillage } from './patchworkVillage';
+import { generateTextileVillage } from './textileVillage';
 
 export type SceneParamValue = number | boolean | string;
 export type SceneParams = Record<string, SceneParamValue>;
@@ -311,6 +312,36 @@ function fromTileMap(map: VillageMap): GeneratedWorld {
   };
 }
 
+const TEXTILE_PARAMS: readonly SceneParamSpec[] = [
+  { key: 'layout', label: 'Layout', hint: 'A carpet (a frame round a central medallion) or a sampler (registers from sky to hem)', type: 'enum', options: ['carpet', 'sampler'], default: 'carpet' },
+  { key: 'households', label: 'Households', hint: 'How many houses the cloth holds', type: 'int', min: 2, max: 6, default: 4 },
+  { key: 'orchard', label: 'Orchard', hint: 'Trees on the far bank', type: 'int', min: 1, max: 6, default: 3 },
+  { key: 'fields', label: 'Fields', hint: 'Ears of wheat', type: 'int', min: 2, max: 8, default: 4 },
+  { key: 'river', label: 'River', hint: 'A water band with a plank bridge', type: 'bool', default: true },
+  { key: 'stitches', label: 'Pattern scale', hint: 'Stitches to one step of a person: fewer makes every ornament larger against the people, more makes the work finer', type: 'int', min: 2, max: 8, default: 4 },
+];
+
+export const textileVillage: SceneGenerator = {
+  id: 'textile',
+  name: 'Textile village',
+  description: 'A village laid out as a piece of counted needlework, written in signs: houses, the square, water, trees and wheat on one thread grid, with most of the cloth left bare.',
+  params: TEXTILE_PARAMS,
+  resolveParams: resolver(TEXTILE_PARAMS),
+  generate(params, seed) {
+    const rng = createSeededRng(seed * 977 + 3);
+    return generateTextileVillage({
+      layout: params.layout as 'carpet' | 'sampler',
+      name: VILLAGE_NAMES[Math.floor(rng() * VILLAGE_NAMES.length)],
+      households: params.households as number,
+      orchard: params.orchard as number,
+      fields: params.fields as number,
+      river: params.river as boolean,
+      stitchesPerCell: params.stitches as number,
+      seed,
+    });
+  },
+};
+
 export const zmeyovoWorld: SceneGenerator = {
   id: 'zmeyovo',
   name: 'Zmeyovo',
@@ -329,7 +360,7 @@ export const shevitsaWorld: SceneGenerator = {
   generate: () => fromTileMap(createBulgarianShevitsaMap()),
 };
 
-export const SCENE_GENERATORS: readonly SceneGenerator[] = [wangValley, patchworkVillage, zmeyovoWorld, shevitsaWorld];
+export const SCENE_GENERATORS: readonly SceneGenerator[] = [wangValley, patchworkVillage, textileVillage, zmeyovoWorld, shevitsaWorld];
 
 export function findGenerator(id: string): SceneGenerator | undefined {
   return SCENE_GENERATORS.find((g) => g.id === id);

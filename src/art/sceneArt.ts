@@ -795,14 +795,29 @@ export function drawOrder(features: readonly SceneFeature[]): SceneFeature[] {
   return [...flat, ...upright];
 }
 
+/** A textile world's ground: the counted cloth, and the place name lettered into it. */
+function textileShapes(model: SceneModel): Shape[] {
+  const { cells, stitchesPerCell, offset, title } = model.textile!;
+  const s = U / stitchesPerCell;
+  const worked: Array<[number, number, Ink]> = [];
+  cells.forEach((row, y) => row.forEach((ink, x) => ink && worked.push([x + offset[0], y + offset[1], ink])));
+  const shapes: Shape[] = [{ kind: 'counted', origin: [s / 2, s / 2], cell: s, cells: worked }];
+  if (model.title) {
+    const name = lettering(model.title.toUpperCase(), { cell: s, ink: 'primary', align: 'centre' });
+    shapes.push(...place(name, { dx: (title.cx + offset[0] + 0.5) * s, dy: (title.y + offset[1] + 0.5) * s }));
+  }
+  return shapes;
+}
+
 /** Everything that does not move, in drawing order; `hidden` layers are left out. */
 export function sceneShapes(model: SceneModel, hidden?: ReadonlySet<SceneLayer>, frame = true): Shape[] {
   const refs = worldReferences(model.motifs);
-  const ground = model.patches ? patchworkShapes(model, U, hidden) : hidden?.has('ground') ? [] : terrainShapes(model);
+  const ground = model.patches ? patchworkShapes(model, U, hidden) : hidden?.has('ground') ? [] : model.textile ? textileShapes(model) : terrainShapes(model);
   const features = drawOrder(hidden?.size ? model.features.filter((f) => !hidden.has(layerOf(f))) : model.features);
   const marks = hidden?.has('patterns') ? [] : patternMarkShapes(model.patternMarks ?? [], refs);
   const drawn = model.packing === 'packed' ? packedFeatureShapes(features, refs, model) : features.map((f) => turnedFeatureShapes(f, refs, model));
-  const shapes = [...ground, ...marks, ...drawn.flat(), ...(frame ? clothBorder(model, refs) : [])];
+  // A textile world carries its own frame and name in the cloth.
+  const shapes = [...ground, ...marks, ...drawn.flat(), ...(frame && !model.textile ? clothBorder(model, refs) : [])];
 
   return shapes;
 }

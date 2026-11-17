@@ -219,6 +219,11 @@ export interface SceneModel {
   patches?: Patch[];
   /** The full (undrawn-in) faces of a patchwork village: inside them, gaps are streets. */
   villageOutline?: Array<Array<[number, number]>>;
+  /**
+   * A textile world: the whole ground as one piece of counted work (a carpet or a sampler
+   * laid out by `src/art/textileLayouts.ts`), drawn instead of the cell terrain.
+   */
+  textile?: TextileGround;
   /** Bridges over a patchwork's stream. */
   bridges?: Bridge[];
   /** Which way the stream flows, radians, so its waves run one way. */
@@ -250,6 +255,18 @@ export interface SceneModel {
    * each other) or `packed` (as in counted work, nothing on a layer touches another).
    */
   packing?: 'overlap' | 'packed';
+}
+
+/** The counted cloth of a textile world, in stitches. */
+export interface TextileGround {
+  /** Rows of stitches, indexed [y][x]: an ink role or bare cloth. */
+  cells: Array<Array<Ink | null>>;
+  /** How many stitches make one cell of the world. */
+  stitchesPerCell: number;
+  /** Where the cloth's first stitch sits, in stitches from the world's corner. */
+  offset: [number, number];
+  /** Where the place name is lettered: centre x and top y, in stitches of the cloth. */
+  title: { cx: number; y: number };
 }
 
 /** What a plot of a patchwork village holds (`road` is kept only for older saved worlds). */
