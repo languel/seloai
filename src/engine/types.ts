@@ -49,6 +49,8 @@ export interface TileMacroStamp {
 
 export interface VillageMap {
   name: string;
+  /** Where the art looks may plant groves: anywhere (the default), or only near the edge. */
+  groves?: 'anywhere' | 'edge';
   tileDim: number;
   width: number;
   height: number;

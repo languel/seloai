@@ -348,7 +348,11 @@ export const zmeyovoWorld: SceneGenerator = {
   description: 'The village of the Lamia’s well, as authored.',
   params: [],
   resolveParams: resolver([]),
-  generate: () => fromTileMap(createBalkanMythMap()),
+  generate: () => {
+    // The demo village: its middle kept open for the story, groves only on the outskirts.
+    const world = fromTileMap(createBalkanMythMap());
+    return { ...world, model: { ...world.model, groves: 'edge' } };
+  },
 };
 
 export const shevitsaWorld: SceneGenerator = {

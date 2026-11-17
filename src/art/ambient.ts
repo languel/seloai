@@ -123,6 +123,8 @@ function groves(model: SceneModel, taken: Set<number>, seed: number, out: SceneF
       const cx = gx + Math.floor(r() * LATTICE);
       const cy = gy + Math.floor(r() * LATTICE);
       if (cx < 2 || cy < 3 || cx >= model.width - 2 || cy >= model.height - 2) continue;
+      // A world that keeps its middle open has its groves only on the outskirts.
+      if (model.groves === 'edge' && Math.min(cx, cy, model.width - 1 - cx, model.height - 1 - cy) > 5) continue;
       if (free(model, taken, cx, cy, 1, 2) && !nearTerrain(model, cx, cy, 'road', 2)) centres.push([cx, cy]);
     }
   }
@@ -134,6 +136,7 @@ function groves(model: SceneModel, taken: Set<number>, seed: number, out: SceneF
         const d = Math.hypot(x - cx, y - cy) / radius;
         if (d > 1 || rng() > 0.85 * (1 - d * d * 0.8)) continue;
         if (!free(model, taken, x, y, 1, 2) || nearTerrain(model, x, y, 'road', 1)) continue;
+        if (model.groves === 'edge' && Math.min(x, y, model.width - 1 - x, model.height - 2 - y) > 5) continue;
         out.push(feature(rng() < 0.4 ? 'sapling' : 'grove', x, y, 1, 2));
         claim(taken, x, y, 1, 2);
       }

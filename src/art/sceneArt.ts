@@ -159,6 +159,8 @@ function houseExtent(f: SceneFeature, model: SceneModel, scale: number, facing?:
 }
 
 const fittedCache = new WeakMap<SceneModel, Map<SceneFeature, { scale: number; facing?: number }>>();
+/** Cells along each side kept clear for the cloth's frame. */
+const FRAME = 1;
 
 /**
  * How large each house of a grid world can be drawn without crowding: from the world's
@@ -196,7 +198,9 @@ export function fittedHouses(model: SceneModel): Map<SceneFeature, { scale: numb
     let busy = 0;
     for (let x = Math.floor(box[0]); x < Math.ceil(box[2]); x++) for (let y = Math.floor(box[1]); y < Math.ceil(box[3]); y++) {
       all++;
-      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      // Past the cloth's frame (its outermost cell) there is no room at all: a house that
+      // would reach out through it is drawn smaller instead.
+      if (x < FRAME || y < FRAME || x >= width - FRAME || y >= height - FRAME) return 1;
       const k = x * height + y;
       if (taken[k] && !mine.has(k)) busy++;
     }
@@ -515,12 +519,26 @@ function terrainShapes(model: SceneModel): Shape[] {
           shapes.push({ kind: 'line', points, ink: 'secondary', weight: 0.75 });
         }
       } else if (kind === 'road') {
-        // A fine trellis of gold crosses, at the world's thread scale.
+        // A light trellis of gold crosses, at the world's thread scale, open enough that the
+        // linen shows through and people walking on the road stay easy to read.
         const n = ROAD_STITCHES;
-        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((x * n + i + y * n + j) % 4 === 0 || (x * n + i - y * n - j + 4096) % 4 === 0) roadCells.push([x * n + i, y * n + j, 'gold']);
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((x * n + i + y * n + j) % 8 === 0 || (x * n + i - y * n - j + 4096) % 8 === 0) roadCells.push([x * n + i, y * n + j, 'gold']);
       } else if (kind === 'wall') {
-        for (const [sx, sy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
-          wallCells.push([x * 2 + sx, y * 2 + sy, (sx + sy) % 2 ? 'primary' : 'dark']);
+        // Masonry in fine stitches, at the road's scale: courses of staggered bricks with a
+        // row of bare linen for the mortar, mostly dark with the odd red brick. Charted on the
+        // world's grid, so a wall joins up cell to cell.
+        const n = ROAD_STITCHES;
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j < n; j++) {
+            const gx = x * n + i;
+            const gy = y * n + j;
+            const course = Math.floor(gy / 3);
+            if (gy % 3 === 2) continue;
+            const along = gx + (course % 2) * 2;
+            if (along % 4 === 3) continue;
+            const brick = Math.floor(along / 4) + course * 7;
+            wallCells.push([gx, gy, brick % 5 === 0 ? 'primary' : 'dark']);
+          }
         }
       } else if (kind === 'dry') {
         const count = 1 + Math.floor(rng() * 2);
@@ -553,7 +571,7 @@ function terrainShapes(model: SceneModel): Shape[] {
   }
   shapes.push(...edgeLines(model));
   if (roadCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: roadCells });
-  if (wallCells.length > 0) shapes.push({ kind: 'counted', origin: [U / 4, U / 4], cell: U / 2, cells: wallCells });
+  if (wallCells.length > 0) shapes.push({ kind: 'counted', origin: [U / ROAD_STITCHES / 2, U / ROAD_STITCHES / 2], cell: U / ROAD_STITCHES, cells: wallCells });
   return shapes;
 }
 

@@ -224,6 +224,8 @@ export interface SceneModel {
    * laid out by `src/art/textileLayouts.ts`), drawn instead of the cell terrain.
    */
   textile?: TextileGround;
+  /** Where the ambience may plant groves: anywhere (the default), or only near the edge, leaving the middle open. */
+  groves?: 'anywhere' | 'edge';
   /** Bridges over a patchwork's stream. */
   bridges?: Bridge[];
   /** Which way the stream flows, radians, so its waves run one way. */
@@ -359,7 +361,7 @@ export function buildSceneModel(map: VillageMap, semantics?: TileSemantics): Sce
   }
   features.sort((a, b) => a.y + a.h - (b.y + b.h));
   const title = map.name.split(/[:(]/)[0].trim();
-  return { width: map.width, height: map.height, terrain, features, landmarks: map.pointsOfInterest ?? [], title };
+  return { width: map.width, height: map.height, terrain, features, landmarks: map.pointsOfInterest ?? [], title, ...(map.groves ? { groves: map.groves } : {}) };
 }
 
 /** A stable random stream for one cell, so scattered detail does not move between redraws. */

@@ -148,7 +148,9 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
   const droughtVertices = createVertexMaskFromTileMask(droughtMask, safeW, safeH);
 
   const brookMask = Array.from({ length: safeW }, () => Array(safeH).fill(false));
-  for (let y = 0; y < safeH; y++) {
+  // The brook runs from the frame at the top to the frame at the bottom: right up to the
+  // cloth's border on both ends, never across it (row 0 and the last row are the frame).
+  for (let y = 1; y < safeH - 1; y++) {
     // Anchor gently at bridge latitudes (y = 10 & y = 23) so oak bridges span x = 13..14 squarely
     const pinch10 = 1 - Math.exp(-((y - 10) * (y - 10)) / 9);
     const pinch23 = 1 - Math.exp(-((y - 23) * (y - 23)) / 9);
@@ -191,6 +193,16 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
   layH(10, 10, 35);
   // East Connector North-South Lane (x = 34) connecting Weaver Cardak (y = 10) down to Kukeri Hearth (y = 23)
   layV(34, 10, 23);
+  // A southern lane (y = 29) closing the village loop: down from the herb house and from the
+  // hearth, and from the plaza's south side, across the brook by a third bridge.
+  layH(29, 8, 34);
+  layV(8, 23, 29);
+  layV(34, 23, 29);
+  layV(23, 25, 29);
+  // A western lane from the spring glade down to the herb house.
+  layV(6, 11, 22);
+  layH(11, 6, 8);
+  layH(22, 6, 8);
 
   const hasVertexCorner = (verts: boolean[][], x: number, y: number): boolean =>
     Boolean(verts[x]?.[y] || verts[x + 1]?.[y] || verts[x + 1]?.[y + 1] || verts[x]?.[y + 1]);
@@ -269,7 +281,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
   }
 
   // Two horizontal Oak Plank Bridges over Samodiva Brook (y = 23 & y = 10) kept cleanly above Wang stream tiles
-  for (const bridgeY of [10, 23]) {
+  for (const bridgeY of [10, 23, 29]) {
     for (const bx of [12, 13, 14, 15]) {
       setGridCell(bg0, bx, bridgeY, BALKAN_TILES.BRIDGE_OAK_H);
       setBlockedCell(collisionGrid, bx, bridgeY, false);
@@ -361,7 +373,7 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
 
   // Ancient Martenitsa Sacred Oaks (2x2) & Village Benches around Plaza / Well
   stampRegionOnMap(obj0, collisionGrid, 28, 6, BALKAN_TILES.MARTENITSA_OAK_ORIGIN, (_dx, dy) => dy === 1);
-  stampRegionOnMap(obj0, collisionGrid, 16, 26, BALKAN_TILES.MARTENITSA_OAK_ORIGIN, (_dx, dy) => dy === 1);
+  stampRegionOnMap(obj0, collisionGrid, 44, 30, BALKAN_TILES.MARTENITSA_OAK_ORIGIN, (_dx, dy) => dy === 1);
   setGridCell(obj0, 20, 21, BALKAN_TILES.OAK_BENCH);
   setBlockedCell(collisionGrid, 20, 21, true);
   setGridCell(obj0, 25, 21, BALKAN_TILES.OAK_BENCH);
@@ -378,7 +390,8 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
   // Balkan Pine Forest Valley Border (keeps outer rim framed naturally with open passable lanes)
   const pineCoords: Array<[number, number]> = [
     [2, 2], [6, 2], [11, 2], [18, 2], [24, 2], [30, 2], [39, 2], [43, 3],
-    [2, 13], [4, 29], [9, 30], [19, 31], [29, 30], [38, 30], [43, 25], [44, 14],
+    [2, 13], [4, 29], [9, 31], [19, 32], [29, 32], [38, 31], [43, 25], [44, 14],
+    [2, 20], [2, 25], [24, 32], [34, 32], [44, 6], [44, 19], [35, 2],
   ];
   for (const [px, py] of pineCoords) {
     stampRegionOnMap(obj0, collisionGrid, px, py, BALKAN_TILES.BALKAN_PINE_ORIGIN, (_dx, dy) => dy === 1);
@@ -476,6 +489,8 @@ export function createBalkanMythMap(width = 48, height = 36): VillageMap {
 
   return {
     name: 'Zmeyovo: Well of the Lamia',
+    // The demo village keeps its middle open for the story: groves only on the outskirts.
+    groves: 'edge',
     tileDim: BALKAN_TILE_DIM,
     width: safeW,
     height: safeH,

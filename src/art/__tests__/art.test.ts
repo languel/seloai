@@ -288,7 +288,8 @@ describe('ambient density', () => {
     const pack = findWorldPack('balkan-myth');
     expect(pack).toBeDefined();
     const map = pack!.build().map;
-    const model = buildSceneModel(map, tileSemanticsForMap(map));
+    // Groves anywhere here: the demo map keeps them to its edge, tested below.
+    const model = { ...buildSceneModel(map, tileSemanticsForMap(map)), groves: 'anywhere' as const };
     const a = withAmbience(model, 7);
     const b = withAmbience(model, 7);
     expect(JSON.stringify(a.features)).toBe(JSON.stringify(b.features));
@@ -304,6 +305,18 @@ describe('ambient density', () => {
         continue;
       }
       for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y; y < f.y + f.h; y++) expect(model.terrain[x][y], `${f.kind} at ${x},${y}`).toBe('ground');
+    }
+  });
+
+  it('keeps groves to the outskirts when the world asks for an open middle', async () => {
+    const { withAmbience } = await import('../ambient');
+    const map = findWorldPack('balkan-myth')!.build().map;
+    expect(map.groves).toBe('edge');
+    const model = buildSceneModel(map, tileSemanticsForMap(map));
+    const original = new Set(model.features.map((f) => `${f.kind}:${f.x}:${f.y}`));
+    for (const seed of [1, 7, 42]) {
+      const groves = withAmbience(model, seed).features.filter((f) => (f.kind === 'grove' || f.kind === 'sapling') && !original.has(`${f.kind}:${f.x}:${f.y}`));
+      for (const g of groves) expect(Math.min(g.x, g.y, model.width - 1 - g.x, model.height - 2 - g.y), `${g.kind} at ${g.x},${g.y}`).toBeLessThanOrEqual(5);
     }
   });
 });
