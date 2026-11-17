@@ -635,6 +635,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
     return brainRouter.subscribeSpeechState(setActiveSpeech);
   }, []);
 
+  /** The furthest the camera may zoom out: far enough to see the whole map, with a little margin. */
+  const minZoom = () => {
+    const canvas = canvasRef.current;
+    const worldW = sim.map.width * sim.map.tileDim;
+    const worldH = sim.map.height * sim.map.tileDim;
+    if (!canvas || !worldW || !worldH) return 0.45;
+    const fit = 0.92 * Math.min(canvas.clientWidth / worldW, canvas.clientHeight / worldH);
+    return Math.max(0.05, Math.min(0.45, fit));
+  };
+
   // Center camera initially
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -779,7 +789,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             });
             const td = sim.map.tileDim;
             const tx = (shot.rect.x + shot.rect.w / 2) * td;
-            const zoom = Math.min(3.5, Math.max(0.45, Math.min(rect.width / (shot.rect.w * td), visibleH / (shot.rect.h * td))));
+            const zoom = Math.min(3.5, Math.max(minZoom(), Math.min(rect.width / (shot.rect.w * td), visibleH / (shot.rect.h * td))));
             // The camera centre sits half the toolbar's height above the visible middle.
             const ty = (shot.rect.y + shot.rect.h / 2) * td - (inset - below) / 2 / zoom;
             cam.anchor = null;
@@ -1278,7 +1288,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     const factor = Math.exp(-clampedDy * sensitivity);
     cameraRef.current.targetZoom = Math.min(
       3.5,
-      Math.max(0.45, cameraRef.current.targetZoom * factor),
+      Math.max(minZoom(), cameraRef.current.targetZoom * factor),
     );
     cameraRef.current.anchor = {
       dx: e.clientX - rect.left - rect.width / 2,
@@ -1861,7 +1871,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               onClick={() => {
                 takeOver();
                 cameraRef.current.anchor = null;
-                cameraRef.current.targetZoom = Math.max(0.45, cameraRef.current.targetZoom / 1.18);
+                cameraRef.current.targetZoom = Math.max(minZoom(), cameraRef.current.targetZoom / 1.18);
               }}
             />
             <GlyphButton glyph="paths" label="Show walking paths" pressed={showPaths} dimOff onClick={() => setShowPaths((p) => !p)} />
