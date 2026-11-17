@@ -135,6 +135,16 @@ function building(
   }
 }
 
+/**
+ * One building standing on its own, for a placed house of a given kind: its base on the
+ * origin, rising up the page, `w` wide and `h` tall, in the patchwork's building style.
+ */
+export function standingBuilding(kind: HouseKind | SpecialBuilding, w: number, h: number, seed: number, U: number): Shape[] {
+  const shapes: Shape[] = [];
+  building(shapes, [0, 0], [1, 0], [0, -1], w, h, createSeededRng(seed), U, kind, 'gold');
+  return shapes;
+}
+
 export type AnimalKind = 'sheep' | 'cow' | 'goat' | 'pig' | 'goose' | 'hen' | 'stork' | 'deer' | 'fox';
 
 /** A small animal in profile, about a cell long, facing along `dir` (left or right). */

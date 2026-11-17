@@ -98,7 +98,24 @@ export interface SceneFeature {
   angle?: number;
   /** For a pattern (a dancing ground, a rosette): the pattern reference it is grown from. */
   ref?: string;
+  /** For a house: which kind of building (default: the folk house with a carved gable). */
+  variant?: BuildingVariant;
 }
+
+/** Kinds of building a house can be, besides the default folk house. */
+export type BuildingVariant = 'cottage' | 'long' | 'tall' | 'barn' | SpecialBuilding;
+
+export const BUILDING_VARIANTS: ReadonlyArray<{ id: BuildingVariant; name: string; size: [number, number] }> = [
+  { id: 'cottage', name: 'cottage', size: [2, 2] },
+  { id: 'long', name: 'long house', size: [3, 2] },
+  { id: 'tall', name: 'tall house', size: [2, 2] },
+  { id: 'barn', name: 'barn', size: [3, 2] },
+  { id: 'church', name: 'church', size: [3, 3] },
+  { id: 'inn', name: 'inn', size: [3, 2] },
+  { id: 'smithy', name: 'smithy', size: [2, 2] },
+  { id: 'bakery', name: 'bakery', size: [2, 2] },
+  { id: 'mill', name: 'mill', size: [3, 2] },
+];
 
 /**
  * Layers, bottom to top, as in a tile map: the ground (terrain and plots) under flat
@@ -212,6 +229,13 @@ export interface Patch {
   front?: number;
   /** A named building standing on this plot. */
   special?: SpecialBuilding;
+  /**
+   * The plot's full face on the plan (before the streets are taken off) and, for each of its
+   * edges, half the width of the street there (0 where it runs on into its neighbour). Kept
+   * so a plot can be merged with a neighbour or split, and drawn in again.
+   */
+  face?: Array<[number, number]>;
+  halves?: number[];
 }
 
 /** A bridge carrying a street over the stream: from a to b along the street, `half` wide. */

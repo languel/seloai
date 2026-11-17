@@ -188,3 +188,46 @@ describe('the patchwork village as a plan from above', () => {
     }
   });
 });
+
+describe('editing the plots of a patchwork', () => {
+  it('merges two neighbouring plots into one and splits a plot in two, keeping the village walkable', async () => {
+    const { patchworkVillage } = await import('../sceneGenerators');
+    const { mergePlots } = await import('../patchworkVillage');
+    let map = mapFromScene({ recipe: { generator: 'patchwork', params: patchworkVillage.resolveParams({}), seed: 7 }, edits: [] });
+    const doc = () => ({ map, cast: [], context: GENERIC_WORLD_CONTEXT });
+    const plots = bakeScene(map.scene!).model.patches!;
+    let pair: [number, number] | undefined;
+    for (const a of plots) {
+      const b = plots.find((p) => p !== a && p.kind !== 'water' && a.kind !== 'water' && mergePlots(a, p));
+      if (b) {
+        pair = [a.id!, b.id!];
+        break;
+      }
+    }
+    expect(pair).toBeDefined();
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'mergePlots', a: pair![0], b: pair![1] } }).map;
+    let baked = bakeScene(map.scene!);
+    expect(baked.skipped).toEqual([]);
+    expect(baked.model.patches!.length).toBe(plots.length - 1);
+    const merged = baked.model.patches!.find((p) => p.id === pair![0])!;
+    expect(merged.face!.length).toBeGreaterThan(4);
+
+    const big = [...baked.model.patches!].filter((p) => p.kind !== 'water').sort((a, b) => b.face!.length - a.face!.length)[0];
+    const mid = big.points.reduce<[number, number]>((acc, q) => [acc[0] + q[0] / big.points.length, acc[1] + q[1] / big.points.length], [0, 0]);
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'splitPlot', id: big.id!, x: mid[0], y: mid[1] } }).map;
+    baked = bakeScene(map.scene!);
+    expect(baked.skipped).toEqual([]);
+    expect(baked.model.patches!.length).toBe(plots.length);
+    const [a, ...rest] = map.pointsOfInterest!;
+    for (const b of rest) expect(findPath(map, { x: a.x, y: a.y }, { x: b.x, y: b.y }).length).toBeGreaterThan(0);
+  });
+
+  it('cuts away many features in one step', () => {
+    let map = mapFromScene(valley(4));
+    const doc = () => ({ map, cast: [], context: GENERIC_WORLD_CONTEXT });
+    const ids = bakeScene(map.scene!).model.features.filter((f) => f.kind === 'house').slice(0, 3).map((f) => f.id!);
+    map = applyCommand(doc(), { type: 'scene.edit', edit: { op: 'removeMany', ids } }).map;
+    expect(bakeScene(map.scene!).model.features.some((f) => ids.includes(f.id!))).toBe(false);
+    expect(map.scene!.edits.length).toBe(1);
+  });
+});

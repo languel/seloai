@@ -8,7 +8,7 @@ import { blossom, chevronLeaf, comb, treeOfLife, tulip } from './motifs';
 import { FLAT_KINDS, SCENE_LAYERS, cellRng, layerOf, type SceneFeature, type SceneLayer, type SceneModel, type Terrain } from './scene';
 import { circle, curl, place, type Ink, type Pt, type Shape } from './shapes';
 import { motifShape } from './patternGrammar';
-import { patchworkShapes } from './patchworkArt';
+import { patchworkShapes, standingBuilding } from './patchworkArt';
 import type { PatternReference } from './patternReferences';
 import { seedOf, transposed, worldBand, worldMedallion, worldReferences } from './worldMotifs';
 
@@ -147,6 +147,13 @@ function featureShapes(feature: SceneFeature, refs: PatternReference[], model?: 
   const rng = createSeededRng(feature.seed);
   switch (feature.kind) {
     case 'house':
+      if (feature.variant) {
+        // A building of a named kind, in the patchwork's style, standing on its footprint.
+        const tall = feature.variant === 'tall' || feature.variant === 'church';
+        const w = feature.w * U * 0.95;
+        const h = U * (tall ? 3.6 : feature.variant === 'long' || feature.variant === 'barn' ? 2.6 : 3) * (0.9 + rng() * 0.2);
+        return place(standingBuilding(feature.variant, w, h, feature.seed, U), { dx: footX, dy: footY });
+      }
     {
       // Stand the house on the edge of its footprint that faces the road, turned to face it.
       const rot = houseFacing(feature, model);

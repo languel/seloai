@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { renderWorldLayer } from '../art/gameLook';
 import type { PaletteName } from '../art/looks';
-import { SCENE_LAYERS, kindsOnLayer, layerOf, type FeatureKind, type SceneFeature, type SceneLayer, type Terrain } from '../art/scene';
+import { BUILDING_VARIANTS, SCENE_LAYERS, kindsOnLayer, layerOf, type BuildingVariant, type FeatureKind, type SceneFeature, type SceneLayer, type Terrain } from '../art/scene';
 import { SHEVITSA_REFERENCES } from '../art/patternReferences';
 import type { VillageMap } from '../engine/types';
 import { PLACEABLE_FEATURES, type WorldCommand } from '../world/commands';
 import { SCENE_GENERATORS, findGenerator, type SceneParamSpec, type SceneParams } from '../world/sceneGenerators';
-import { PLOT_KINDS, pointInPolygon } from '../world/patchworkVillage';
+import { PLOT_KINDS, mergePlots, pointInPolygon } from '../world/patchworkVillage';
 import type { PatchKind } from '../art/scene';
 import { bakeScene, type PlacedFeature, type SceneEdit } from '../world/worldScene';
 import { GlyphButton } from './Glyph';
@@ -82,6 +82,12 @@ function describeEdit(edit: SceneEdit): string {
       return `Placed ${FEATURE_NAMES[edit.feature.kind] ?? edit.feature.kind} at ${edit.feature.x}, ${edit.feature.y}`;
     case 'scatter':
       return `Scattered ${edit.features.length} ${FEATURE_NAMES[edit.features[0]?.kind] ?? edit.features[0]?.kind ?? ''}`;
+    case 'removeMany':
+      return `Cut away ${edit.ids.length} thing${edit.ids.length === 1 ? '' : 's'}`;
+    case 'mergePlots':
+      return `Merged plots ${edit.a} and ${edit.b}`;
+    case 'splitPlot':
+      return `Split plot ${edit.id}`;
     case 'rotate':
       return `Turned ${edit.id} to ${Math.round((edit.angle * 180) / Math.PI)}°`;
     case 'layer':
@@ -103,6 +109,24 @@ function describeEdit(edit: SceneEdit): string {
     case 'plot':
       return `Plot ${edit.id} became ${edit.kind}`;
   }
+}
+
+function Chip({ on, onClick, children, className = '' }: { on: boolean; onClick: () => void; children: React.ReactNode; className?: string }) {
+  return (
+    <button type="button" aria-pressed={on} onClick={onClick} className={`glyph-button rounded-sm px-1.5 py-0.5 ${on ? 'glyph-on' : ''} ${className}`}>
+      {children}
+    </button>
+  );
+}
+
+/** Which layer the tool is working on, at the start of the tool's options. */
+function LayerBadge({ layer, erase }: { layer: SceneLayer; erase: boolean }) {
+  const name = SCENE_LAYERS.find((l) => l.id === layer)?.name ?? layer;
+  return (
+    <span className="layer-active rounded-sm border-l-[3px] px-1.5 py-0.5 font-semibold">
+      {erase && layer === 'ground' ? 'All open layers' : name}
+    </span>
+  );
 }
 
 function slug(text: string) {
@@ -127,6 +151,11 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const [plotKind, setPlotKind] = useState<PatchKind>('garden');
   const [brush, setBrush] = useState(1);
   const [featureKind, setFeatureKind] = useState<FeatureKind>('house');
+  // Which building a house is ('' is the folk house; 'mixed' scatters a bit of everything).
+  const [variant, setVariant] = useState<BuildingVariant | '' | 'mixed'>('');
+  // In a patchwork: paint a plot's kind, merge two plots, or split one.
+  const [plotMode, setPlotMode] = useState<'kind' | 'merge' | 'split'>('kind');
+  const [mergeFrom, setMergeFrom] = useState<number | null>(null);
   const [patternRef, setPatternRef] = useState<string>('');
   const [patternSize, setPatternSize] = useState(2);
   const [scatterCount, setScatterCount] = useState(4);
@@ -149,6 +178,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     | { mode: 'paint'; cells: Map<number, [number, number]> }
     | { mode: 'move'; feature: SceneFeature; start: [number, number]; at: [number, number] }
     | { mode: 'scatter'; features: PlacedFeature[]; last: [number, number] }
+    | { mode: 'erase'; ids: Set<string> }
     | null
   >(null);
   const hover = useRef<[number, number] | null>(null);
@@ -173,7 +203,26 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     return open.reduce<SceneFeature | undefined>((best, f) => (!best || rank(f) >= rank(best) ? f : best), undefined);
   };
   const layerKinds = kindsOnLayer(activeLayer, PLACEABLE_FEATURES);
-  const sizeOf = (kind: FeatureKind): [number, number] => (kind === 'star' ? [patternSize, patternSize] : FEATURE_SIZE[kind] ?? [1, 1]);
+  const sizeOf = (kind: FeatureKind, v: BuildingVariant | '' | 'mixed' = variant): [number, number] =>
+    kind === 'star' ? [patternSize, patternSize] : kind === 'house' && v && v !== 'mixed' ? BUILDING_VARIANTS.find((b) => b.id === v)!.size : FEATURE_SIZE[kind] ?? [1, 1];
+  /** The building to place next: the chosen one, or any ordinary one when mixing. */
+  const nextVariant = (): BuildingVariant | '' => {
+    if (variant !== 'mixed') return variant;
+    const pool: Array<BuildingVariant | ''> = ['', '', 'cottage', 'cottage', 'long', 'tall', 'tall', 'barn'];
+    return pool[Math.floor(Math.random() * pool.length)];
+  };
+  // What an erase stroke reaches: the active layer, or every open layer when on the ground.
+  const erasable = (f: SceneFeature) => {
+    const layer = layerOf(f);
+    return !hidden.has(layer) && !locked.has(layer) && (activeLayer === 'ground' || layer === activeLayer);
+  };
+  const eraseAround = (ids: Set<string>, [cx, cy]: [number, number]) => {
+    const r = brush - 1;
+    for (const f of baked?.model.features ?? []) {
+      if (!f.id || !erasable(f)) continue;
+      if (f.x <= cx + r && f.x + f.w - 1 >= cx - r && f.y <= cy + r && f.y + f.h - 1 >= cy - r) ids.add(f.id);
+    }
+  };
   const pickLayer = (layer: SceneLayer) => {
     setActiveLayer(layer);
     if (layer === 'ground') {
@@ -189,9 +238,9 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     if (id === 'paint') setActiveLayer('ground');
     else if ((id === 'place' || id === 'scatter') && activeLayer === 'ground') pickLayer('plantings');
   };
-  const placed = (kind: FeatureKind, x: number, y: number, id: string, angle?: number): PlacedFeature => {
-    const [w, h] = sizeOf(kind);
-    return { id, kind, x, y, w, h, ...(kind === 'star' && patternRef ? { ref: patternRef } : {}), ...(angle ? { angle } : {}) };
+  const placed = (kind: FeatureKind, x: number, y: number, id: string, angle?: number, v: BuildingVariant | '' = kind === 'house' ? nextVariant() : ''): PlacedFeature => {
+    const [w, h] = sizeOf(kind, v);
+    return { id, kind, x, y, w, h, ...(kind === 'star' && patternRef ? { ref: patternRef } : {}), ...(angle ? { angle } : {}), ...(v ? { variant: v } : {}) };
   };
   /** Sows a handful of the chosen kind round a cell, on cells nothing of the layer holds. */
   const sow = (into: PlacedFeature[], [cx, cy]: [number, number]) => {
@@ -203,8 +252,9 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     for (const f of baked?.model.features ?? []) if (layerOf(f) === activeLayer && !f.id?.startsWith('amb-')) mark(f);
     into.forEach(mark);
     const used = new Set([...(baked?.model.features ?? []).map((f) => f.id), ...into.map((f) => f.id)]);
-    const [w, h] = sizeOf(featureKind);
     for (let tries = 0, made = 0; tries < scatterCount * 8 && made < scatterCount; tries++) {
+      const v = featureKind === 'house' ? nextVariant() : '';
+      const [w, h] = sizeOf(featureKind, v);
       const a = Math.random() * Math.PI * 2;
       const d = Math.sqrt(Math.random()) * r;
       const x = Math.round(cx + Math.cos(a) * d - w / 2);
@@ -218,7 +268,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       used.add(id);
       // Houses lean a little, Chagall-wise; flat things may lie any way round.
       const angle = featureKind === 'house' ? (Math.random() - 0.5) * 0.4 : ['field', 'vineyard', 'star', 'rosette'].includes(featureKind) ? (Math.random() - 0.5) * 0.8 : 0;
-      const f = placed(featureKind, x, y, id, angle);
+      const f = placed(featureKind, x, y, id, angle, v);
       into.push(f);
       mark(f);
       made++;
@@ -302,6 +352,18 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     } else if (d?.mode === 'scatter') {
       ctx.fillStyle = 'rgba(40, 110, 60, 0.35)';
       for (const f of d.features) ctx.fillRect(f.x * CELL, f.y * CELL, f.w * CELL, f.h * CELL);
+    } else if (d?.mode === 'erase') {
+      ctx.fillStyle = 'rgba(170, 30, 20, 0.35)';
+      for (const f of baked?.model.features ?? []) if (f.id && d.ids.has(f.id)) ctx.fillRect(f.x * CELL, f.y * CELL, f.w * CELL, f.h * CELL);
+    }
+    // The plot a merge starts from.
+    const from = mergeFrom !== null ? baked?.model.patches?.find((p) => p.id === mergeFrom) : undefined;
+    if (from && tool === 'paint') {
+      ctx.fillStyle = 'rgba(40, 90, 160, 0.25)';
+      ctx.beginPath();
+      from.points.forEach(([px, py], k) => (k ? ctx.lineTo(px * CELL, py * CELL) : ctx.moveTo(px * CELL, py * CELL)));
+      ctx.closePath();
+      ctx.fill();
     }
     const h = hover.current;
     if (h && !d) {
@@ -314,7 +376,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
         hovered.points.forEach(([px, py], k) => (k ? ctx.lineTo(px * CELL, py * CELL) : ctx.moveTo(px * CELL, py * CELL)));
         ctx.closePath();
         ctx.stroke();
-      } else if (tool === 'paint') {
+      } else if (tool === 'paint' || tool === 'erase') {
         const r = brush - 1;
         ctx.strokeRect((h[0] - r) * CELL, (h[1] - r) * CELL, (2 * r + 1) * CELL, (2 * r + 1) * CELL);
       } else if (tool === 'place') {
@@ -329,7 +391,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       }
     }
     ctx.setLineDash([]);
-  }, [frame, world, map, showWalk, selected, tool, brush, featureKind, patternSize]);
+  }, [frame, world, map, showWalk, selected, tool, brush, featureKind, patternSize, variant, mergeFrom]);
 
   const cellAt = (event: React.PointerEvent): [number, number] => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -369,8 +431,22 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     const plots = baked?.model.patches;
     if (tool === 'paint' && plots) {
       // A patchwork village is painted plot by plot: the plot under the pointer takes the kind.
-      const plot = plots.find((p) => pointInPolygon([x + 0.5, y + 0.5], p.points));
-      if (plot?.id !== undefined && plot.kind !== plotKind) edit({ op: 'plot', id: plot.id, kind: plotKind }, `Plot becomes ${plotKind}`);
+      const pt: [number, number] = [(event.clientX - canvasRef.current!.getBoundingClientRect().left - view.current.x) / (view.current.zoom * CELL), (event.clientY - canvasRef.current!.getBoundingClientRect().top - view.current.y) / (view.current.zoom * CELL)];
+      const plot = plots.find((p) => pointInPolygon(pt, p.points));
+      if (plot?.id === undefined) {
+        setMergeFrom(null);
+      } else if (plotMode === 'kind') {
+        if (plot.kind !== plotKind) edit({ op: 'plot', id: plot.id, kind: plotKind }, `Plot becomes ${plotKind}`);
+      } else if (plotMode === 'split') {
+        edit({ op: 'splitPlot', id: plot.id, x: pt[0], y: pt[1] }, 'Split plot');
+      } else if (mergeFrom === null || mergeFrom === plot.id) {
+        setMergeFrom(mergeFrom === plot.id ? null : plot.id);
+      } else {
+        const first = plots.find((p) => p.id === mergeFrom);
+        if (first && mergePlots(first, plot)) edit({ op: 'mergePlots', a: mergeFrom, b: plot.id }, 'Merge plots');
+        else setNotice('Those two plots do not share a whole side. Pick one right next to it.');
+        setMergeFrom(null);
+      }
       redraw();
       return;
     }
@@ -393,12 +469,16 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       sow(features, cell);
       drag.current = { mode: 'scatter', features, last: cell };
     } else if (tool === 'erase') {
-      const f = featureAt(x, y);
       const poi = (map.pointsOfInterest ?? []).find((p) => p.x === x && p.y === y);
       const spawn = map.spawnPoints.find((s) => s.x === x && s.y === y);
       if (poi) edit({ op: 'removeLandmark', id: poi.id }, `Unname ${poi.label}`);
       else if (spawn) edit({ op: 'removeSpawn', id: spawn.id }, `Remove start ${spawn.label}`);
-      else if (f?.id) edit({ op: 'remove', id: f.id }, `Remove ${f.kind}`);
+      else {
+        // An erase brush: drag over things to cut them all away in one step.
+        const ids = new Set<string>();
+        eraseAround(ids, cell);
+        drag.current = { mode: 'erase', ids };
+      }
     } else {
       setPendingPlace({ kind: tool, x, y });
       setPendingLabel('');
@@ -417,6 +497,8 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       addBrush(d.cells, cell);
     } else if (d?.mode === 'move') {
       d.at = [d.feature.x + cell[0] - d.start[0], d.feature.y + cell[1] - d.start[1]];
+    } else if (d?.mode === 'erase' && inside(cell)) {
+      eraseAround(d.ids, cell);
     } else if (d?.mode === 'scatter' && inside(cell) && Math.hypot(cell[0] - d.last[0], cell[1] - d.last[1]) >= brush + 1) {
       sow(d.features, cell);
       d.last = cell;
@@ -431,6 +513,11 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       edit({ op: 'terrain', cells: [...d.cells.values()], terrain }, `Paint ${terrain}`);
     } else if (d?.mode === 'scatter' && d.features.length > 0) {
       edit({ op: 'scatter', features: d.features }, `Scatter ${featureKind}`);
+    } else if (d?.mode === 'erase' && d.ids.size > 0) {
+      const ids = [...d.ids];
+      if (ids.length === 1) edit({ op: 'remove', id: ids[0] }, 'Cut away');
+      else edit({ op: 'removeMany', ids }, `Cut away ${ids.length}`);
+      if (selectedId && d.ids.has(selectedId)) setSelectedId(null);
     } else if (d?.mode === 'move' && d.feature.id && (d.at[0] !== d.feature.x || d.at[1] !== d.feature.y)) {
       edit({ op: 'move', id: d.feature.id, x: d.at[0], y: d.at[1] }, `Move ${d.feature.kind}`);
     }
@@ -641,13 +728,21 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
           <KnotDivider className="mx-1 h-5" />
           {tool === 'paint' && baked?.model.patches && (
             <>
-              <span className="stitch-muted">Plot</span>
-              {PLOT_KINDS.map((k) => (
-                <button key={k} type="button" aria-pressed={plotKind === k} onClick={() => setPlotKind(k)} className={`glyph-button rounded-sm px-1.5 py-0.5 capitalize ${plotKind === k ? 'glyph-on' : ''}`}>
-                  {k}
-                </button>
+              {(['kind', 'merge', 'split'] as const).map((m) => (
+                <Chip key={m} on={plotMode === m} onClick={() => { setPlotMode(m); setMergeFrom(null); }}>
+                  {m === 'kind' ? 'Plot kind' : m === 'merge' ? 'Merge' : 'Split'}
+                </Chip>
               ))}
-              <span className="stitch-muted">click a plot</span>
+              <KnotDivider className="mx-1 h-5" />
+              {plotMode === 'kind' &&
+                PLOT_KINDS.map((k) => (
+                  <Chip key={k} on={plotKind === k} onClick={() => setPlotKind(k)} className="capitalize">
+                    {k}
+                  </Chip>
+                ))}
+              <span className="stitch-muted">
+                {plotMode === 'kind' ? 'click a plot' : plotMode === 'split' ? 'click where a new lane should cut a plot' : mergeFrom === null ? 'click a plot, then the one beside it' : 'now click the plot beside it'}
+              </span>
             </>
           )}
           {tool === 'paint' && !baked?.model.patches && (
@@ -665,13 +760,37 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               ))}
             </>
           )}
+          {(tool === 'place' || tool === 'scatter' || tool === 'erase') && <LayerBadge layer={activeLayer} erase={tool === 'erase'} />}
+          {tool === 'erase' && (
+            <>
+              <span className="stitch-muted ml-1">Brush</span>
+              {[1, 2, 3].map((b) => (
+                <Chip key={b} on={brush === b} onClick={() => setBrush(b)}>
+                  {b * 2 - 1}
+                </Chip>
+              ))}
+            </>
+          )}
           {(tool === 'place' || tool === 'scatter') && (
             <>
-              {layerKinds.map((k) => (
-                <button key={k} type="button" aria-pressed={featureKind === k} onClick={() => setFeatureKind(k)} className={`glyph-button rounded-sm px-1.5 py-0.5 ${featureKind === k ? 'glyph-on' : ''}`}>
-                  {FEATURE_NAMES[k] ?? k}
-                </button>
-              ))}
+              {activeLayer === 'buildings'
+                ? [['', 'folk house'] as const, ...BUILDING_VARIANTS.map((b) => [b.id, b.name] as const), ...(tool === 'scatter' ? [['mixed', 'mixed'] as const] : [])].map(([id, name]) => (
+                    <Chip
+                      key={id || 'folk'}
+                      on={featureKind === 'house' && variant === id}
+                      onClick={() => {
+                        setFeatureKind('house');
+                        setVariant(id);
+                      }}
+                    >
+                      {name}
+                    </Chip>
+                  ))
+                : layerKinds.map((k) => (
+                    <Chip key={k} on={featureKind === k} onClick={() => setFeatureKind(k)}>
+                      {FEATURE_NAMES[k] ?? k}
+                    </Chip>
+                  ))}
               {featureKind === 'star' && (
                 <>
                   <select value={patternRef} onChange={(e) => setPatternRef(e.target.value)} title="The pattern it is grown from" className="rounded-sm border border-borderFolk bg-transparent px-1 py-0.5">
@@ -708,7 +827,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               )}
             </>
           )}
-          {(tool === 'select' || tool === 'erase') && <span className="stitch-muted">Drag empty cloth to pan; scroll to zoom.</span>}
+          {tool === 'select' && <span className="stitch-muted">Drag empty cloth to pan; scroll to zoom.</span>}
           <span className="flex-1" />
           <GlyphButton glyph="walkable" label="Show where people cannot walk" pressed={showWalk} dimOff onClick={() => setShowWalk((v) => !v)} />
           <GlyphButton glyph="undo" label="Undo" disabled={!canUndo} onClick={onUndo} />
@@ -768,12 +887,18 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               apply(next);
             };
             return (
-              <li key={id} className={`flex items-center gap-1 rounded-sm px-1 ${activeLayer === id ? 'glyph-on' : ''}`}>
+              <li
+                key={id}
+                className={`flex items-center gap-1 rounded-sm border-l-[3px] px-1 py-0.5 ${activeLayer === id ? 'layer-active font-semibold' : 'border-transparent'}`}
+              >
                 <GlyphButton glyph="eye" size={13} label={hidden.has(id) ? `Show ${name}` : `Hide ${name}`} pressed={!hidden.has(id)} dimOff tipSide="below-right" onClick={() => toggle(hidden, setHidden)} />
                 <GlyphButton glyph="lock" size={13} label={locked.has(id) ? `Unlock ${name}` : `Lock ${name}`} pressed={locked.has(id)} dimOff tipSide="below-right" onClick={() => toggle(locked, setLocked)} />
                 <button type="button" aria-pressed={activeLayer === id} onClick={() => pickLayer(id)} className={`flex flex-1 justify-between text-left ${hidden.has(id) ? 'opacity-50' : ''}`}>
-                  <span>{name}</span>
-                  {count !== null && <span className="stitch-muted">{count}</span>}
+                  <span>
+                    {name}
+                    {activeLayer === id && <span className="stitch-thread ml-1 text-[10px] font-normal">editing</span>}
+                  </span>
+                  {count !== null && <span className="stitch-muted font-normal">{count}</span>}
                 </button>
               </li>
             );

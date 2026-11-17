@@ -240,6 +240,11 @@ dialog::backdrop {
 .stitch-thread {
   color: var(--stitch-thread, var(--accent-crimson));
 }
+.layer-active {
+  /* The layer being worked on: a thread bar at its side and a wash of that thread. */
+  border-left-color: var(--stitch-thread, var(--accent-crimson)) !important;
+  background: color-mix(in srgb, var(--stitch-thread, var(--accent-crimson)) 16%, transparent);
+}
 .stitch-divider-v {
   flex: none;
   width: 8px;

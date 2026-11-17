@@ -61,6 +61,15 @@ One tab, in the stitched interface style (StitchPanel, glyph buttons, knot divid
 - **Scatter**: a brush that sows a handful of the chosen kind on free cells as you drag,
   committed as one `scatter` edit (one undo step). Houses lean a little, flat things lie any
   way round.
+- **Buildings palette**: the folk house plus cottage, long house, tall house, barn, church,
+  inn, smithy, bakery and mill, drawn in the patchwork's building style (a house's
+  `variant`). Scatter can sow them mixed.
+- **Erase brush**: drag to cut away everything under the brush on the active layer (every
+  open layer when the ground is active), as one `removeMany` edit.
+- **Merge and split plots** (a patchwork's paint tool): merging joins two plots that share a
+  side and takes away the street between them; splitting cuts a plot with a new lane across
+  its front, so both halves keep the street. Plots keep their face on the plan and the
+  street width along each side (`face`, `halves`), so they can be drawn in again.
 - **Rotate**: the selected feature turns in 15° steps (`[` and `]`, or the buttons), as a
   `rotate` edit. Counted work (pattern medallions) stays square to the cloth.
 - **Patterns** in the palette: a dancing-ground medallion grown from a chosen reference

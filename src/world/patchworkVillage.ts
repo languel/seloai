@@ -165,6 +165,125 @@ export function rasterizePatches(patches: Patch[], width: number, height: number
   return terrain;
 }
 
+/**
+ * Draws a plot in from its face by the street along each edge, and works out its front (the
+ * longest edge, favouring main streets) and the direction it is stitched in.
+ */
+export function drawPlot(plot: Patch, face: V[], halves: number[]): Patch {
+  const outline = inset(face, halves);
+  let front = 0;
+  let bestLen = -1;
+  outline.forEach((a, k) => {
+    const b = outline[(k + 1) % outline.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) * (halves[k] >= MAIN_HALF ? 1.6 : halves[k] === 0 ? 0.3 : 1);
+    if (len > bestLen) {
+      bestLen = len;
+      front = k;
+    }
+  });
+  const [ax, ay] = outline[front];
+  const [bx, by] = outline[(front + 1) % outline.length];
+  return { ...plot, points: outline, face: face.map((q) => [q[0], q[1]]), halves: [...halves], front, grain: Math.atan2(by - ay, bx - ax) };
+}
+
+const samePoint = (a: V, b: V) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+
+/**
+ * Two neighbouring plots made one: their faces joined along the edge they share, with the
+ * street between them taken away. The first plot's kind and thread are kept. Returns null
+ * when they do not share a whole edge.
+ */
+export function mergePlots(a: Patch, b: Patch): Patch | null {
+  if (!a.face || !b.face || !a.halves || !b.halves) return null;
+  const fa = a.face;
+  const fb = b.face;
+  for (let i = 0; i < fa.length; i++) {
+    const p = fa[i];
+    const q = fa[(i + 1) % fa.length];
+    for (let j = 0; j < fb.length; j++) {
+      // Shared edge: p→q in a runs q→p in b.
+      if (!samePoint(fb[j], q) || !samePoint(fb[(j + 1) % fb.length], p)) continue;
+      const face: V[] = [];
+      const halves: number[] = [];
+      // Round a from q back to p, then round b from p back to q, skipping the shared edge.
+      for (let k = 1; k < fa.length; k++) {
+        face.push(fa[(i + k) % fa.length]);
+        halves.push(a.halves[(i + k) % fa.length]);
+      }
+      for (let k = 1; k < fb.length; k++) {
+        face.push(fb[(j + k) % fb.length]);
+        halves.push(b.halves[(j + k) % fb.length]);
+      }
+      // Corners left in a straight line (where three plots met) are dropped.
+      const n = face.length;
+      const keep = face.map((v, k) => {
+        const u = face[(k + n - 1) % n];
+        const w = face[(k + 1) % n];
+        const cross = (v[0] - u[0]) * (w[1] - v[1]) - (v[1] - u[1]) * (w[0] - v[0]);
+        return Math.abs(cross) > 1e-6 || halves[(k + n - 1) % n] !== halves[k];
+      });
+      const outFace = face.filter((_, k) => keep[k]);
+      const outHalves = halves.filter((_, k) => keep[k]);
+      return drawPlot({ ...a, special: a.special ?? b.special }, outFace, outHalves);
+    }
+  }
+  return null;
+}
+
+/**
+ * A plot cut in two by a new lane through `at`, running across its front, so both halves
+ * keep a share of the street. Returns null where the cut does not cross the plot cleanly.
+ */
+export function splitPlot(plot: Patch, at: V, ids: [number, number]): [Patch, Patch] | null {
+  if (!plot.face || !plot.halves) return null;
+  const face = plot.face;
+  const n = face.length;
+  // Cut across the front edge of the drawn plot.
+  const a = plot.points[plot.front ?? 0];
+  const b = plot.points[((plot.front ?? 0) + 1) % plot.points.length];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const u: V = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+  const side = (q: V) => (q[0] - at[0]) * u[0] + (q[1] - at[1]) * u[1];
+  const cuts: Array<{ k: number; q: V }> = [];
+  for (let k = 0; k < n; k++) {
+    const p = face[k];
+    const q = face[(k + 1) % n];
+    const sp = side(p);
+    const sq = side(q);
+    if ((sp < 0) !== (sq < 0)) {
+      const t = sp / (sp - sq);
+      cuts.push({ k, q: [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t] });
+    }
+  }
+  if (cuts.length !== 2) return null;
+  const [c1, c2] = cuts;
+  const half = (from: { k: number; q: V }, to: { k: number; q: V }): [V[], number[]] => {
+    const pts: V[] = [from.q];
+    const hs: number[] = [plot.halves![from.k]];
+    for (let k = (from.k + 1) % n; ; k = (k + 1) % n) {
+      pts.push(face[k]);
+      hs.push(plot.halves![k]);
+      if (k === to.k) break;
+    }
+    pts.push(to.q);
+    hs.push(LANE_HALF); // the new lane
+    return [pts, hs];
+  };
+  const [fa, ha] = half(c1, c2);
+  const [fb, hb] = half(c2, c1);
+  const tooSmall = (pts: V[]) => {
+    let area = 0;
+    for (let k = 0; k < pts.length; k++) area += pts[k][0] * pts[(k + 1) % pts.length][1] - pts[(k + 1) % pts.length][0] * pts[k][1];
+    return Math.abs(area) / 2 < 6;
+  };
+  if (tooSmall(fa) || tooSmall(fb)) return null;
+  const seeds = ids.map((id) => hashString(`plot:${plot.seed}:${id}`));
+  return [
+    drawPlot({ ...plot, id: ids[0], seed: seeds[0] }, fa, ha),
+    drawPlot({ ...plot, id: ids[1], seed: seeds[1], special: undefined }, fb, hb),
+  ];
+}
+
 export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneModel; spawns: SpawnPoint[] } {
   const rng = createSeededRng(o.seed * 4099 + 17);
   const mesh = irregularQuadGrid(o.rings, o.side, o.seed, 18);
@@ -336,23 +455,9 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
       const e = edgeKey(v, face[(k + 1) % 4]);
       return joined(f, e) ? 0 : main.has(e) ? MAIN_HALF : LANE_HALF;
     });
-    const outline = inset(pts, halves);
-    // The front: the longest edge, favouring main streets.
-    let front = 0;
-    let bestLen = -1;
-    outline.forEach((a, k) => {
-      const b = outline[(k + 1) % outline.length];
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) * (halves[k] === MAIN_HALF ? 1.6 : 1);
-      if (len > bestLen) {
-        bestLen = len;
-        front = k;
-      }
-    });
-    const [ax, ay] = outline[front];
-    const [bx, by] = outline[(front + 1) % 4];
     const kind = kinds.get(f)!;
     const seed = hashString(`plot:${o.seed}:${f}`);
-    patches.push({ id: f, kind, points: outline, ink: plotInk(kind, seed), grain: Math.atan2(by - ay, bx - ax), seed, front });
+    patches.push(drawPlot({ id: f, kind, points: [], ink: plotInk(kind, seed), grain: 0, seed }, pts, halves));
   });
 
   // Bridges: where a main street runs along a seam between two stretches of the stream.

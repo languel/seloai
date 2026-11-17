@@ -12,7 +12,7 @@ import type { WorldDocument } from './document';
 import { findGenerator, generatedFromTileMap, type SceneParams } from './sceneGenerators';
 import { PLOT_KINDS } from './patchworkVillage';
 import { mapFromScene, type SceneEdit, type SceneRecipe, type WorldScene } from './worldScene';
-import { SCENE_LAYERS, type FeatureKind, type Terrain } from '../art/scene';
+import { BUILDING_VARIANTS, SCENE_LAYERS, type FeatureKind, type Terrain } from '../art/scene';
 import type { WorldContext } from './worldContext';
 
 export type MapLayerId = 'bg0' | 'bg1' | 'obj0' | 'obj1';
@@ -289,6 +289,7 @@ function checkEdit(edit: SceneEdit) {
         if (!(f.w >= 1 && f.h >= 1)) fail('A placed feature needs a size of at least 1×1.');
         if (f.layer !== undefined && !SCENE_LAYERS.some((l) => l.id === f.layer)) fail(`"${f.layer}" is not a layer.`);
         if (f.angle !== undefined && !Number.isFinite(f.angle)) fail('angle must be a number of radians.');
+        if (f.variant !== undefined && !BUILDING_VARIANTS.some((v) => v.id === f.variant)) fail(`"${f.variant}" is not a kind of building.`);
       }
       return;
     }
@@ -314,6 +315,18 @@ function checkEdit(edit: SceneEdit) {
       return;
     case 'title':
       if (!edit.title?.trim()) fail('A title cannot be empty.');
+      return;
+    case 'removeMany':
+      if (!Array.isArray(edit.ids) || edit.ids.length === 0 || edit.ids.some((id) => typeof id !== 'string')) fail('removeMany needs a list of feature ids.');
+      return;
+    case 'mergePlots':
+      requireInt(edit.a, 'plot a');
+      requireInt(edit.b, 'plot b');
+      if (edit.a === edit.b) fail('A plot cannot be merged with itself.');
+      return;
+    case 'splitPlot':
+      requireInt(edit.id, 'plot id');
+      if (!Number.isFinite(edit.x) || !Number.isFinite(edit.y)) fail('splitPlot needs the point to cut through.');
       return;
     case 'plot':
       requireInt(edit.id, 'plot id');

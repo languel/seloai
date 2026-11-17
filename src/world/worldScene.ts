@@ -9,8 +9,8 @@
  * the new seed did not build) is skipped and reported, not lost.
  */
 import { withAmbience } from '../art/ambient';
-import type { FeatureKind, PatchKind, SceneFeature, SceneLayer, SceneModel, Terrain } from '../art/scene';
-import { plotInk, pointInPolygon, rasterizePatches } from './patchworkVillage';
+import type { BuildingVariant, FeatureKind, PatchKind, SceneFeature, SceneLayer, SceneModel, Terrain } from '../art/scene';
+import { mergePlots, plotInk, pointInPolygon, rasterizePatches, splitPlot } from './patchworkVillage';
 import { hashString } from '../core/rng';
 import type { PointOfInterest, SpawnPoint, VillageMap } from '../engine/types';
 import { findGenerator, type GeneratedWorld, type SceneParams } from './sceneGenerators';
@@ -32,13 +32,24 @@ export type SceneEdit =
   /** Move a feature to another layer. */
   | { op: 'layer'; id: string; layer: SceneLayer }
   | { op: 'remove'; id: string }
+  /** Many features cut away at once (an erase brush stroke), as one step. */
+  | { op: 'removeMany'; ids: string[] }
   | { op: 'landmark'; landmark: PointOfInterest }
   | { op: 'removeLandmark'; id: string }
   | { op: 'spawn'; spawn: SpawnPoint }
   | { op: 'removeSpawn'; id: string }
   | { op: 'title'; title: string }
   /** In a patchwork village: what a plot holds (house, garden, field, …). */
-  | { op: 'plot'; id: number; kind: PatchKind };
+  | { op: 'plot'; id: number; kind: PatchKind }
+  /** In a patchwork village: two neighbouring plots made one (the street between goes). */
+  | { op: 'mergePlots'; a: number; b: number }
+  /** In a patchwork village: a plot cut in two by a new lane through (x, y), across its front. */
+  | { op: 'splitPlot'; id: number; x: number; y: number };
+
+/** Ids the two halves of a split plot take: stable for the edit that made them. */
+export function splitIds(editIndex: number): [number, number] {
+  return [100000 + editIndex * 2, 100001 + editIndex * 2];
+}
 
 export interface PlacedFeature {
   id: string;
@@ -50,6 +61,7 @@ export interface PlacedFeature {
   layer?: SceneLayer;
   angle?: number;
   ref?: string;
+  variant?: BuildingVariant;
 }
 
 export interface WorldScene {
@@ -149,6 +161,13 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         touchRect(touched, f.x, f.y, f.w, f.h);
         return;
       }
+      case 'removeMany': {
+        const ids = new Set(edit.ids);
+        for (const f of model.features) if (f.id && ids.has(f.id)) touchRect(touched, f.x, f.y, f.w, f.h);
+        for (const id of edit.ids) if (id.startsWith('amb-') && !model.features.some((f) => f.id === id)) lateRemovals.push({ index, id });
+        model.features = model.features.filter((f) => !f.id || !ids.has(f.id));
+        return;
+      }
       case 'remove': {
         const f = model.features.find((g) => g.id === edit.id);
         if (!f) {
@@ -185,6 +204,25 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         if (i < 0 || !model.patches) return void skipped.push({ index, reason: `no plot ${edit.id}` });
         const plot = model.patches[i];
         model.patches = model.patches.map((p, k) => (k === i ? { ...plot, kind: edit.kind, ink: plotInk(edit.kind, plot.seed) } : p));
+        plotsChanged = true;
+        return;
+      }
+      case 'mergePlots': {
+        const a = model.patches?.find((p) => p.id === edit.a);
+        const b = model.patches?.find((p) => p.id === edit.b);
+        if (!a || !b || a === b) return void skipped.push({ index, reason: `no plots ${edit.a} and ${edit.b} to merge` });
+        const merged = mergePlots(a, b);
+        if (!merged) return void skipped.push({ index, reason: `plots ${edit.a} and ${edit.b} do not share a whole edge` });
+        model.patches = model.patches!.filter((p) => p !== b).map((p) => (p === a ? merged : p));
+        plotsChanged = true;
+        return;
+      }
+      case 'splitPlot': {
+        const plot = model.patches?.find((p) => p.id === edit.id);
+        if (!plot) return void skipped.push({ index, reason: `no plot ${edit.id} to split` });
+        const halves = splitPlot(plot, [edit.x, edit.y], splitIds(index));
+        if (!halves) return void skipped.push({ index, reason: `plot ${edit.id} is too small to split there` });
+        model.patches = model.patches!.flatMap((p) => (p === plot ? halves : [p]));
         plotsChanged = true;
         return;
       }
