@@ -173,9 +173,16 @@ function bakeSceneUncached(scene: WorldScene): BakedScene {
         if (!f) return void skipped.push({ index, reason: `nothing called ${edit.id} to move` });
         if (!inside(edit.x, edit.y)) return void skipped.push({ index, reason: `${edit.id} would leave the world` });
         touchRect(touched, f.x, f.y, f.w, f.h);
+        const [dx, dy] = [edit.x - f.x, edit.y - f.y];
         f.x = edit.x;
         f.y = edit.y;
         touchRect(touched, f.x, f.y, f.w, f.h);
+        // A place that belongs to the feature (the well's named place) goes with it.
+        model.landmarks = model.landmarks.map((l) =>
+          l.featureId === f.id
+            ? { ...l, x: Math.max(0, Math.min(model.width - 1, l.x + dx)), y: Math.max(0, Math.min(model.height - 1, l.y + dy)) }
+            : l,
+        );
         return;
       }
       case 'houseLook':

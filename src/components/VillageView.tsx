@@ -1274,6 +1274,49 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
   };
 
+  /** Double-click a character to frame and follow them, or a named place to frame it. */
+  const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+    const td = sim.map.tileDim;
+    const tileX = wx / td;
+    const tileY = wy / td;
+    let villager: VillagerRuntime | null = null;
+    let best = 1.4;
+    for (const rt of sim.runtimes.values()) {
+      const d = Math.hypot(rt.x + 0.5 - tileX, rt.y + 0.5 - tileY);
+      if (d < best) {
+        best = d;
+        villager = rt;
+      }
+    }
+    const cam = cameraRef.current;
+    if (villager) {
+      takeOver();
+      setSelectedId(villager.id);
+      setFollowSelected(true);
+      cam.anchor = null;
+      cam.targetZoom = Math.max(cam.targetZoom, 2.2);
+      return;
+    }
+    let place: { x: number; y: number } | null = null;
+    let near = 2.5;
+    for (const p of sim.map.pointsOfInterest ?? []) {
+      const d = Math.hypot(p.x + 0.5 - tileX, p.y + 0.5 - tileY);
+      if (d < near) {
+        near = d;
+        place = p;
+      }
+    }
+    if (place) {
+      takeOver();
+      setFollowSelected(false);
+      cam.anchor = null;
+      cam.x = (place.x + 0.5) * td;
+      cam.y = (place.y + 0.5) * td;
+      cam.targetZoom = Math.max(cam.targetZoom, 1.8);
+    }
+  };
+
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     takeOver();
@@ -1701,6 +1744,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onDoubleClick={handleDoubleClick}
           onWheel={handleWheel}
           className="pixel-canvas h-full w-full cursor-grab active:cursor-grabbing touch-none"
         />

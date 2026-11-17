@@ -257,3 +257,22 @@ describe('pattern brushes, house looks and world threads', () => {
     expect(() => applyCommand(doc(), { type: 'scene.edit', edit: { op: 'palette', palette: 'neon' } })).toThrow(/not a palette/);
   });
 });
+
+describe('places that belong to a feature', () => {
+  it('moving the patchwork well brings its named place along; a place can also be moved alone', () => {
+    const recipe = { generator: 'patchwork', params: SCENE_GENERATORS.find((g) => g.id === 'patchwork')!.resolveParams({}), seed: 7 };
+    const base = bakeScene({ recipe, edits: [] }).model;
+    const well = base.features.find((f) => f.id === 'square-well')!;
+    const place = base.landmarks.find((l) => l.id === 'poi-well')!;
+    expect(place.featureId).toBe('square-well');
+
+    const moved = bakeScene({ recipe, edits: [{ op: 'move', id: 'square-well', x: well.x + 10, y: well.y - 6 }] }).model;
+    const after = moved.landmarks.find((l) => l.id === 'poi-well')!;
+    expect([after.x, after.y]).toEqual([place.x + 10, place.y - 6]);
+
+    const alone = bakeScene({ recipe, edits: [{ op: 'landmark', landmark: { ...place, x: 5, y: 5 } }] }).model;
+    expect(alone.landmarks.filter((l) => l.id === 'poi-well')).toHaveLength(1);
+    expect(alone.landmarks.find((l) => l.id === 'poi-well')).toMatchObject({ x: 5, y: 5 });
+    expect(alone.features.find((f) => f.id === 'square-well')).toMatchObject({ x: well.x, y: well.y });
+  });
+});

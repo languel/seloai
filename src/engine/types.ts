@@ -32,6 +32,8 @@ export interface PointOfInterest {
   x: number;
   y: number;
   description?: string;
+  /** The feature this place belongs to (a well, a dancing ground): moving it moves the place too. */
+  featureId?: string;
 }
 
 export interface TileMacroStamp {

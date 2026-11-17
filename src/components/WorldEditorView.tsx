@@ -5,7 +5,7 @@ import { BUILDING_VARIANTS, SCENE_LAYERS, kindsOnLayer, layerOf, type BuildingVa
 import { WORLD_PALETTES } from '../art/looks';
 import { STITCH_STYLES } from '../art/stitchStyles';
 import { SHEVITSA_REFERENCES } from '../art/patternReferences';
-import type { VillageMap } from '../engine/types';
+import type { PointOfInterest, VillageMap } from '../engine/types';
 import { PLACEABLE_FEATURES, type WorldCommand } from '../world/commands';
 import { SCENE_GENERATORS, findGenerator, type SceneParamSpec, type SceneParams } from '../world/sceneGenerators';
 import { PLOT_KINDS, mergePlots, pointInPolygon } from '../world/patchworkVillage';
@@ -187,6 +187,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const [scatterCount, setScatterCount] = useState(4);
   const [showWalk, setShowWalk] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingPlace, setPendingPlace] = useState<{ kind: 'landmark' | 'spawn'; x: number; y: number } | null>(null);
   const [pendingLabel, setPendingLabel] = useState('');
@@ -203,6 +204,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     | { mode: 'pan'; sx: number; sy: number; vx: number; vy: number }
     | { mode: 'paint'; cells: Map<number, [number, number]> }
     | { mode: 'move'; feature: SceneFeature; start: [number, number]; at: [number, number] }
+    | { mode: 'movePlace'; place: PointOfInterest; start: [number, number]; at: [number, number] }
     | { mode: 'scatter'; features: PlacedFeature[]; last: [number, number] }
     | { mode: 'erase'; ids: Set<string> }
     | { mode: 'stroke'; points: Array<[number, number]> }
@@ -388,12 +390,31 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       ctx.fillStyle = 'rgba(170, 30, 20, 0.22)';
       for (let x = 0; x < map.width; x++) for (let y = 0; y < map.height; y++) if (map.collisionGrid[x]?.[y]) ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
     }
-    // Named places and start points, as small stitched markers.
+    // Named places: pins with their names, the same size on screen at any zoom, so they can be
+    // found and dragged. The one being dragged is drawn where it will land.
     ctx.lineWidth = 1.5 * lineW;
+    const dragging = drag.current?.mode === 'movePlace' ? drag.current : null;
+    ctx.font = `${11 * lineW}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
     for (const p of map.pointsOfInterest ?? []) {
-      ctx.strokeStyle = 'rgba(150, 20, 20, 0.9)';
-      ctx.setLineDash([4 * lineW, 3 * lineW]);
-      ctx.strokeRect(p.x * CELL + 3, p.y * CELL + 3, CELL - 6, CELL - 6);
+      const [px, py] = dragging?.place.id === p.id ? dragging.at : [p.x, p.y];
+      const cx = px * CELL + CELL / 2;
+      const cy = py * CELL + CELL / 2;
+      const chosen = p.id === selectedPlaceId || dragging?.place.id === p.id;
+      const r = (chosen ? 7 : 5.5) * lineW;
+      ctx.setLineDash([]);
+      ctx.fillStyle = chosen ? 'rgba(170, 25, 20, 1)' : 'rgba(150, 20, 20, 0.92)';
+      ctx.strokeStyle = 'rgba(255, 250, 240, 0.95)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      const tw = ctx.measureText(p.label).width;
+      const lx = cx + r + 3 * lineW;
+      ctx.fillStyle = 'rgba(250, 245, 232, 0.85)';
+      ctx.fillRect(lx - 2 * lineW, cy - 7 * lineW, tw + 4 * lineW, 14 * lineW);
+      ctx.fillStyle = chosen ? 'rgba(150, 20, 20, 1)' : 'rgba(40, 30, 25, 0.95)';
+      ctx.fillText(p.label, lx, cy);
     }
     for (const s of map.spawnPoints) {
       ctx.strokeStyle = 'rgba(20, 60, 140, 0.9)';
@@ -472,7 +493,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       }
     }
     ctx.setLineDash([]);
-  }, [frame, world, map, showWalk, selected, tool, brush, featureKind, patternSize, variant, mergeFrom, brushMode, brushSize]);
+  }, [frame, world, map, showWalk, selected, selectedPlaceId, tool, brush, featureKind, patternSize, variant, mergeFrom, brushMode, brushSize]);
 
   const cellAt = (event: React.PointerEvent): [number, number] => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -485,6 +506,56 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
     const { zoom, x, y } = view.current;
     return [(event.clientX - rect.left - x) / (zoom * CELL), (event.clientY - rect.top - y) / (zoom * CELL)];
   };
+  /** The named place whose pin or name is under the pointer (in screen pixels, so small worlds work too). */
+  const placeAt = (event: React.PointerEvent | React.MouseEvent): PointOfInterest | undefined => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const { zoom, x, y } = view.current;
+    const mx = event.clientX - rect.left;
+    const my = event.clientY - rect.top;
+    const ctx = canvasRef.current!.getContext('2d')!;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.font = '11px system-ui, sans-serif';
+    let best: PointOfInterest | undefined;
+    let bestD = Infinity;
+    for (const p of map.pointsOfInterest ?? []) {
+      const cx = x + (p.x + 0.5) * CELL * zoom;
+      const cy = y + (p.y + 0.5) * CELL * zoom;
+      const d = Math.hypot(mx - cx, my - cy);
+      const onLabel = mx >= cx + 6 && mx <= cx + 12 + ctx.measureText(p.label).width && Math.abs(my - cy) <= 8;
+      if ((d <= 10 || onLabel) && d < bestD) {
+        best = p;
+        bestD = d;
+      }
+    }
+    ctx.restore();
+    return best;
+  };
+  /** Centres the view on a cell and zooms in, so a place can be found on a large map. */
+  const frameCell = (cx: number, cy: number) => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const fit = Math.min(wrap.clientWidth / (map.width * CELL), wrap.clientHeight / (map.height * CELL));
+    const zoom = Math.max(view.current.zoom, Math.min(4, fit * 4));
+    view.current = { ...view.current, zoom, x: wrap.clientWidth / 2 - (cx + 0.5) * CELL * zoom, y: wrap.clientHeight / 2 - (cy + 0.5) * CELL * zoom };
+    redraw();
+  };
+  const selectPlace = (p: PointOfInterest, frame = false) => {
+    setSelectedPlaceId(p.id);
+    setSelectedId(null);
+    if (frame) frameCell(p.x, p.y);
+    redraw();
+  };
+  const onDoubleClick = (event: React.MouseEvent) => {
+    const p = placeAt(event);
+    if (p) return selectPlace(p, true);
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const { zoom, x, y } = view.current;
+    const f = featureAt(Math.floor((event.clientX - rect.left - x) / (zoom * CELL)), Math.floor((event.clientY - rect.top - y) / (zoom * CELL)));
+    if (f) frameCell(f.x + (f.w - 1) / 2, f.y + (f.h - 1) / 2);
+  };
+  const selectedPlace = (map.pointsOfInterest ?? []).find((p) => p.id === selectedPlaceId);
+
   const markId = () => {
     const used = new Set((baked?.model.patternMarks ?? []).map((m) => m.id));
     let n = (baked?.model.patternMarks?.length ?? 0) + 1;
@@ -515,7 +586,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   const onPointerDown = (event: React.PointerEvent) => {
     canvasRef.current!.setPointerCapture(event.pointerId);
     const cell = cellAt(event);
-    const panning = event.button === 1 || event.button === 2 || event.altKey;
+    const panning = event.button === 1 || event.button === 2 || event.altKey || event.shiftKey;
     // A tile map becomes a place on the first edit, as one undo step of its own.
     if (!panning && !scene && tool !== 'select') {
       if (!run({ type: 'scene.fromTiles' }, 'Edit as a place')) return;
@@ -555,6 +626,14 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       addBrush(cells, cell);
       drag.current = { mode: 'paint', cells };
     } else if (tool === 'select') {
+      // A named place's pin is on top of everything: pick it first.
+      const place = placeAt(event);
+      if (place) {
+        selectPlace(place);
+        drag.current = { mode: 'movePlace', place, start: cell, at: [place.x, place.y] };
+        return;
+      }
+      setSelectedPlaceId(null);
       const f = featureAt(x, y);
       setSelectedId(f?.id ?? null);
       if (f) drag.current = { mode: 'move', feature: f, start: cell, at: [f.x, f.y] };
@@ -614,6 +693,10 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       addBrush(d.cells, cell);
     } else if (d?.mode === 'move') {
       d.at = [d.feature.x + cell[0] - d.start[0], d.feature.y + cell[1] - d.start[1]];
+    } else if (d?.mode === 'movePlace') {
+      const nx = Math.max(0, Math.min(map.width - 1, d.place.x + cell[0] - d.start[0]));
+      const ny = Math.max(0, Math.min(map.height - 1, d.place.y + cell[1] - d.start[1]));
+      d.at = [nx, ny];
     } else if (d?.mode === 'erase' && inside(cell)) {
       eraseAround(d.ids, cell);
     } else if (d?.mode === 'stroke') {
@@ -645,6 +728,8 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
       if (ids.length === 1) edit({ op: 'remove', id: ids[0] }, 'Cut away');
       else edit({ op: 'removeMany', ids }, `Cut away ${ids.length}`);
       if (selectedId && d.ids.has(selectedId)) setSelectedId(null);
+    } else if (d?.mode === 'movePlace' && (d.at[0] !== d.place.x || d.at[1] !== d.place.y)) {
+      edit({ op: 'landmark', landmark: { ...d.place, x: d.at[0], y: d.at[1] } }, `Move ${d.place.label}`);
     } else if (d?.mode === 'move' && d.feature.id && (d.at[0] !== d.feature.x || d.at[1] !== d.feature.y)) {
       edit({ op: 'move', id: d.feature.id, x: d.at[0], y: d.at[1] }, `Move ${d.feature.kind}`);
     }
@@ -665,6 +750,14 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
   });
 
   const onWheel = (event: React.WheelEvent) => {
+    // A trackpad's two-finger drag pans; a pinch (sent with ctrl) or a mouse wheel zooms.
+    const mouseWheel = event.deltaMode !== 0 || (event.deltaX === 0 && Number.isInteger(event.deltaY) && Math.abs(event.deltaY) >= 40);
+    if (!event.ctrlKey && !mouseWheel) {
+      view.current.x -= event.deltaX;
+      view.current.y -= event.deltaY;
+      redraw();
+      return;
+    }
     const rect = canvasRef.current!.getBoundingClientRect();
     const mx = event.clientX - rect.left;
     const my = event.clientY - rect.top;
@@ -1123,7 +1216,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               )}
             </>
           )}
-          {tool === 'select' && <span className="stitch-muted">Drag empty cloth to pan; scroll to zoom.</span>}
+          {tool === 'select' && <span className="stitch-muted">Drag a pin to move a place. Pan: drag empty cloth, shift-drag or two fingers; pinch or scroll to zoom. Double-click to frame.</span>}
           <span className="flex-1" />
           <GlyphButton glyph="walkable" label="Show where people cannot walk" pressed={showWalk} dimOff onClick={() => setShowWalk((v) => !v)} />
           <GlyphButton glyph="undo" label="Undo" disabled={!canUndo} onClick={onUndo} />
@@ -1141,6 +1234,7 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
               redraw();
             }}
             onWheel={onWheel}
+            onDoubleClick={onDoubleClick}
             onContextMenu={(e) => e.preventDefault()}
           />
           {pendingPlace && (
@@ -1201,8 +1295,47 @@ export default function WorldEditorView({ map, look, dispatch, canUndo, canRedo,
           })}
         </ol>
         <KnotDivider orientation="horizontal" className="my-1" />
+        <div className="font-display text-sm">Places</div>
+        {(map.pointsOfInterest ?? []).length ? (
+          <ul className="max-h-40 space-y-0.5 overflow-y-auto thin-scroll">
+            {(map.pointsOfInterest ?? []).map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  title="Show it on the map"
+                  onClick={() => {
+                    setTool('select');
+                    selectPlace(p, true);
+                  }}
+                  className={`w-full truncate rounded-sm px-1 py-0.5 text-left hover:bg-black/5 ${p.id === selectedPlaceId ? 'stitch-thread font-semibold' : ''}`}
+                >
+                  {p.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="stitch-muted">No named places yet.</span>
+        )}
+        <KnotDivider orientation="horizontal" className="my-1" />
         <div className="font-display text-sm">Selected</div>
-        {selected ? (
+        {selectedPlace ? (
+          <div className="flex items-center justify-between gap-2">
+            <span>
+              {selectedPlace.label} at {selectedPlace.x}, {selectedPlace.y}
+              <span className="stitch-muted block text-[10px]">Drag its pin to move it{selectedPlace.featureId ? ', or drag the thing it belongs to' : ''}.</span>
+            </span>
+            <GlyphButton
+              glyph="erase"
+              label="Unname this place"
+              tipSide="below-left"
+              onClick={() => {
+                edit({ op: 'removeLandmark', id: selectedPlace.id }, `Unname ${selectedPlace.label}`);
+                setSelectedPlaceId(null);
+              }}
+            />
+          </div>
+        ) : selected ? (
           <div className="flex items-center justify-between gap-2">
             <span>
               {FEATURE_NAMES[selected.kind] ?? selected.kind} at {selected.x}, {selected.y}

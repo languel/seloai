@@ -493,10 +493,10 @@ export function generatePatchworkVillage(o: PatchworkOptions): { model: SceneMod
   // (at their doors, on the street), and the bridges. People gather where these are.
   const name = NAMES[Math.floor(rng() * NAMES.length)];
   const landmarks: PointOfInterest[] = [];
-  const add = (id: string, label: string, [x, y]: V, description: string) =>
-    landmarks.push({ id: `poi-${id}`, tag: label.replace(/[^A-Za-z]+/g, ''), label, x: Math.round(x), y: Math.round(y), description });
-  add('square', `${name} square`, [hx, hy + 1.5], 'The heart of the village, where the khoro is danced.');
-  add('well', `${name} well`, [wx, wy + 1.5], 'Where water is drawn and news is traded.');
+  const add = (id: string, label: string, [x, y]: V, description: string, featureId?: string) =>
+    landmarks.push({ id: `poi-${id}`, tag: label.replace(/[^A-Za-z]+/g, ''), label, x: Math.round(x), y: Math.round(y), description, ...(featureId ? { featureId } : {}) });
+  add('square', `${name} square`, [hx, hy + 1.5], 'The heart of the village, where the khoro is danced.', 'square-ground');
+  add('well', `${name} well`, [wx, wy + 1.5], 'Where water is drawn and news is traded.', 'square-well');
   const NAMED: Record<SpecialBuilding, [string, string]> = {
     church: ['The church', 'A whitewashed church with a bell tower over the square.'],
     inn: ['The inn', 'Benches outside, rakia within, and every rumour in the village.'],
