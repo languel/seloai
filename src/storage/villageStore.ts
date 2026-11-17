@@ -1,3 +1,4 @@
+import { storyPackFromMarkdown } from '../world/storyText';
 import { normalizeWorldContext } from '../world/worldContext';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, withBundledTileMeanings } from '../world/packs';
 import type { WorldContext } from '../world/worldContext';
@@ -409,6 +410,15 @@ function isWorldContext(value: unknown): value is WorldContext {
       w.storyLines &&
       Array.isArray(w.storyLines.openingBeats),
   );
+}
+
+/**
+ * An imported file of any kind the app reads: a Markdown story (with a YAML header) by its
+ * name, otherwise JSON (a project, a level, a cast, a story pack…).
+ */
+export function parseImportedFile(name: string, raw: string): ParsedImportBundle {
+  if (/\.(md|markdown)$/i.test(name)) return parseImportedVillageJson(JSON.stringify(storyPackFromMarkdown(raw)));
+  return parseImportedVillageJson(raw);
 }
 
 export function parseImportedVillageJson(raw: string): ParsedImportBundle {

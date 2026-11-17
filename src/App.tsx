@@ -3,6 +3,7 @@ import type { WorldCommand } from './world/commands';
 import { WorldStore } from './world/worldStore';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, tileSemanticsForMap } from './world/packs';
 import { createWorldArt } from './art/gameLook';
+import { storyToMarkdown } from './world/storyText';
 import { GENERIC_WORLD_CONTEXT } from './world/worldContext';
 import { createBrowserSimulation } from './app/browserSimulation';
 import { GlyphButton } from './components/Glyph';
@@ -66,7 +67,7 @@ import {
   exportProjectJson,
   listSavedWorlds,
   loadPersistedState,
-  parseImportedVillageJson,
+  parseImportedFile,
   resetPersistedState,
   savePersistedState,
   saveWorldToMemory,
@@ -586,6 +587,16 @@ export function App() {
     setDataNotice(`Exported level "${map.name}".`);
   };
 
+  /** The story and cast as a Markdown file, the friendly form to share or start from. */
+  const handleExportStoryMarkdown = () => {
+    if (!map) return;
+    const sim = simRef.current;
+    const text = storyToMarkdown(sim?.world ?? GENERIC_WORLD_CONTEXT, villagers, map.name, sim?.focalWorldlineId);
+    const blob = new Blob([text], { type: 'text/markdown' });
+    saveBlob(blob, `${map.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'story'}.story.md`);
+    setDataNotice(`Exported the story and ${villagers.length} characters as Markdown.`);
+  };
+
   const handleExportCharacters = () => {
     downloadJson('characters.seloai.json', exportCharactersJson(villagers));
     setDataNotice(`Exported ${villagers.length} characters (without histories or world).`);
@@ -620,7 +631,7 @@ export function App() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = parseImportedVillageJson(String(reader.result));
+        const parsed = parseImportedFile(file.name, String(reader.result));
         const nextMap = parsed.map ?? map;
         const nextVillagers = parsed.villagers ?? villagers;
         const nextSettings = { ...settings, ...(parsed.modelSettings ?? {}) };
@@ -1055,6 +1066,14 @@ export function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               <button
                 type="button"
+                onClick={handleExportStoryMarkdown}
+                className="sm:col-span-2 rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-left hover:border-ink/40"
+              >
+                <div className="font-semibold">Story (.md)</div>
+                <div className="text-[10px] text-muted">Premise, opening, characters and lines, easy to read and edit</div>
+              </button>
+              <button
+                type="button"
                 onClick={handleExportBundle}
                 className="rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-left hover:border-ink/40"
               >
@@ -1098,12 +1117,12 @@ export function App() {
 
           <section className="space-y-1.5">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-              Import (Auto-detects Project, Level, Cast, Histories, or DB)
+              Import (a story .md, or a project, level, cast or story pack .json)
             </div>
             <label className="flex cursor-pointer items-center justify-center gap-1.5 rounded-sm border border-dashed border-borderFolk bg-surface px-3 py-2 text-xs font-medium hover:border-ink/50">
               <Upload className="h-3.5 w-3.5" />
-              <span>Choose JSON File to Import…</span>
-              <input type="file" accept="application/json" className="sr-only" onChange={handleImportBundle} />
+              <span>Choose a file to import…</span>
+              <input type="file" accept=".json,.md,.markdown,application/json,text/markdown" className="sr-only" onChange={handleImportBundle} />
             </label>
           </section>
         </div>

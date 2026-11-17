@@ -8,6 +8,60 @@ import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
 
+/**
+ * A story as Markdown: a short YAML header for the world, then readable sections for the
+ * characters and the story lines. The friendliest way to write one, by hand or with an agent.
+ */
+const MARKDOWN_TEMPLATE = `---
+title: The Dark Lamp
+place: Gullrock
+kind: harbour town
+traveler: Traveler
+gathering: the quay
+premise: The lighthouse lamp went dark last night and the supply ship is due at dawn. Someone in Gullrock broke it, and everyone has a reason to want the ship to stay away.
+opening: Open at dusk on the quay, the lamp cold and the fog coming in.
+focus: Ada Bell
+---
+
+# Characters
+
+## Ada Bell
+- role: Lighthouse keeper
+- wants: Find out who broke the lamp before dawn.
+- speaks: Low and salty, few words.
+- voice: female, Danish, -0.5
+- look: skirted
+
+Stubborn and kind, she has kept the #Lighthouse for thirty years and blames herself for every wreck. She saw someone on the stairs last night and has told no one.
+
+Says:
+- {partner}, the lamp did not break itself.
+- I trimmed that wick myself at sunset.
+
+## Tobin Reed
+- role: Net mender
+- wants: Keep everyone talking about anything but the lamp.
+- speaks: Quick, warm, a little too friendly.
+- voice: male, Italian
+- look: trousered
+
+Charming and deep in debt: the ship carries the man he owes money to. He is never far from the #Quay.
+
+Says:
+- Fine evening for it, {partner}. Fish are running.
+
+# Story lines
+
+## Opening
+- Fog rolls in off the water as {a} and {b} meet by {place}.
+
+## Closing
+- {a} glances back at the dark tower as the talk with {b} ends.
+
+## Anyone
+- Did you hear a ship's bell out there? (when: ship, bell)
+`;
+
 /** A story pack: the premise, the opening and the cast, imported onto a world you built. */
 const STORY_PACK_TEMPLATE = `{
   "format": "seloai-world-pack",
@@ -95,20 +149,20 @@ interface AssistantPrompt {
 const ASSISTANT_PROMPTS: AssistantPrompt[] = [
   {
     id: 'story-pack',
-    title: 'Turn my idea into a story pack',
-    when: 'Start here. Paste the story pack template after the prompt.',
-    prompt: `You are helping me write a story pack for SeloAI, an app where AI characters live in a small embroidered world and talk to each other and to me.
+    title: 'Turn my idea into a story',
+    when: 'Start here. Paste the Markdown story template after the prompt.',
+    prompt: `You are helping me write a story for SeloAI, an app where AI characters live in a small embroidered world and talk to each other and to me.
 
 My story idea: [describe your idea in two or three sentences]
 
-Write a complete story pack as JSON, following the template I paste below exactly (same fields). Rules:
+Write a complete story as a Markdown file, following the template I paste below exactly: the YAML header between --- lines (title, place, kind, traveler, gathering, premise, opening, focus), then "# Characters" with one "## Name" section each (bullets for role, wants, speaks, voice, look; a paragraph for who they are; "Says:" with a few lines), then "# Story lines" with "## Opening", "## Closing" and "## Anyone" bullets. Rules:
 - 3 to 5 characters. Give each one a goal ("plan") that clashes with at least one other character's goal, and a secret or fear in their "identity".
 - Write "premise" as two sentences: the trouble, and why it matters tonight.
 - Mention the important places in identities and plans as #Tags (one word each, like #Bakery or #OldBridge). I will create places with those names in the World Editor.
-- "voice.language" is only an accent; pick varied ones. "voice.gender" is "female" or "male".
-- "figure.build" is "skirted" or "trousered".
-- Add 2 to 4 lines per character in storyLines.characterLines (used when no AI model is loaded); {partner} is the person they talk to.
-- Return only the JSON.
+- voice is "female" or "male", then an accent (like Danish or Greek), then optionally a pitch from -1 to 1. Pick varied accents.
+- look is "skirted" or "trousered".
+- Give each character 2 to 4 "Says:" lines (used when no AI model is loaded); {partner} is the person they talk to. In "## Anyone" lines, add "(when: word, word)" to tie a line to a topic.
+- Return only the Markdown.
 
 Template:`,
   },
@@ -273,8 +327,8 @@ export const AssetGuideView: React.FC = () => {
               special: <em>the Scribe</em>, who narrates, and <em>the Traveler</em>, who is you.
             </li>
             <li>
-              <strong>The story</strong> (a story pack you import): the premise, how it opens, and lines to use without an AI
-              model.
+              <strong>The story</strong> (a story file you import, Markdown or JSON): the premise, how it opens, and lines to
+              use without an AI model.
             </li>
           </ul>
           <p>When the village starts:</p>
@@ -306,9 +360,9 @@ export const AssetGuideView: React.FC = () => {
               <em>Name a place</em> to name 3 or 4 places that matter to your story (the Lighthouse, the Quay).
             </li>
             <li>
-              <strong>Story pack (10 min).</strong> Copy the story pack template below into a chat assistant together with the
-              &ldquo;Turn my idea into a story pack&rdquo; prompt and your idea. Check the result, then save it as a{' '}
-              <code>.json</code> file.
+              <strong>Story (10 min).</strong> Write your story in the Markdown template below, by hand or with a chat
+              assistant (paste the &ldquo;Turn my idea into a story&rdquo; prompt, your idea and the template). Save it as a{' '}
+              <code>.md</code> file.
             </li>
             <li>
               <strong>Import (1 min).</strong> Open <em>World &amp; Data</em> (the first button in the top bar) and under{' '}
@@ -451,8 +505,9 @@ export const AssetGuideView: React.FC = () => {
               file and anyone can import it to see your story as it is.
             </li>
             <li>
-              <strong>A story pack</strong> (the template below) is the shareable recipe: premise, opening and cast. Import it
-              onto any world; with a <code>map</code> in it, it brings its own world too.
+              <strong>A story file</strong> is the shareable recipe: premise, opening, cast and lines. Write it in Markdown (the
+              friendliest) or JSON, and import it onto any world. <em>Export → Story (.md)</em> writes the story you have now
+              as Markdown, a good place to start from. A JSON story pack can also carry its own <code>map</code>.
             </li>
             <li>Characters can be exported on their own and imported into another world.</li>
             <li>
@@ -466,7 +521,8 @@ export const AssetGuideView: React.FC = () => {
           <div className="space-y-3">
             {(
               [
-                ['story-pack', 'Story pack', 'story-pack-template.json', STORY_PACK_TEMPLATE, 'The premise, opening, scripted lines and cast. Import it onto a world you built.'],
+                ['story-md', 'Story (Markdown)', 'my-story.story.md', MARKDOWN_TEMPLATE, 'The easiest way to write a story: a short header for the world, then the characters and lines as plain sections. Reads well anywhere; import it onto a world you built.'],
+                ['story-pack', 'Story pack (JSON)', 'story-pack-template.json', STORY_PACK_TEMPLATE, 'The same story as JSON, for tools and programs. It can also carry its own map.'],
                 ['character', 'One character', 'character-template.json', CHARACTER_TEMPLATE, 'A single character as the roster keeps it. Put several in a list (or in a story pack) to import a cast.'],
               ] as const
             ).map(([id, title, file, text, note]) => (
