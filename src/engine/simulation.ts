@@ -715,6 +715,19 @@ export class VillageSimulation {
     })();
   }
 
+  /**
+   * Someone stopped mid-step (a conversation began) stands between two cells. They finish
+   * the step onto a whole cell: the one they are nearest if it is open, otherwise the nearest
+   * open one, so nobody is left halfway into a wall, a river or a house.
+   */
+  private settleOnOpenGround(rt: VillagerRuntime) {
+    const cx = Math.round(rt.x);
+    const cy = Math.round(rt.y);
+    const safe = isTileWalkable(this.map, cx, cy) ? { x: cx, y: cy } : findNearestWalkableTile(this.map, rt.x, rt.y);
+    rt.x = safe.x;
+    rt.y = safe.y;
+  }
+
   /** Sets the well's water and tells everyone in the village. */
   setWellWater(state: 'dry' | 'flowing' | null) {
     if (state === this.wellWater) return;
@@ -1822,6 +1835,8 @@ export class VillageSimulation {
     rtB.activeConversationId = convId;
     rtA.path = [];
     rtB.path = [];
+    this.settleOnOpenGround(rtA);
+    this.settleOnOpenGround(rtB);
     rtA.facing = computeFacing(rtA, rtB, rtA.facing);
     rtB.facing = computeFacing(rtB, rtA, rtB.facing);
     rtA.state = 'conversing';
@@ -2685,6 +2700,7 @@ export class VillageSimulation {
 
     const conv = this.getOrCreateHumanConversation(villagerId);
     rt.path = [];
+    this.settleOnOpenGround(rt);
     rt.facing = computeFacing(rt, this.player, rt.facing);
     rt.state = 'listening';
     rt.activityLabel = 'Listening via LFM3-Omni-2B…';

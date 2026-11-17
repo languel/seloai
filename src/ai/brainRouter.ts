@@ -486,6 +486,10 @@ class BrainRouter {
       ...spokenHistory.filter((m) => m.senderId === villager.id).map((m) => m.text),
       ...(runtime.recentUtterances ?? []),
     ].slice(-6);
+    // Lines a reply must not echo: its own recent lines, and what the others just said (a small
+    // model will happily say the line it was answering, word for word).
+    const othersRecent = spokenHistory.filter((m) => m.senderId !== villager.id).slice(-3).map((m) => m.text);
+    const avoidLines = [...recentSelfLines, ...othersRecent];
     const turnIdx = spokenHistory.length;
     const sceneTactic =
       turnIdx === 0
@@ -500,6 +504,7 @@ class BrainRouter {
           `Who you are (keep implicit—NEVER recite your job title or copy this bio): ${villager.identity}`,
           castPronounLine(params.cast),
           `The story has not begun yet. Only greet ${partnerName} and make small talk: the weather, the day's work, family, a kind word. Do NOT raise any trouble, curse, demand, sacrifice, secret, plan or quest.`,
+          `Answer what ${partnerName} said in your own words; never repeat or echo their line.`,
           `Reply in one short, warm spoken sentence (under 20 words), in first person, plain dialogue only. Always write strictly in natural English. NEVER start with or utter your own name (never write "${villager.name}:").`,
         ]
           .filter(Boolean)
@@ -517,6 +522,7 @@ class BrainRouter {
         : '',
       latestNarration ? `Just unfolded right here: ${latestNarration}` : '',
       `Dramatic direction: ${sceneTactic}`,
+      `Answer what ${partnerName} just said in your own words; never repeat or echo their line.`,
       `Respond to ${partnerName} in 1 to 2 crisp, vivid spoken sentences (under 45 words). Vary rhythm and tone—be playful, guarded, superstitious, blunt, or curious as the moment demands.`,
       `Speak ONLY plain dialogue in first person. Always write strictly in natural English regardless of voice accent. NEVER start with or utter your own name (never write "${villager.name}:"), never re-introduce your profession, and avoid stage directions.`,
     ]
@@ -590,9 +596,9 @@ class BrainRouter {
               onAudioChunk: wantVoice ? (pcm) => bufferedPcm.push(pcm) : undefined,
             });
             const rawCleanText = parseDialogueAndNarration(res.text, villager.name).display;
-            const repeated = isTextTooSimilar(rawCleanText, recentSelfLines, 0.58);
+            const repeated = isTextTooSimilar(rawCleanText, avoidLines, 0.58);
             const cleanText = repeated
-              ? synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world, greetings)
+              ? synthesizeStorySimReply(villager, partnerName, history, avoidLines, world, greetings)
               : rawCleanText;
 
             this.lastMetrics.lastOmniLatencyMs = res.durationMs;
@@ -721,12 +727,12 @@ class BrainRouter {
       allowOmniFallback: false,
     });
     if (routed) {
-      if (isTextTooSimilar(routed.text, recentSelfLines, 0.58)) {
+      if (isTextTooSimilar(routed.text, avoidLines, 0.58)) {
         const retryMessages = [
           ...chatMessages,
           {
             role: 'user' as const,
-            content: `STOP repeating yourself. You already said "${routed.text}". Pivot immediately to a completely new observation, question, or next step with ${partnerName} in under 35 words.`,
+            content: `STOP. "${routed.text}" repeats what was already said. Answer ${partnerName} in your own words instead: a new observation, question, or next step, under 35 words. Never echo their line.`,
           },
         ];
         const retry = await this.runTextBrain(retryMessages, settings, {
@@ -736,10 +742,10 @@ class BrainRouter {
           sanitizeName: villager.name,
           allowOmniFallback: false,
         }).catch(() => null);
-        if (retry && !isTextTooSimilar(retry.text, recentSelfLines, 0.58)) {
+        if (retry && !isTextTooSimilar(retry.text, avoidLines, 0.58)) {
           routed = retry;
         } else {
-          const fresh = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world, greetings);
+          const fresh = synthesizeStorySimReply(villager, partnerName, history, avoidLines, world, greetings);
           runtime.recentUtterances = pushRing(runtime.recentUtterances, fresh);
           return { ...routed, text: fresh };
         }
@@ -751,7 +757,7 @@ class BrainRouter {
     // Story-Sim deterministic persona fallback (instant, zero VRAM)
     const started = performance.now();
     await this.delay(180);
-    const reply = synthesizeStorySimReply(villager, partnerName, history, recentSelfLines, world, greetings);
+    const reply = synthesizeStorySimReply(villager, partnerName, history, avoidLines, world, greetings);
     runtime.recentUtterances = pushRing(runtime.recentUtterances, reply);
     const durationMs = Math.round(performance.now() - started);
     this.log({
