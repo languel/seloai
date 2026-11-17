@@ -343,8 +343,9 @@ export const AssetGuideView: React.FC = () => {
           </ol>
           <p>
             Useful controls: the play/pause and speed menu in the village toolbar; <em>Story mode</em> (the camera follows the
-            story); double-click a character or a highlighted name or place to look there; <em>Reset story</em> (the circular
-            arrow) to start again in the same world.
+            story); double-click a character on the map to talk to them, Shift + double-click to follow them; double-click a
+            highlighted name or place to look there; <kbd>/</kbd> to say something, <kbd>\</kbd> to show or hide the side
+            panel; <em>Reset story</em> (the circular arrow) to start again in the same world.
           </p>
         </Section>
 

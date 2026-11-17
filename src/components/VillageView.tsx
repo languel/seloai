@@ -1417,7 +1417,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
     if (place) glideToCell(place.x, place.y);
   };
 
-  /** Double-click a character to frame and follow them, or a named place to frame it. */
+  /** Double-click a character to talk to them (with Shift, to frame and follow them), or a named place to frame it. */
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
     const td = sim.map.tileDim;
@@ -1433,7 +1433,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
       }
     }
     if (villager) {
-      focusCharacter(villager.id);
+      // Shift + double-click frames and follows them; a plain double-click talks to them.
+      if (e.shiftKey) {
+        focusCharacter(villager.id);
+        return;
+      }
       const name = sim.configs.get(villager.id)?.name;
       if (name) {
         setSelectedId(villager.id);
