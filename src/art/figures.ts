@@ -598,11 +598,14 @@ function headdressShapes(t: Traits, headY: number, view: FigureView, build: Figu
   } else if (t.headdress !== 'wreath') {
     shapes.push(...newerHeaddress(t, headY, view));
   } else {
-    const count = view === 'side' ? 5 : 7;
+    // From the front the flowers ring the head; in profile (facing right) they run over the
+    // back and top of the head and stop at the brow, never in front of the face.
+    const side = view === 'side';
+    const count = side ? 5 : 7;
+    const [from, to] = side ? [Math.PI * 0.92, Math.PI * 1.62] : [Math.PI, Math.PI * 2];
     for (let i = 0; i < count; i++) {
-      const a = Math.PI + (i / (count - 1)) * Math.PI;
-      const x = Math.cos(a) * r * 1.45 * (view === 'side' ? 0.8 : 1);
-      shapes.push({ kind: 'knot', at: [x, headY + Math.sin(a) * r * 1.45], r: r * 0.22, ink: i % 2 ? 'accent' : 'primary' });
+      const a = from + (i / (count - 1)) * (to - from);
+      shapes.push({ kind: 'knot', at: [Math.cos(a) * r * 1.3, headY + Math.sin(a) * r * 1.3], r: r * 0.22, ink: i % 2 ? 'accent' : 'primary' });
     }
   }
   return shapes;
