@@ -21,7 +21,9 @@ export type SimMind = Pick<
   | 'flushAudioQueue'
   | 'setSpeechPaused'
   | 'log'
->;
+> &
+  /** Optional: forget story-level memory (scene hooks used) when the story is reset. */
+  Partial<Pick<typeof brainRouter, 'resetStoryMemory'>>;
 
 export interface SimPorts {
   mind: SimMind;

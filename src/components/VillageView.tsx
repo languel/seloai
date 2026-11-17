@@ -106,6 +106,8 @@ interface VillageViewProps {
    * stays mounted underneath, hidden, so it comes back as it was.
    */
   sidebarSwap?: React.ReactNode;
+  /** Starts the story again in the world as it is now (backed up first). */
+  onResetStory?: () => void;
 }
 
 interface MentionCandidate {
@@ -471,6 +473,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onUpdateAesthetic,
   sidebarOpen: sidebarOpenProp,
   sidebarSwap,
+  onResetStory,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -512,6 +515,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [scriptCollapsed, setScriptCollapsed] = useState(false);
   const [followSelected, setFollowSelected] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   // Story mode: the director camera follows the story until the viewer takes over.
   const [storyMode, setStoryModeState] = useState(() => {
     try {
@@ -1947,6 +1951,32 @@ export const VillageView: React.FC<VillageViewProps> = ({
                     )}
               </span>
             </button>
+            {onResetStory &&
+              (confirmReset ? (
+                <span className="inline-flex shrink-0 items-center gap-1 text-[11px]">
+                  <span>Reset the story?</span>
+                  <button
+                    type="button"
+                    className="glyph-button rounded-sm px-1.5 py-0.5 font-semibold"
+                    onClick={() => {
+                      setConfirmReset(false);
+                      onResetStory();
+                      setTick((t) => t + 1);
+                    }}
+                  >
+                    Reset
+                  </button>
+                  <button type="button" className="glyph-button rounded-sm px-1.5 py-0.5" onClick={() => setConfirmReset(false)}>
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <GlyphButton
+                  glyph="reset"
+                  label="Reset the story: same world and cast, everyone back at their starting places (the old story is backed up)"
+                  onClick={() => setConfirmReset(true)}
+                />
+              ))}
             <GlyphButton
               glyph="scatter"
               label="Scatter villagers around the map"

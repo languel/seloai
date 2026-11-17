@@ -3,7 +3,7 @@
  * schema is plain data, so the world editor builds its controls from it and agents read the
  * same schema through the tool API.
  */
-import { buildSceneModel, semanticsFromTable, type SceneFeature, type SceneModel } from '../art/scene';
+import { buildSceneModel, semanticsFromTable, type SceneFeature, type SceneModel, type Terrain } from '../art/scene';
 import { generateWangScene, CHUNK } from '../art/wangWorld';
 import { createSeededRng, type Rng } from '../core/rng';
 import { createBalkanMythMap } from '../data/balkanMythMap';
@@ -360,7 +360,28 @@ export const shevitsaWorld: SceneGenerator = {
   generate: () => fromTileMap(createBulgarianShevitsaMap()),
 };
 
-export const SCENE_GENERATORS: readonly SceneGenerator[] = [wangValley, patchworkVillage, textileVillage, zmeyovoWorld, shevitsaWorld];
+const BLANK_PARAMS: readonly SceneParamSpec[] = [
+  { key: 'width', label: 'Width', hint: 'Cells across', type: 'int', min: 16, max: 160, default: 48 },
+  { key: 'height', label: 'Height', hint: 'Cells down', type: 'int', min: 12, max: 140, default: 36 },
+];
+
+/** An empty cloth to build on by hand: open ground, one start point in the middle, nothing else. */
+export const blankCloth: SceneGenerator = {
+  id: 'blank',
+  name: 'Blank cloth',
+  description: 'An empty cloth of the size you choose, to build a world on by hand.',
+  params: BLANK_PARAMS,
+  resolveParams: resolver(BLANK_PARAMS),
+  generate(params) {
+    const width = params.width as number;
+    const height = params.height as number;
+    const terrain: Terrain[][] = Array.from({ length: width }, () => Array<Terrain>(height).fill('ground'));
+    const model: SceneModel = { width, height, terrain, features: [], landmarks: [], title: 'A blank cloth' };
+    return { model, spawns: [{ id: 'spawn-start', label: 'Start', x: Math.floor(width / 2), y: Math.floor(height / 2) }] };
+  },
+};
+
+export const SCENE_GENERATORS: readonly SceneGenerator[] = [blankCloth, wangValley, patchworkVillage, textileVillage, zmeyovoWorld, shevitsaWorld];
 
 export function findGenerator(id: string): SceneGenerator | undefined {
   return SCENE_GENERATORS.find((g) => g.id === id);

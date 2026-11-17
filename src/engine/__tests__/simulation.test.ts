@@ -654,4 +654,21 @@ describe('Pause', () => {
     await conversation;
     expect(sim.conversations[0].messages.filter((m) => m.kind !== 'narration').length).toBe(3);
   });
+
+  it('resets the story: clears it and sends everyone back to their starting places', () => {
+    const map = createDefaultMap();
+    const sim = createBrowserSimulation(map, DEFAULT_VILLAGERS, [], { ...DEFAULT_MODEL_SETTINGS, inferenceMode: 'story-sim', enableWebSpeechFallback: false });
+    const starts = new Map([...sim.runtimes.values()].map((rt) => [rt.id, [rt.x, rt.y]]));
+    const first = [...sim.runtimes.values()][0];
+    first.x += 3;
+    first.currentIntention = 'something that happened later';
+    sim.conversations.push({ id: 'c1', participantIds: [], messages: [], updatedAt: 0 } as never);
+
+    sim.resetStory();
+
+    expect(sim.conversations).toEqual([]);
+    expect([first.x, first.y]).toEqual(starts.get(first.id));
+    expect(first.currentIntention).toBe(sim.configs.get(first.id)!.plan);
+    expect(first.memories).toHaveLength(1);
+  });
 });

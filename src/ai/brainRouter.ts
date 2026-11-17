@@ -1617,6 +1617,11 @@ class BrainRouter {
     setAudioPaused(paused);
   }
 
+  /** Forgets the scene hooks already used, so a story started afresh may use them again. */
+  resetStoryMemory() {
+    recentDmBeats.length = 0;
+  }
+
   flushAudioQueue() {
     this.speechEpoch += 1;
     this.speechQueue = Promise.resolve();

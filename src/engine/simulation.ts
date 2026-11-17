@@ -596,6 +596,38 @@ export class VillageSimulation {
     this.notify(true);
   }
 
+  /**
+   * Starts the story again in the world as it is now: everything `clearDatabase` clears,
+   * and every character back at their starting spot (worked out from today's places, so a
+   * well added since counts) with their opening intention. The world and cast are kept.
+   */
+  resetStory() {
+    this.mind.flushAudioQueue();
+    this.mind.resetStoryMemory?.();
+    this.clearDatabase();
+    for (const [id, rt] of this.runtimes.entries()) {
+      const cfg = this.configs.get(id);
+      if (!cfg) continue;
+      const start = this.startingSpotFor(cfg);
+      const safe = findNearestWalkableTile(this.map, start.x, start.y);
+      rt.x = safe.x;
+      rt.y = safe.y;
+      rt.path = [];
+      rt.facing = 'down';
+      rt.currentIntention = cfg.plan;
+      rt.activityLabel = cfg.plan;
+      rt.recentUtterances = [];
+      rt.currentBubble = undefined;
+      rt.blockedTicks = 0;
+    }
+    const spawn = this.map.spawnPoints[0] ?? { x: Math.floor(this.map.width / 2), y: Math.floor(this.map.height / 2) };
+    const safe = findNearestWalkableTile(this.map, spawn.x, spawn.y);
+    this.player.x = safe.x;
+    this.player.y = safe.y;
+    this.player.path = [];
+    this.notify(true);
+  }
+
   private getOccupiedTileSet(excludeId?: string): Set<string> {
     const blocked = new Set<string>();
     if (excludeId !== this.player.id) {

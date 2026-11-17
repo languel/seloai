@@ -621,12 +621,13 @@ export function App() {
     reader.readAsText(file);
   };
 
-  const handleNewStoryClearDb = () => {
+  /** Starts the story again in the world as it is now; the old story is backed up first. */
+  const handleResetStory = async () => {
     if (!map || !settings) return;
-    brainRouter.flushAudioQueue();
-    simRef.current?.clearDatabase();
+    await autoBackupCurrentWorld().catch(() => undefined);
+    simRef.current?.resetStory();
     persistAll(map, villagers, settings);
-    setDataNotice('Started a fresh story (cleared conversations & character memories).');
+    setDataNotice('Story reset: conversations, memories and the script cleared, everyone back at their starting places. The old story was saved as an auto-backup.');
   };
 
   const captureCurrentWorldState = (): PersistedVillageState | null => {
@@ -989,6 +990,7 @@ export function App() {
             onUpdateAesthetic={handleUpdateAesthetic}
             sidebarOpen={sidebarOpen}
             sidebarSwap={stylePanelOpen ? stylePanel(true) : undefined}
+            onResetStory={() => void handleResetStory()}
           />
         )}
         {tab === 'observatory' && (
@@ -1192,11 +1194,11 @@ export function App() {
             <div className="grid grid-cols-3 gap-1.5">
               <button
                 type="button"
-                onClick={handleNewStoryClearDb}
+                onClick={() => void handleResetStory()}
                 className="rounded-sm border border-borderFolk bg-surface px-2 py-1.5 text-left hover:border-ink/40"
               >
-                <div className="font-semibold">New Story</div>
-                <div className="text-[10px] text-muted">Clear DB &amp; memories</div>
+                <div className="font-semibold">Reset story</div>
+                <div className="text-[10px] text-muted">Same world and cast; start again</div>
               </button>
               <button
                 type="button"
