@@ -911,7 +911,7 @@ export function App() {
         <div className="flex items-center gap-1">
           <div
             title={`Current world: ${map.name} (click to switch demo or saved world)`}
-            className="relative inline-flex h-7 max-w-[165px] sm:max-w-[200px] items-center gap-1 rounded-sm border border-sage/45 bg-surface px-2 text-[11px] font-medium text-ink hover:bg-card focus-within:ring-1 focus-within:ring-sage"
+            className="relative inline-flex h-7 max-w-[165px] sm:max-w-[200px] items-center gap-1 rounded-sm bg-transparent px-2 text-[11px] font-medium text-ink hover:bg-ink/5 focus-within:ring-1 focus-within:ring-sage"
           >
             <Sparkles className="pointer-events-none h-3.5 w-3.5 shrink-0 text-sage" />
             <span className="min-w-0 truncate whitespace-nowrap">
