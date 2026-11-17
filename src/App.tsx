@@ -882,7 +882,7 @@ export function App() {
   const dataPanel = (fill: boolean) => (
     <aside
       aria-label="World and data"
-      className={`flex h-full ${fill ? 'w-full' : 'w-[min(92vw,22rem)] border-l border-borderFolk'} shrink-0 flex-col overflow-hidden bg-card text-ink`}
+      className={`flex h-full ${fill ? 'w-full' : 'w-[min(92vw,22rem)] border-l border-borderFolk'} shrink-0 flex-col overflow-hidden bg-surface text-ink`}
     >
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 thin-scroll">
         <div className="space-y-3 text-xs">
@@ -1137,7 +1137,7 @@ export function App() {
       ['data', 'World & Data', 'data'],
     ];
     return (
-      <div role="tablist" aria-label="Panel" className="flex shrink-0 items-center gap-0.5 border-b border-borderFolk bg-card px-1.5 py-1 text-[12px]">
+      <div role="tablist" aria-label="Panel" className="flex shrink-0 items-center gap-0.5 border-b border-borderFolk bg-surface px-1.5 py-1 text-[12px]">
         {modes.map(([id, label, mode]) => {
           const on = sidePanel === mode;
           return (
@@ -1390,7 +1390,7 @@ export function App() {
       </main>
       {/* Style docks on the right beside whatever view is open, so changes show as they are made. */}
       {sidePanel && tab !== 'village' && (
-        <div className="flex h-full w-[min(92vw,22rem)] shrink-0 flex-col overflow-hidden border-l border-borderFolk bg-card">
+        <div className="flex h-full w-[min(92vw,22rem)] shrink-0 flex-col overflow-hidden border-l border-borderFolk bg-surface">
           {panelTabs(false)}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{sidePanelNode(true)}</div>
         </div>
