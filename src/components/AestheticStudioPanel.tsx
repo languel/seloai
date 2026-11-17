@@ -375,6 +375,16 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
               <span>Ornaments</span>
             </label>
           </div>
+          <label className="flex cursor-pointer items-center gap-1.5 text-[10px]" title="The bar slides back when the pointer reaches the top edge; the ` key keeps it out or tucks it away again">
+            <input
+              type="checkbox"
+              checked={settings.topBarAutoHide}
+              onChange={(e) => onChange({ ...settings, topBarAutoHide: e.target.checked })}
+              className="accent-[var(--text-ink)]"
+            />
+            <span>Hide the top bar until needed</span>
+            <kbd className="rounded-sm border border-borderFolk px-1 font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>`</kbd>
+          </label>
           {appTheme && onChangeAppTheme && (
             <div>
               <div className="mb-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>

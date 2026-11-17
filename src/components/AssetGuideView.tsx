@@ -365,7 +365,7 @@ export const AssetGuideView: React.FC = () => {
               <code>.md</code> file.
             </li>
             <li>
-              <strong>Import (1 min).</strong> Open <em>World &amp; Data</em> (the first button in the top bar) and under{' '}
+              <strong>Import (1 min).</strong> Open <em>World &amp; Data</em> (a tab at the top of the side panel; the panel button, top right, shows it) and under{' '}
               <em>Import</em> choose your file. The cast and premise go onto your world and the story starts fresh.
             </li>
             <li>
@@ -399,7 +399,7 @@ export const AssetGuideView: React.FC = () => {
             </li>
             <li>
               <strong>Looks</strong>: threads (pick a palette, click a swatch to dye a thread), stitch family, thread weight,
-              house size and style. The Style panel (top bar) sets how the whole world and its text are drawn.
+              house size and style. The Style tab of the side panel sets how the whole world and its text are drawn.
             </li>
             <li>
               <strong>A well</strong> can be dry or flowing (select it, then <em>Water</em>). If a character or the Scribe says
@@ -497,7 +497,7 @@ export const AssetGuideView: React.FC = () => {
         <Section id="share" title="Save and share">
           <ul className="list-disc space-y-1 pl-5">
             <li>
-              <strong>World &amp; Data</strong> (the first button in the top bar): load the demo worlds, save worlds in the
+              <strong>World &amp; Data</strong> (a tab at the top of the side panel; the panel button, top right, shows it): load the demo worlds, save worlds in the
               browser, reset the story or everything, export and import files, and save pictures.
             </li>
             <li>

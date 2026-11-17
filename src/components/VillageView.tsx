@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import {
   FIGURE_HEIGHT_SCALE,
   chooseFigureView,
@@ -16,7 +17,7 @@ import {
 import type { BodyPainter } from '../engine/renderer';
 import { tileSemanticsForMap } from '../world/packs';
 import { Glyph, GlyphButton, GlyphTip } from './Glyph';
-import { KnotDivider, StitchPanel, StitchScope, StitchSlider } from './Stitch';
+import { KnotDivider, StitchPanel, StitchScope } from './Stitch';
 import { stitchKit } from '../art/uiChrome';
 import { drawConversationThreads, type ThreadEnd } from '../art/threads';
 import { WovenText, type WovenObstacle, type WovenSpeaker } from '../art/wovenText';
@@ -63,7 +64,6 @@ import {
 } from '../utils/aestheticThemes';
 import {
   computeSpatialMix,
-  EAVESDROP_SLIDER_MAX,
   EAVESDROP_WHOLE_MAP_RADIUS,
   isWholeMapEavesdrop,
   MicRecorder,
@@ -110,6 +110,10 @@ interface VillageViewProps {
   sidebarSwap?: React.ReactNode;
   /** The panel's mode tabs (Storyline, Style, World & Data), shown above whichever is open. */
   panelTabs?: React.ReactNode;
+  /** A place in the app's top bar to draw the village controls into, instead of over the map. */
+  toolbarSlot?: HTMLElement | null;
+  /** Tells the app how wide the panel is (0 when hidden), so the top bar can line up with it. */
+  onPanelWidth?: (px: number) => void;
   /** Starts the story again in the world as it is now (backed up first). */
   onResetStory?: () => void;
 }
@@ -235,10 +239,6 @@ function serializeComposerText(root: HTMLElement | null): string {
 }
 
 /** A range input: stitched inside the art looks, the browser's own in the classic tiles. */
-function SpeedRange({ stitched, ...rest }: React.InputHTMLAttributes<HTMLInputElement> & { stitched: boolean }) {
-  return stitched ? <StitchSlider {...rest} /> : <input type="range" {...rest} />;
-}
-
 const HAND_NAMES = { script: 'Script', ductus: 'Hand-sewn', satin: 'Satin', counted: 'Counted' } as const;
 
 /** A #rrggbb colour darkened by `amount` (0..1). */
@@ -482,6 +482,8 @@ export const VillageView: React.FC<VillageViewProps> = ({
   sidebarOpen: sidebarOpenProp,
   sidebarSwap,
   panelTabs,
+  toolbarSlot,
+  onPanelWidth,
   onResetStory,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1853,41 +1855,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
   // Suppress unused tick warning while keeping live reactivity
   void tick;
 
-  return (
-    <div
-      onDoubleClickCapture={handleFocusDoubleClick}
-      className="flex h-full flex-col lg:flex-row overflow-hidden"
-      style={
-        {
-          '--sidebar-w': `${sidebarWidth}px`,
-          fontFamily: aestheticTokens.fontFamilyCss,
-        } as React.CSSProperties
-      }
-    >
-      {/* Left: Interactive Village World */}
-      <section className="relative flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-linen" aria-label="Village Canvas">
-        <canvas
-          ref={canvasRef}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onDoubleClick={handleDoubleClick}
-          onWheel={handleWheel}
-          className="pixel-canvas h-full w-full cursor-grab active:cursor-grabbing touch-none"
-        />
+  // The app lines its top bar up with the panel: tell it how wide the panel (and its handle) is.
+  const panelShown = Boolean(sidebarOpen);
+  useEffect(() => {
+    onPanelWidth?.(panelShown ? sidebarWidth + 6 : 0);
+  }, [onPanelWidth, panelShown, sidebarWidth]);
 
-        {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
-        <div ref={hudRef} className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
+  // The village controls: in the app's top bar when it offers a slot, else floating over the map.
+  const villageToolbar = (
           <StitchScope look={hudLook}>
           <div
             role="toolbar"
             aria-label="Village simulation controls"
             style={stitchHud ? { fontFamily: aestheticTokens.hudStyle.fontFamily } : aestheticTokens.hudStyle}
             className={`pointer-events-auto relative flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto rounded-md thin-scroll ${
-              stitchHud ? 'stitch-panel px-2 py-0.5' : 'px-1.5 py-0.5'
-            } ${aestheticSettings.showDecorations && !stitchHud ? 'pt-1' : ''}`}
+              toolbarSlot ? 'px-0 py-0' : stitchHud ? 'stitch-panel px-2 py-0.5' : 'px-1.5 py-0.5'
+            } ${aestheticSettings.showDecorations && !stitchHud && !toolbarSlot ? 'pt-1' : ''}`}
           >
-            {aestheticSettings.showDecorations && !stitchHud && (
+            {aestheticSettings.showDecorations && !stitchHud && !toolbarSlot && (
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
@@ -2130,61 +2115,67 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 </span>
                 <GlyphTip>Eavesdrop distance</GlyphTip>
               </label>
-              <SpeedRange
-                stitched={stitchHud}
+              <select
                 id="village-eavesdrop-radius"
-                min={0}
-                max={EAVESDROP_SLIDER_MAX}
-                step={1}
-                value={
+                value={String(
                   isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                    ? EAVESDROP_SLIDER_MAX
-                    : Math.max(0, Math.min(EAVESDROP_SLIDER_MAX - 1, Math.round(settings.proximityRadiusTiles)))
-                }
-                aria-valuetext={
-                  settings.proximityRadiusTiles <= 0
-                    ? 'Off'
-                    : isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                      ? 'Whole map'
-                      : `${settings.proximityRadiusTiles} tiles`
-                }
+                    ? EAVESDROP_WHOLE_MAP_RADIUS
+                    : [0, 3, 6, 9, 12, 18, 24].reduce((best, r) => (Math.abs(r - settings.proximityRadiusTiles) < Math.abs(best - settings.proximityRadiusTiles) ? r : best), 9),
+                )}
                 onChange={(e) => {
-                  const raw = Number(e.target.value);
-                  const nextRadius = raw >= EAVESDROP_SLIDER_MAX ? EAVESDROP_WHOLE_MAP_RADIUS : raw;
-                  if (nextRadius <= 0) {
-                    brainRouter.stopSpeech();
-                  }
+                  const nextRadius = Number(e.target.value);
+                  if (nextRadius <= 0) brainRouter.stopSpeech();
                   onUpdateSettings({ proximityRadiusTiles: nextRadius });
                 }}
-                className={stitchHud ? 'w-14' : 'w-14 cursor-pointer accent-emerald-400'}
-                title="Eavesdrop hearing radius (0 = Off, right end = Whole Map)"
-              />
-              <span className="w-7 text-right font-mono text-[11px]">
-                {settings.proximityRadiusTiles <= 0
-                  ? 'Off'
-                  : isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                    ? 'All'
-                    : `${settings.proximityRadiusTiles}t`}
-              </span>
-              <GlyphButton
-                glyph="wholeMap"
-                label="Listen across the whole map"
-                pressed={isWholeMapEavesdrop(settings.proximityRadiusTiles)}
-                dimOff
-                size={15}
-                onClick={() =>
-                  onUpdateSettings({
-                    proximityRadiusTiles: isWholeMapEavesdrop(settings.proximityRadiusTiles)
-                      ? 10
-                      : EAVESDROP_WHOLE_MAP_RADIUS,
-                  })
-                }
-              />
+                title="How far you can hear: off, a number of cells around you, or the whole map"
+                aria-label="Hearing range"
+                className={`h-6 cursor-pointer rounded border-0 px-1 font-mono text-[11px] ${stitchHud ? 'glyph-button bg-transparent' : ''}`}
+              >
+                <option value="0">Off</option>
+                {[3, 6, 9, 12, 18, 24].map((r) => (
+                  <option key={r} value={String(r)}>
+                    {r} cells
+                  </option>
+                ))}
+                <option value={String(EAVESDROP_WHOLE_MAP_RADIUS)}>All</option>
+              </select>
               <GlyphButton glyph="flush" label="Flush queued speech audio" size={15} onClick={() => brainRouter.flushAudioQueue()} />
             </div>
           </div>
           </StitchScope>
-        </div>
+  );
+
+  return (
+    <div
+      onDoubleClickCapture={handleFocusDoubleClick}
+      className="flex h-full flex-col lg:flex-row overflow-hidden"
+      style={
+        {
+          '--sidebar-w': `${sidebarWidth}px`,
+          fontFamily: aestheticTokens.fontFamilyCss,
+        } as React.CSSProperties
+      }
+    >
+      {/* Left: Interactive Village World */}
+      <section className="relative flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-linen" aria-label="Village Canvas">
+        <canvas
+          ref={canvasRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onDoubleClick={handleDoubleClick}
+          onWheel={handleWheel}
+          className="pixel-canvas h-full w-full cursor-grab active:cursor-grabbing touch-none"
+        />
+
+        {/* Top HUD Flex Row: prevents toolbar from ever colliding with right action pills */}
+        {toolbarSlot ? (
+          createPortal(villageToolbar, toolbarSlot)
+        ) : (
+          <div ref={hudRef} className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
+            {villageToolbar}
+          </div>
+        )}
 
         {/* Bottom-Center Docked Scribe Subtitle Field */}
         {showScribeSubtitles && latestScribeSubtitle && aestheticSettings.speechStyle !== 'woven' && (
@@ -2269,7 +2260,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         )}
       </section>
 
-      {(sidebarOpen || sidebarSwap) && (
+      {sidebarOpen && (
         <>
           {/* Draggable Sidebar Resize Handle */}
           <div

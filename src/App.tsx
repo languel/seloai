@@ -92,6 +92,15 @@ export function App() {
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
   // One side panel at a time: Style or World & Data. In the village it takes the inspector's place.
   const [sidePanel, setSidePanel] = useState<'style' | 'data' | null>(null);
+  /** The mode the panel last showed, so the panel button can bring it back outside the village. */
+  const lastPanelRef = useRef<'style' | 'data'>('style');
+  useEffect(() => {
+    if (sidePanel) lastPanelRef.current = sidePanel;
+  }, [sidePanel]);
+  // Where the village draws its controls: a slot in the top bar.
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
+  // How wide the village's panel is, so the right of the top bar sits over it.
+  const [panelWidth, setPanelWidth] = useState(0);
   const [aestheticSettings, setAestheticSettings] = useState<AestheticSettings>(() =>
     loadAestheticSettings(),
   );
@@ -145,6 +154,25 @@ export function App() {
     saveAestheticSettings(next);
   };
 
+  // The top bar can tuck itself away: it slides out when the pointer reaches the top edge,
+  // and the ` key keeps it out (or tucks it away again).
+  const autoHideBar = aestheticSettings.topBarAutoHide;
+  const [barPinned, setBarPinned] = useState(false);
+  const [barHover, setBarHover] = useState(false);
+  const barOut = !autoHideBar || barPinned || barHover;
+  useEffect(() => {
+    if (!autoHideBar) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      if (e.key !== '`' || e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      setBarPinned((v) => !v);
+      setBarHover(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [autoHideBar]);
   const toggleSidebarOpen = () => {
     setSidebarOpen((prev) => {
       const next = !prev;
@@ -1179,87 +1207,29 @@ export function App() {
 
   return (
     <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
-    <div className={`flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
+    <div className={`relative flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
+      {autoHideBar && !barOut ? (
+        <div aria-hidden className="absolute inset-x-0 top-0 z-40 h-1.5" onMouseEnter={() => setBarHover(true)} />
+      ) : null}
       {showVoiceNudge && settings ? <VoiceNudge settings={settings} onClose={() => setShowVoiceNudge(false)} /> : null}
-      <header className="relative z-30 flex items-center justify-between gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0">
-        {/* Navigation Tabs (glyph-only with hover labels) */}
-        <nav aria-label="Workspace Views" className="flex items-center gap-1">
-          {(
-            [
-              ['village', 'Village', 'village'],
-              ['observatory', 'Control Room', 'observatory'],
-              ['world', 'World Editor', 'world'],
-              ['patterns', 'Pattern Studio', 'tapestry'],
-              ['characters', 'Characters', 'characters'],
-              ['monitor', 'AI & Voice Monitor', 'monitor'],
-              ['guides', 'Guides & Templates', 'guides'],
-            ] as const
-          ).map(([id, label, glyph]) => {
-            const active = tab === id;
-            const tabBtn = (
-              <GlyphButton
-                key={id}
-                glyph={glyph}
-                label={label}
-                onClick={() => setTab(id)}
-                aria-current={active ? 'page' : undefined}
-                className={active ? 'glyph-on' : ''}
-                size={17}
-              >
-                {id === 'monitor' && (
-                  <span className="flex flex-col items-center gap-0.5" aria-hidden="true">
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        textStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
-                      }`}
-                    />
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        omniStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
-                      }`}
-                    />
-                  </span>
-                )}
-              </GlyphButton>
-            );
-
-            if (id === 'village') {
-              return (
-                <React.Fragment key={id}>
-                  <GlyphButton
-                    glyph="data"
-                    label="World & Data: worlds, the story, saving, files and images"
-                    onClick={() => openPanel(sidePanel === 'data' ? null : 'data')}
-                    pressed={sidePanel === 'data'}
-                    size={17}
-                  />
-                  {tabBtn}
-                </React.Fragment>
-              );
-            }
-
-            if (id === 'guides') {
-              return (
-                <React.Fragment key={id}>
-                  <GlyphButton
-                    glyph="style"
-                    label="Style: the look of the world and interface"
-                    onClick={() => openPanel(sidePanel === 'style' ? null : 'style')}
-                    pressed={sidePanel === 'style'}
-                    size={17}
-                  />
-                  {tabBtn}
-                </React.Fragment>
-              );
-            }
-
-            return tabBtn;
-          })}
-        </nav>
-
-        {/* Global Utilities */}
-        <div className="flex items-center gap-1">
-          <div
+      <header
+        className={`z-30 flex items-center gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0 ${
+          autoHideBar
+            ? `absolute inset-x-0 top-0 shadow-sm transition-transform duration-200 ${barOut ? 'translate-y-0' : '-translate-y-full'}`
+            : 'relative'
+        }`}
+        onMouseLeave={autoHideBar ? () => setBarHover(false) : undefined}
+      >
+        {/* Left: home, then the village's own controls (they render into this slot). */}
+        <GlyphButton
+          glyph="village"
+          label="Village"
+          onClick={() => setTab('village')}
+          aria-current={tab === 'village' ? 'page' : undefined}
+          className={tab === 'village' ? 'glyph-on' : ''}
+          size={17}
+        />
+        <div
             title={`Current world: ${map.name} (click to switch demo or saved world)`}
             className="relative inline-flex h-7 max-w-[165px] sm:max-w-[200px] items-center gap-1 rounded-sm bg-transparent px-2 text-[11px] font-medium text-ink hover:bg-ink/5 focus-within:ring-1 focus-within:ring-sage"
           >
@@ -1308,6 +1278,57 @@ export function App() {
               <option value="action:save-current">+ Save Current World to Memory…</option>
             </select>
           </div>
+        <div ref={setToolbarSlot} className="flex min-w-0 flex-1 items-center" />
+        {/* Right, over the panel: the other views, undo and redo, and the panel toggle. */}
+        <div
+          className="flex shrink-0 items-center justify-between gap-1"
+          style={tab === 'village' && panelWidth ? { width: panelWidth } : tab !== 'village' && sidePanel ? { width: 'min(92vw, 22rem)' } : undefined}
+        >
+        <nav aria-label="Workspace Views" className="flex shrink-0 items-center gap-1">
+          {(
+            [
+              ['observatory', 'Control Room', 'observatory'],
+              ['world', 'World Editor', 'world'],
+              ['patterns', 'Pattern Studio', 'tapestry'],
+              ['characters', 'Characters', 'characters'],
+              ['monitor', 'AI & Voice Monitor', 'monitor'],
+              ['guides', 'Guides & Templates', 'guides'],
+            ] as const
+          ).map(([id, label, glyph]) => {
+            const active = tab === id;
+            const tabBtn = (
+              <GlyphButton
+                key={id}
+                glyph={glyph}
+                label={label}
+                onClick={() => setTab(id)}
+                aria-current={active ? 'page' : undefined}
+                className={active ? 'glyph-on' : ''}
+                size={17}
+              >
+                {id === 'monitor' && (
+                  <span className="flex flex-col items-center gap-0.5" aria-hidden="true">
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        textStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
+                      }`}
+                    />
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        omniStatus.status === 'ready' ? 'bg-sage' : 'bg-borderFolk'
+                      }`}
+                    />
+                  </span>
+                )}
+              </GlyphButton>
+            );
+
+            return tabBtn;
+          })}
+        </nav>
+
+        {/* Global Utilities */}
+        <div className="flex shrink-0 items-center gap-1">
 
           <GlyphButton glyph="undo" label="Undo world edit" tipSide="below-left" onClick={handleUndoWorld} disabled={!storeRef.current.canUndo} />
 
@@ -1315,11 +1336,12 @@ export function App() {
 
           <GlyphButton
             glyph="panel"
-            label={sidebarOpen ? 'Hide the inspector panel' : 'Show the inspector panel'}
+            label={(tab === 'village' ? sidebarOpen : Boolean(sidePanel)) ? 'Hide the side panel' : 'Show the side panel'}
             tipSide="below-left"
-            onClick={toggleSidebarOpen}
-            pressed={sidebarOpen}
+            onClick={() => (tab === 'village' ? toggleSidebarOpen() : setSidePanel((p) => (p ? null : lastPanelRef.current)))}
+            pressed={tab === 'village' ? sidebarOpen : Boolean(sidePanel)}
           />
+        </div>
         </div>
       </header>
 
@@ -1337,6 +1359,8 @@ export function App() {
             sidebarOpen={sidebarOpen}
             sidebarSwap={sidePanel ? sidePanelNode(true) : undefined}
             panelTabs={panelTabs(true)}
+            toolbarSlot={toolbarSlot}
+            onPanelWidth={setPanelWidth}
             onResetStory={() => void handleResetStory()}
           />
         )}

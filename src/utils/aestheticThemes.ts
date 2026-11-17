@@ -67,6 +67,8 @@ export interface AestheticSettings {
   showDecorations: boolean;
   characterScale: number;
   deoverlapLabels: boolean;
+  /** Tuck the top bar away; it slides back when the pointer reaches the top edge, or with the ` key. */
+  topBarAutoHide: boolean;
   /** How the world and its characters are drawn. */
   worldLook: WorldLook;
   /** In the art looks, show walking figures side-on and from behind, not only from the front. */
@@ -115,6 +117,7 @@ export const DEFAULT_AESTHETIC_SETTINGS: AestheticSettings = {
   showDecorations: true,
   characterScale: 1.15,
   deoverlapLabels: true,
+  topBarAutoHide: false,
   worldLook: 'festive',
   figureTurns: true,
   figureQuirks: true,
@@ -430,6 +433,7 @@ export function clampAestheticSettings(raw: Partial<AestheticSettings> | null | 
     wovenStitch: (['back', 'running', 'stem', 'chain'] as const).includes(raw?.wovenStitch as never) ? raw!.wovenStitch! : DEFAULT_AESTHETIC_SETTINGS.wovenStitch,
     wovenHoldSec: typeof raw?.wovenHoldSec === 'number' ? Math.max(2, Math.min(300, raw.wovenHoldSec)) : DEFAULT_AESTHETIC_SETTINGS.wovenHoldSec,
     wovenFadeSec: typeof raw?.wovenFadeSec === 'number' ? Math.max(0.5, Math.min(60, raw.wovenFadeSec)) : DEFAULT_AESTHETIC_SETTINGS.wovenFadeSec,
+    topBarAutoHide: typeof raw?.topBarAutoHide === 'boolean' ? raw.topBarAutoHide : DEFAULT_AESTHETIC_SETTINGS.topBarAutoHide,
     deoverlapLabels:
       typeof raw?.deoverlapLabels === 'boolean'
         ? raw.deoverlapLabels
