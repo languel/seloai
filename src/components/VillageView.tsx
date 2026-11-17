@@ -657,8 +657,36 @@ export const VillageView: React.FC<VillageViewProps> = ({
     const worldW = sim.map.width * sim.map.tileDim;
     const worldH = sim.map.height * sim.map.tileDim;
     if (!canvas || !worldW || !worldH) return 0.45;
-    const fit = 0.92 * Math.min(canvas.clientWidth / worldW, canvas.clientHeight / worldH);
-    return Math.max(0.05, Math.min(0.45, fit));
+    const fit = 0.96 * Math.min(canvas.clientWidth / worldW, canvas.clientHeight / worldH);
+    return Math.max(0.05, fit);
+  };
+
+  /**
+   * Keeps the map in view: no further out than the whole map, and no panning past its edges.
+   * Along a side where the whole map fits, it stays centred; otherwise the view may not show
+   * more than a sliver of the cloth's margin beyond the edge.
+   */
+  const clampCamera = (viewW: number, viewH: number) => {
+    const cam = cameraRef.current;
+    const worldW = sim.map.width * sim.map.tileDim;
+    const worldH = sim.map.height * sim.map.tileDim;
+    if (!worldW || !worldH || !viewW || !viewH) return;
+    const least = minZoom();
+    if (cam.zoom < least) cam.zoom = least;
+    if (cam.targetZoom < least) cam.targetZoom = least;
+    const margin = sim.map.tileDim * 0.5;
+    const along = (centre: number, view: number, world: number) => {
+      const half = view / 2 / cam.zoom;
+      if (half * 2 >= world + margin * 2) return world / 2;
+      return Math.min(world + margin - half, Math.max(half - margin, centre));
+    };
+    cam.x = along(cam.x, viewW, worldW);
+    cam.y = along(cam.y, viewH, worldH);
+    if (cam.glide) {
+      const gx = along(cam.glide.x, viewW, worldW);
+      const gy = along(cam.glide.y, viewH, worldH);
+      if (Math.hypot(gx - cam.x, gy - cam.y) < 1) cam.glide = null;
+    }
   };
 
   // Over the map, a pinch (ctrl+wheel) or scroll belongs to the map: stop the page from
@@ -862,6 +890,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
             if (Math.hypot(cam.glide.x - cam.x, cam.glide.y - cam.y) < 1) cam.glide = null;
           }
 
+          clampCamera(rect.width, rect.height);
           const renderStart = performance.now();
           renderWorld(ctx, rect.width, rect.height, now / 1000);
           if (aestheticSettings.speechStyle === 'woven') {
