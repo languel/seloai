@@ -489,7 +489,8 @@ export class VillageSimulation {
       this.configs.set(v.id, v);
       const existing = this.runtimes.get(v.id);
       if (!existing) {
-        const safe = findNearestWalkableTile(this.map, v.homeTile.x, v.homeTile.y);
+        const start = this.startingSpotFor(v);
+        const safe = findNearestWalkableTile(this.map, start.x, start.y);
         this.runtimes.set(v.id, {
           id: v.id,
           x: safe.x,
@@ -1412,8 +1413,9 @@ export class VillageSimulation {
           l.label.toLowerCase() === targetNorm ||
           l.label.toLowerCase().includes(targetNorm),
       );
-      if (lm) {
-        safeGoal = this.findAdjacentStandTile(lm.x, lm.y, rt.id);
+      const place = lm ?? this.findPlaceForText(`#${decision.targetName.trim().replace(/^#/, '')} ${decision.targetName}`);
+      if (place) {
+        safeGoal = this.findAdjacentStandTile(place.x, place.y, rt.id);
       }
     }
 
@@ -1535,6 +1537,61 @@ export class VillageSimulation {
       }
     }
     this.notify(true);
+  }
+
+  /**
+   * Where a character first appears. Their home tile, when it lies in this world's village;
+   * otherwise (a cast authored for another map) the place their story names, or one of the
+   * world's places, so nobody begins alone in an empty corner.
+   */
+  private startingSpotFor(v: VillagerConfig): { x: number; y: number } {
+    const places = this.map.pointsOfInterest ?? [];
+    if (!places.length) return v.homeTile;
+    const nearest = Math.min(...places.map((p) => Math.hypot(p.x - v.homeTile.x, p.y - v.homeTile.y)));
+    const reach = Math.max(10, Math.min(this.map.width, this.map.height) * 0.18);
+    if (nearest <= reach) return v.homeTile;
+    const named = this.findPlaceForText(`${v.plan} ${v.identity}`);
+    if (named) return named;
+    let h = 0;
+    for (const c of v.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return places[h % places.length];
+  }
+
+  /**
+   * The place in this world a piece of text points to. A tag written for another world
+   * ("#LamiaWell") is read as its words ("Lamia", "Well") and matched to a place sharing one
+   * ("Slivovo well"), so a cast authored for one map still finds its way in another.
+   */
+  private findPlaceForText(text: string): { label: string; tag?: string; x: number; y: number } | undefined {
+    const places = (this.map.pointsOfInterest ?? []).map((p) => ({ label: p.label, tag: p.tag, x: p.x, y: p.y }));
+    if (!places.length || !text.trim()) return undefined;
+    const lower = text.toLowerCase();
+    const tags = [...text.matchAll(/#([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
+    for (const tag of tags) {
+      const exact = places.find((p) => p.tag?.toLowerCase() === tag.toLowerCase());
+      if (exact) return exact;
+    }
+    const wordsOf = (s: string) =>
+      s
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 3);
+    const STOP = new Set(['the', 'village', 'square', 'lower', 'upper', 'house', 'place']);
+    const placeWords = places.map((p) => new Set(wordsOf(`${p.label} ${p.tag ?? ''}`).filter((w) => !STOP.has(w))));
+    // A tag's last word names the kind of place ("Well" in "LamiaWell"): match on it first.
+    for (const tag of tags) {
+      const words = wordsOf(tag).filter((w) => !STOP.has(w));
+      for (const w of [...words].reverse()) {
+        const i = placeWords.findIndex((set) => set.has(w));
+        if (i >= 0) return places[i];
+      }
+    }
+    const byLabel = places.find((p) => lower.includes(p.label.toLowerCase()));
+    if (byLabel) return byLabel;
+    const words = wordsOf(text).filter((w) => !STOP.has(w));
+    const i = placeWords.findIndex((set) => words.some((w) => set.has(w)));
+    return i >= 0 ? places[i] : undefined;
   }
 
   private getLandmarks(): Array<{ label: string; tag?: string; x: number; y: number; description?: string }> {
@@ -1925,9 +1982,9 @@ export class VillageSimulation {
 
     const pois = this.map.pointsOfInterest ?? [];
     const hashTags = [...userText.matchAll(/#([a-z0-9_-]+)/gi)].map((m) => m[1].toLowerCase());
-    const poiByHash = hashTags
-      .map((tag) => pois.find((p) => p.tag.toLowerCase() === tag))
-      .find((p) => Boolean(p));
+    const poiByHash =
+      hashTags.map((tag) => pois.find((p) => p.tag.toLowerCase() === tag)).find((p) => Boolean(p)) ??
+      (hashTags.length ? this.findPlaceForText(userText) : undefined);
 
     const landmark =
       poiByHash ??
