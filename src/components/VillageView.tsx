@@ -104,6 +104,11 @@ interface VillageViewProps {
   /** Changes a style setting from the village toolbar (the letters of woven text). */
   onUpdateAesthetic?: (next: AestheticSettings) => void;
   sidebarOpen?: boolean;
+  /**
+   * A panel shown in the inspector's place (Style), at the inspector's width. The inspector
+   * stays mounted underneath, hidden, so it comes back as it was.
+   */
+  sidebarSwap?: React.ReactNode;
 }
 
 interface MentionCandidate {
@@ -468,6 +473,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   aestheticSettings: aestheticSettingsProp,
   onUpdateAesthetic,
   sidebarOpen: sidebarOpenProp,
+  sidebarSwap,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -2125,7 +2131,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
         )}
       </section>
 
-      {sidebarOpen && (
+      {(sidebarOpen || sidebarSwap) && (
         <>
           {/* Draggable Sidebar Resize Handle */}
           <div
@@ -2138,8 +2144,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
           />
 
           {/* Right: Villager Inspector + Voice & Chat */}
+          {sidebarSwap ? <div className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col overflow-hidden max-h-[52vh] lg:max-h-none">{sidebarSwap}</div> : null}
           <aside
-            className="flex w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col bg-surface overflow-hidden max-h-[52vh] lg:max-h-none"
+            className={`${sidebarSwap ? 'hidden' : 'flex'} w-full lg:w-[var(--sidebar-w)] shrink-0 flex-col bg-surface overflow-hidden max-h-[52vh] lg:max-h-none`}
             aria-label="Villager Inspector"
           >
         {/* Villager Quick Roster */}

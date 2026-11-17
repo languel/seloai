@@ -21,6 +21,8 @@ interface AestheticStudioPanelProps {
   onChangeAppTheme?: (next: AppThemeMode) => void;
   onChange: (next: AestheticSettings) => void;
   onClose: () => void;
+  /** Fill the slot it is placed in (the village inspector's), instead of its own width. */
+  fill?: boolean;
 }
 
 export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
@@ -31,6 +33,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
   onChangeAppTheme,
   onChange,
   onClose,
+  fill = false,
 }) => {
   const worldThemeBadge =
     tokens.worldTheme === 'balkan-myth'
@@ -56,7 +59,7 @@ export const AestheticStudioPanel: React.FC<AestheticStudioPanelProps> = ({
     <aside
       aria-label="Style"
       style={tokens.panelStyle}
-      className="flex h-full w-[min(92vw,22rem)] shrink-0 flex-col overflow-hidden border-l border-borderFolk"
+      className={`flex h-full ${fill ? 'w-full' : 'w-[min(92vw,22rem)] border-l border-borderFolk'} shrink-0 flex-col overflow-hidden`}
     >
       {settings.showDecorations && (
         <div

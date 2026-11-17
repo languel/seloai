@@ -811,6 +811,20 @@ export function App() {
       (aestheticSettings.worldLook === 'night' ||
         (aestheticSettings.worldLook === 'tiles' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches)));
 
+  // Style: in the village it takes the inspector's place; elsewhere it docks on the right.
+  const stylePanel = (fill: boolean) => (
+    <AestheticStudioPanel
+      settings={aestheticSettings}
+      tokens={aestheticTokens}
+      worldName={map.name}
+      appTheme={theme}
+      onChangeAppTheme={setTheme}
+      onChange={handleUpdateAesthetic}
+      onClose={() => setStylePanelOpen(false)}
+      fill={fill}
+    />
+  );
+
   return (
     <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
     <div className={`flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
@@ -974,6 +988,7 @@ export function App() {
             aestheticSettings={aestheticSettings}
             onUpdateAesthetic={handleUpdateAesthetic}
             sidebarOpen={sidebarOpen}
+            sidebarSwap={stylePanelOpen ? stylePanel(true) : undefined}
           />
         )}
         {tab === 'observatory' && (
@@ -1025,17 +1040,7 @@ export function App() {
         {tab === 'guides' && <AssetGuideView />}
       </main>
       {/* Style docks on the right beside whatever view is open, so changes show as they are made. */}
-      {stylePanelOpen && (
-          <AestheticStudioPanel
-            settings={aestheticSettings}
-            tokens={aestheticTokens}
-            worldName={map.name}
-            appTheme={theme}
-            onChangeAppTheme={setTheme}
-            onChange={handleUpdateAesthetic}
-            onClose={() => setStylePanelOpen(false)}
-          />
-        )}
+      {stylePanelOpen && tab !== 'village' && stylePanel(false)}
       </div>
 
       {/* World, Story & Data Management Modal */}
