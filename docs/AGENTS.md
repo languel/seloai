@@ -114,5 +114,4 @@ Not yet: recording a live session (a person's own clicks and drags) as a script 
 
 - Spinner as a separate, embeddable script for other pages (the agent and the runtime are ready to
   be packaged; the page integration is not).
-- The local model has only been wired, not yet tried in a browser on a full download.
 - MCP over HTTP (for hosted agents): stdio only for now.
