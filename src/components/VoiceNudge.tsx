@@ -64,7 +64,17 @@ export function VoiceNudge({ settings, onClose }: VoiceNudgeProps) {
   const status = omni.status === 'loading' || omni.status === 'ready' ? omni : light.status !== 'unloaded' ? light : null;
 
   return (
-    <div role="dialog" aria-labelledby="voice-nudge-title" className="rushnyk-card fixed bottom-4 left-1/2 z-50 w-[min(92vw,30rem)] -translate-x-1/2 rounded-sm bg-card p-3 shadow-lg">
+    // A modal over the village, out of the page flow so nothing moves under it. While the person
+    // chooses, a light scrim holds the village; once a model is downloading it lifts, so they can
+    // look around while it loads.
+    <div className={`fixed inset-0 z-50 flex items-start justify-center px-4 pt-20 ${busy ? 'pointer-events-none' : 'bg-ink/15'}`}>
+    <div
+      role="dialog"
+      aria-modal={!busy}
+      aria-labelledby="voice-nudge-title"
+      style={{ position: 'relative' }}
+      className="rushnyk-card pointer-events-auto w-[min(92vw,30rem)] rounded-sm bg-card p-3 shadow-lg"
+    >
       <div className="flex items-start justify-between gap-2">
         <h2 id="voice-nudge-title" className="text-sm font-semibold">Give the village a voice</h2>
         <button type="button" onClick={dismiss} aria-label="Not now" title="Not now" className="text-muted hover:text-ink">
@@ -104,6 +114,7 @@ export function VoiceNudge({ settings, onClose }: VoiceNudgeProps) {
         </div>
       ) : null}
       {error ? <p className="mt-1 text-[11px] text-crimson">{error}</p> : null}
+    </div>
     </div>
   );
 }
