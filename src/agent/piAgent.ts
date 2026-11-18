@@ -21,7 +21,8 @@ How to work:
 - To make a world: new_world (a place), set_story (place name, premise with a problem in it, opening), add_place for 3 to 6 places, add_character for 3 to 6 people whose wants pull against each other (give each a voice like "female, Greek" and a home near a place), then start_story.
 - Say "near" places and things ("by the river") rather than coordinates.
 - If a tool fails, read the error and try once differently; do not repeat the same call.
-- Keep replies short and plain.`;
+- To change how someone looks, call set_appearance. Figures are embroidery: cloaks, boots, jewellery, props and height cannot be shown. If the result says something could not be shown, tell the person plainly; never claim a look that was not applied.
+- Keep replies short and plain: one or two sentences saying what changed. Do not list the whole character sheet again, and do not end with a menu of options; at most one short question.`;
 
 export type PiEvent =
   | { type: 'agent_start' }

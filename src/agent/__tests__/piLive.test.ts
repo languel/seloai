@@ -44,4 +44,29 @@ describe.skipIf(!MODEL)('Pi with a live model', () => {
     expect((doc.map.pointsOfInterest ?? []).length).toBeGreaterThanOrEqual(1);
     expect(doc.context.premise.length).toBeGreaterThan(10);
   }, 600_000);
+
+  it('changes how a character looks, as asked', async () => {
+    const settings = { ...DEFAULT_MODEL_SETTINGS, localApiProvider: 'ollama' as const, localApiUrl: URL, localApiModel: MODEL!, localApiKey: '' };
+    const agent = new PiAgent({ model: apiPiModel(() => settings), tools: piToolSpecs(SELO_TOOL_DEFINITIONS, TOOLSET), runTool: (n, a) => seloToolHost.callTool(n, a) });
+    const log: string[] = [];
+    const onEvent = (e: PiEvent) => {
+      if (e.type === 'tool_execution_end') log.push(`  ${e.ok ? 'ok ' : 'ERR'} ${e.label} ${e.summary.slice(0, 160)}`);
+      if (e.type === 'message_end' && e.message.content.trim()) log.push(`Pi: ${e.message.content.trim().slice(0, 300)}`);
+    };
+    for (const text of [
+      'Introduce a new character: Inigo, a charismatic Spanish wanderer, male, wearing all black.',
+      'He has dark skin, but his clothes are all dark. No hat.',
+      'Change his vest colour: he now has a green vest.',
+      'Give him a long black cloak.',
+    ]) {
+      log.push(`You: ${text}`);
+      await agent.send(text, onEvent);
+    }
+    console.log(log.join('\n'));
+    const inigo = host.store.document.cast.find((c) => /inigo/i.test(c.name));
+    console.log('Inigo traits:', JSON.stringify(inigo?.figure));
+    expect(inigo?.figure?.traits?.skinTone).toBeGreaterThanOrEqual(3);
+    expect(inigo?.figure?.traits?.bodiceInk).toBe('accent');
+  }, 900_000);
 });
+

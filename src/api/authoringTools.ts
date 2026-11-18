@@ -6,6 +6,7 @@
  * world store, so every step can be undone. The lower-level tools stay for fine work.
  */
 import { createSeededRng, ensureVillagerSprite } from '../engine/characterGenerator';
+import { describeLook, mergeLook, readLook } from './appearance';
 import { findNamedCharacter } from '../engine/names';
 import { findNearestWalkableTile, isTileWalkable } from '../engine/pathfinding';
 import { nearestThing, thingSenseFor } from '../engine/things';
@@ -42,7 +43,8 @@ take or change. Keep everything procedural and original.
    well") rather than coordinates.
 4. **The people.** \`add_character\` three to six times. Each needs a role, who they are (two or
    three sentences, with a secret or a want), what they want now, how they speak, and a voice
-   (gender, then an accent/language such as "female, Greek"). Give them a home near a place.
+   (gender, then an accent/language such as "female, Greek"), a look (skin, colours of
+   clothes, hat or none) and a home near a place. Change a look later with \`set_appearance\`.
    Make their wants pull against each other: that is what makes the story.
 5. **The opening.** \`set_story\` with \`opening\`: how the narrator should open the story (what
    the player sees first, who is where). Optionally a few lines with \`add_story_lines\`.
@@ -65,7 +67,7 @@ const CHARACTER_FIELDS = {
   wants: str('What they want right now; drives what they do.'),
   speaks: str('How they speak, e.g. "Short, dry, never says please".'),
   voice: str('Voice as "gender, accent", optionally a pitch: "female, Greek", "male, Irish, -1".'),
-  look: str('Optional figure words: skirted or trousered; serpent, kuker or samodiva for special beings.'),
+  look: str('Their look in plain words: skin, colours of clothes, vest, hair, hat or no hat, e.g. "dark skin, black clothes, green vest, no hat". Add "trousered" or "skirted" for the build; serpent, kuker or samodiva for special beings.'),
   colour: str('Optional thread colour, e.g. "#2c3e66".'),
   home: str('Where they start: a place name, a thing ("by the river") or "x,y".'),
   called: str('Other names they go by, comma-separated, e.g. "Adie, Old Bell".'),
@@ -150,6 +152,19 @@ export const AUTHORING_TOOL_DEFINITIONS: SeloToolDefinition[] = [
     inputSchema: obj(CHARACTER_FIELDS, ['name']),
   },
   {
+    name: 'set_appearance',
+    description:
+      'Change how a character looks, from plain words: skin (pale, light, olive, dark, very dark), the colour of clothes, vest, trousers or skirt, apron and hair (red, blue, green, pink, gold, black, white), long hair, a moustache, a hat (fur kalpak, flat cap, wreath, horns, kerchief, veil) or "no hat", open vest, coloured sleeves, arms (raised, hands on hips, resting), and mood (grim, glad, sly, calm, awed). Figures are drawn in embroidery, so cloaks, boots, jewellery, props, height and eye colour cannot be shown: the reply lists what was applied and what could not be. Only what is described changes.',
+    inputSchema: obj(
+      {
+        name: str('The character to change.'),
+        look: str('What to change, e.g. "dark skin, green vest, black trousers, no hat".'),
+        build: str('Optional: "trousered" (a man, in trousers) or "skirted" (a woman, in a skirt).'),
+      },
+      ['name', 'look'],
+    ),
+  },
+  {
     name: 'add_story_lines',
     description: 'Add lines the story can use without a model: scene openings and closings ({a}, {b}, {place}) and lines anyone may say ({partner}).',
     inputSchema: obj({
@@ -194,6 +209,7 @@ export const PI_TOOL_NAMES = [
   'add_place',
   'add_things',
   'add_character',
+  'set_appearance',
   'remove_character',
   'start_story',
   'read_story_log',
@@ -351,6 +367,7 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
           voice: c.voice ? `${c.voice.gender}, ${c.voice.language}` : '',
           home: `${c.homeTile.x},${c.homeTile.y}`,
           called: c.callNames ?? [],
+          looks: describeLook(c.figure, c.voice?.gender) || 'as drawn from their name',
         })),
         storyRunning: sim.storySet,
         missing: missingParts(d),
@@ -503,7 +520,7 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
           ...member,
           id: existing.id,
           voice: args.voice ? member.voice : existing.voice,
-          figure: args.look ? member.figure : existing.figure,
+          figure: { ...(existing.figure ?? {}), ...(args.look ? member.figure ?? {} : {}) },
           callNames: args.called ? member.callNames : existing.callNames,
           homeTile: existing.homeTile,
           appearance: existing.appearance,
@@ -524,6 +541,12 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
       } else if (!existing) {
         member.homeTile = openSpot(d.map, undefined, name.length * 71 + d.cast.length, d.cast.map((c) => c.homeTile));
       }
+      // The look, in plain words, onto the figure (and say what a figure cannot show).
+      let looked: ReturnType<typeof readLook> | undefined;
+      if (typeof args.look === 'string' && args.look.trim()) {
+        looked = readLook(args.look);
+        member = { ...member, figure: mergeLook(member.figure, looked) };
+      }
       member = ensureVillagerSprite(member);
       const commands: WorldCommand[] = [{ type: 'cast.upsert', member }];
       const says = Array.isArray(args.says) ? args.says.map(String).filter((s: string) => s.trim()) : [];
@@ -539,7 +562,31 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
         ok: true,
         updated: Boolean(existing),
         character: { id: member.id, name: member.name, role: member.role, voice: member.voice ? `${member.voice.gender}, ${member.voice.language}` : 'default', home: member.homeTile },
+        ...(looked ? { look: { applied: looked.applied, couldNotShow: looked.cannot } } : {}),
         ...(note ? { note } : {}),
+      };
+    }
+
+    case 'set_appearance': {
+      const d = doc();
+      const who = d.cast.find((c) => c.name.toLowerCase() === String(args.name ?? '').trim().toLowerCase()) ?? findNamedCharacter(String(args.name ?? ''), d.cast);
+      if (!who) throw new Error(`No character called "${args.name}". Characters: ${d.cast.map((c) => c.name).join(', ') || 'none yet'}.`);
+      const reading = readLook(String(args.look ?? ''));
+      if (args.build === 'trousered' || args.build === 'skirted') reading.build = args.build;
+      if (!reading.applied.length && !reading.build && !reading.kind) {
+        throw new Error(
+          `Nothing in "${args.look}" could be applied. Describe skin (pale, light, olive, dark), colours of clothes, vest, trousers, skirt, apron or hair, a hat or no hat, long hair, a moustache, arms, or mood.${reading.cannot.length ? ` (Figures cannot show: ${reading.cannot.join(', ')}.)` : ''}`,
+        );
+      }
+      const figure = mergeLook(who.figure, reading);
+      dispatch([{ type: 'cast.update', id: who.id, patch: { figure } }], `Look: ${who.name}`);
+      return {
+        ok: true,
+        character: who.name,
+        applied: [...reading.applied, ...(reading.build ? [`build: ${reading.build}`] : [])],
+        couldNotShow: reading.cannot,
+        now: describeLook(figure, who.voice?.gender),
+        ...(reading.cannot.length ? { note: 'Tell the person what the embroidered figures cannot show; do not say it was done.' } : {}),
       };
     }
 

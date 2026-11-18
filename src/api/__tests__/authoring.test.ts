@@ -123,3 +123,29 @@ describe('authoring tools', () => {
     expect(kept.characters).toBe(1);
   });
 });
+
+describe('character looks', () => {
+  it('sets a look from plain words, keeps the rest, and says what cannot be shown', async () => {
+    await call('add_character', { name: 'Inigo', role: 'Wanderer', voice: 'male, Spanish', look: 'dark skin, all dark clothes, cloak and hood, no hat' });
+    let inigo = host.store.document.cast.find((c) => c.name === 'Inigo')!;
+    expect(inigo.figure?.traits).toMatchObject({ skinTone: 3, skirtInk: 'dark', bodiceInk: 'dark', hat: 'wreath' });
+
+    const r = await call('set_appearance', { name: 'inigo', look: 'a green vest and a guitar' });
+    expect(r.applied).toEqual(['vest: green']);
+    expect(r.couldNotShow).toContain('props, belts and jewellery');
+    expect(r.now).toMatch(/dark skin, black trousers, green vest/);
+    inigo = host.store.document.cast.find((c) => c.name === 'Inigo')!;
+    expect(inigo.figure?.traits).toMatchObject({ skinTone: 3, skirtInk: 'dark', bodiceInk: 'accent' });
+
+    // An update through add_character keeps the traits already set.
+    await call('add_character', { name: 'Inigo', wants: 'Find the way out.' });
+    expect(host.store.document.cast.find((c) => c.name === 'Inigo')!.figure?.traits).toMatchObject({ skinTone: 3, bodiceInk: 'accent' });
+
+    // The overview shows the look, so an agent can tell what is really there.
+    const overview = await call('story_overview');
+    expect(overview.characters.find((c: { name: string }) => c.name === 'Inigo').looks).toMatch(/green vest/);
+
+    await expect(call('set_appearance', { name: 'inigo', look: 'a mysterious aura' })).rejects.toThrow(/Nothing in/);
+    await expect(call('set_appearance', { name: 'nobody', look: 'green vest' })).rejects.toThrow(/No character called/);
+  });
+});
