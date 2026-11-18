@@ -13,6 +13,11 @@ import type { PaletteName } from './art/looks';
 import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
 import { captureView } from './app/viewCapture';
+import PiPanel from './components/PiPanel';
+import { piSession } from './agent/piSession';
+
+/** The side panel's modes besides the village's own Storyline. */
+type PanelMode = 'pi' | 'style' | 'data';
 import {
   ChevronDown,
   FolderOpen,
@@ -92,9 +97,9 @@ export function App() {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
   // One side panel at a time: Style or World & Data. In the village it takes the inspector's place.
-  const [sidePanel, setSidePanel] = useState<'style' | 'data' | null>(null);
+  const [sidePanel, setSidePanel] = useState<PanelMode | null>(null);
   /** The mode the panel last showed, so the panel button can bring it back outside the village. */
-  const lastPanelRef = useRef<'style' | 'data'>('style');
+  const lastPanelRef = useRef<PanelMode>('style');
   useEffect(() => {
     if (sidePanel) lastPanelRef.current = sidePanel;
   }, [sidePanel]);
@@ -372,6 +377,7 @@ export function App() {
 
   useEffect(() => {
     if (!ready) return;
+    piSession.connect(() => latestRef.current.settings!);
     seloToolHost.setHooks({
       getSimulation: () => simRef.current!,
       getMap: () => latestRef.current.map!,
@@ -1178,15 +1184,16 @@ export function App() {
     </aside>
   );
   /** Opens the panel in a mode; in the village, the panel is shown if it was hidden. */
-  const openPanel = (mode: 'style' | 'data' | null) => {
+  const openPanel = (mode: PanelMode | null) => {
     if (mode === 'data') setDataNotice(null);
     setSidePanel(mode);
     if (mode && tab === 'village' && !sidebarOpen) toggleSidebarOpen();
   };
   /** The panel's modes, as tabs: Storyline (the village's own inspector), Style, World & Data. */
   const panelTabs = (inVillage: boolean) => {
-    const modes: Array<[string, string, 'style' | 'data' | null]> = [
+    const modes: Array<[string, string, PanelMode | null]> = [
       ...(inVillage ? [['storyline', 'Storyline', null] as [string, string, null]] : []),
+      ['pi', 'Pi', 'pi'],
       ['style', 'Style', 'style'],
       ['data', 'World & Data', 'data'],
     ];
@@ -1216,7 +1223,7 @@ export function App() {
     );
   };
 
-  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : null);
+  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : sidePanel === 'pi' ? <PiPanel /> : null);
 
   const stylePanel = (fill: boolean) => (
     <AestheticStudioPanel

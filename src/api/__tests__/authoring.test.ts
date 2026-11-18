@@ -101,8 +101,25 @@ describe('authoring tools', () => {
     expect(look.ok).toBe(false);
   });
 
-  it('explains what it cannot find', async () => {
-    await expect(call('add_place', { name: 'Nowhere', near: 'the purple volcano' })).rejects.toThrow(/Could not find/);
+  it('is forgiving where a small model guesses, and explains what it cannot do', async () => {
+    // An unknown "near" still places the thing, and says where it could have gone.
+    const placed = await call('add_place', { name: 'Fire Hill', near: 'the purple volcano' });
+    expect(placed.ok).toBe(true);
+    expect(placed.note).toMatch(/no "the purple volcano"/);
+    const someone = await call('add_character', { name: 'Odd Visitor', home: 'the lighthouse' });
+    expect(someone.ok).toBe(true);
+    expect(someone.note).toMatch(/open ground/);
     await expect(call('new_world', { kind: 'moon' })).rejects.toThrow(/list_world_kinds/);
+    await expect(call('add_things', { thing: 'dragon' })).rejects.toThrow(/Cannot place/);
+  });
+
+  it('starts a new world fresh unless asked to keep the people', async () => {
+    await call('add_character', { name: 'Stays Maybe' });
+    const fresh = await call('new_world', { kind: 'blank', name: 'Empty Field', seed: 1 });
+    expect(fresh.characters).toBe(0);
+    expect(host.store.document.context.premise).toBe('');
+    await call('add_character', { name: 'Keeper' });
+    const kept = await call('new_world', { kind: 'textile', seed: 2, keep_people: true });
+    expect(kept.characters).toBe(1);
   });
 });

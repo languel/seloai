@@ -90,10 +90,11 @@ export const AUTHORING_TOOL_DEFINITIONS: SeloToolDefinition[] = [
   },
   {
     name: 'new_world',
-    description: 'Make a new place from a generator (see list_world_kinds). Keeps the characters and the story text; they are moved into the new place.',
+    description: 'Make a new place from a generator (see list_world_kinds). Starts fresh: no characters and no story yet. Set keep_people to keep the current characters and story.',
     inputSchema: obj(
       {
         kind: str('Generator id, e.g. "patchwork", "textile", "wang-valley", "blank".'),
+        keep_people: { type: 'boolean', description: 'Keep the current characters and story text (moved into the new place).' },
         name: str('The place name stitched on the cloth.'),
         seed: num('A number: the same seed makes the same place.'),
         settings: { type: 'object', description: 'Generator settings by key (see list_world_kinds), e.g. { "stream": true }.' },
@@ -377,7 +378,16 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
       if (!SCENE_GENERATORS.some((g) => g.id === kind)) throw new Error(`Unknown world kind "${kind}". Use list_world_kinds.`);
       const seed = Number.isFinite(Number(args.seed)) ? Math.round(Number(args.seed)) : Math.floor(Math.random() * 1e6);
       const name = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : undefined;
-      const next = dispatch([{ type: 'scene.create', generator: kind, params: args.settings ?? {}, seed, name }], `New world: ${name ?? kind}`);
+      const fresh = args.keep_people !== true;
+      const commands: WorldCommand[] = [{ type: 'scene.create', generator: kind, params: args.settings ?? {}, seed, name }];
+      if (fresh) {
+        commands.push({ type: 'cast.replace', cast: [] });
+        commands.push({
+          type: 'context.update',
+          patch: { ...normalizeWorldContext({}), settingName: name ?? '', themeId: undefined },
+        });
+      }
+      const next = dispatch(commands, `New world: ${name ?? kind}`);
       // Everyone gets a home inside the new place.
       const homes = next.cast.map((c, i) => {
         const inside = c.homeTile.x < next.map.width && c.homeTile.y < next.map.height && isTileWalkable(next.map, c.homeTile.x, c.homeTile.y);
@@ -390,7 +400,10 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
         ok: true,
         world: { name: d.map.name, size: `${d.map.width}x${d.map.height}`, seed },
         places: (d.map.pointsOfInterest ?? []).map((p) => p.label),
-        note: 'Next: set_story (place name, premise), then add_place for the places the story needs.',
+        characters: next.cast.length,
+        note: fresh
+          ? 'A fresh world. Next: set_story (place name, premise, opening), then add_place for the places the story needs, then add_character.'
+          : 'The characters came along. Next: set_story, then add_place for the places the story needs.',
       };
     }
 
@@ -420,9 +433,12 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
       const existing = (d.map.pointsOfInterest ?? []).find((p) => p.label.toLowerCase() === label.toLowerCase());
       let at: { x: number; y: number } | undefined;
       if (Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))) at = { x: Math.round(Number(args.x)), y: Math.round(Number(args.y)) };
-      else if (typeof args.near === 'string') {
+      let note: string | undefined;
+      if (at) {
+        // as given
+      } else if (typeof args.near === 'string' && args.near.trim()) {
         const near = resolveNear(args.near, d, sim);
-        if (!near) throw new Error(`Could not find "${args.near}". Name a place, a character, or a thing like "the river".`);
+        if (!near) note = `There is no "${args.near}" in this world yet, so it went on open ground. Places to be near: ${(d.map.pointsOfInterest ?? []).map((p) => p.label).join(', ') || 'none yet'}; things: the river, a tree, a house, the well.`;
         at = openSpot(d.map, near, label.length * 97, (d.map.pointsOfInterest ?? []).filter((p) => p !== existing));
       } else if (existing) at = { x: existing.x, y: existing.y };
       else at = openSpot(d.map, undefined, label.length * 131, d.map.pointsOfInterest ?? []);
@@ -435,7 +451,7 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
         description: typeof args.description === 'string' ? args.description.trim() : existing?.description,
       };
       dispatch([d.map.scene ? { type: 'scene.edit', edit: { op: 'landmark', landmark: poi } } : { type: 'map.upsertPoi', poi }], `Place: ${label}`);
-      return { ok: true, place: { name: poi.label, tag: `#${poi.tag}`, x: poi.x, y: poi.y }, updated: Boolean(existing) };
+      return { ok: true, place: { name: poi.label, tag: `#${poi.tag}`, x: poi.x, y: poi.y }, updated: Boolean(existing), ...(note ? { note } : {}) };
     }
 
     case 'add_things': {
@@ -448,7 +464,7 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
       const count = Math.max(1, Math.min(30, Math.round(Number(args.count) || 1)));
       let at: { x: number; y: number } | undefined;
       if (Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))) at = { x: Math.round(Number(args.x)), y: Math.round(Number(args.y)) };
-      else if (typeof args.near === 'string') at = resolveNear(args.near, d, sim);
+      else if (typeof args.near === 'string' && args.near.trim()) at = resolveNear(args.near, d, sim);
       const rng = createSeededRng(Math.round((at?.x ?? 7) * 131 + (at?.y ?? 3) * 17 + count));
       const features: PlacedFeature[] = [];
       const taken: Array<{ x: number; y: number }> = [];
@@ -500,9 +516,10 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
         for (let i = 2; ids.has(id); i++) id = `${member.id}-${i}`;
         member = { ...member, id };
       }
+      let note: string | undefined;
       if (typeof args.home === 'string' && args.home.trim()) {
         const near = resolveNear(args.home, d, sim);
-        if (!near) throw new Error(`Could not find home "${args.home}". Name a place, a character or a thing.`);
+        if (!near) note = `No "${args.home}" yet, so ${name} lives on open ground. Add it with add_place, then update the home.`;
         member.homeTile = openSpot(d.map, near, name.length * 53, d.cast.filter((c) => c.id !== member.id).map((c) => c.homeTile));
       } else if (!existing) {
         member.homeTile = openSpot(d.map, undefined, name.length * 71 + d.cast.length, d.cast.map((c) => c.homeTile));
@@ -522,6 +539,7 @@ export async function runAuthoringTool(name: string, args: Record<string, any>, 
         ok: true,
         updated: Boolean(existing),
         character: { id: member.id, name: member.name, role: member.role, voice: member.voice ? `${member.voice.gender}, ${member.voice.language}` : 'default', home: member.homeTile },
+        ...(note ? { note } : {}),
       };
     }
 
