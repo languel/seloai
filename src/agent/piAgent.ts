@@ -1,5 +1,5 @@
 /**
- * Pi: the in-app agent. It talks with the person and builds the world with the same tools
+ * Spinner: the in-app agent. It talks with the person and builds the world with the same tools
  * an outside agent gets over MCP, in a loop: the model answers, may call tools, sees their
  * results, and goes on until it has something to say back (or a round limit is reached).
  *
@@ -11,7 +11,7 @@ import type { SeloToolDefinition } from '../api/seloToolRegistry';
 import type { PiActivity, PiMessage, PiModel, PiToolCall, PiToolSpec } from './piModel';
 
 /** Kept short and stable: a small model follows it better, and it stays cached between turns. */
-export const PI_INSTRUCTIONS = `You are Pi, the helper inside SeloAI, a living story world drawn as folk embroidery. You help the person make and run their own world: a place, its people, and what is going on.
+export const PI_INSTRUCTIONS = `You are Spinner, the helper inside SeloAI, a living story world drawn as folk embroidery. You help the person make and run their own world: a place, its people, and what is going on.
 
 How to work:
 - Use the tools to make changes. Never claim you changed something without calling a tool.
@@ -93,7 +93,7 @@ export class PiAgent {
   }
 
   async send(text: string, onEvent: (e: PiEvent) => void, signal?: AbortSignal): Promise<void> {
-    if (this.running) throw new Error('Pi is still working on the last message.');
+    if (this.running) throw new Error('Spinner is still working on the last message.');
     this.running = true;
     this.messages.push({ role: 'user', content: text });
     onEvent({ type: 'agent_start' });

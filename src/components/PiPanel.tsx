@@ -70,6 +70,14 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
     return () => window.clearInterval(id);
   }, [working]);
   const status = piSession.status;
+  // A message sent here from elsewhere (@Spinner in the village chat) that could not go yet.
+  const waiting = piSession.pendingDraft;
+  useEffect(() => {
+    if (!waiting) return;
+    const text = piSession.pendingDraft;
+    piSession.pendingDraft = null;
+    if (text) setDraft((d) => (d.trim() ? `${d.trim()} ${text}` : text));
+  }, [waiting]);
   const items = piSession.items;
   const busy = piSession.busy;
   const brain = piSession.brain;
@@ -201,7 +209,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
       {brain === 'local' && !localReady && (
         <div className="m-2 shrink-0 rounded border border-dashed border-borderFolk p-2.5 text-[12px] leading-relaxed">
           <p>
-            Pi can run entirely on this machine with <b>LFM3-1.7B</b> on WebGPU: nothing you write leaves the browser. The first time, it downloads{' '}
+            Spinner can run entirely on this machine with <b>LFM3-1.7B</b> on WebGPU: nothing you write leaves the browser. The first time, it downloads{' '}
             {PI_LOCAL_DOWNLOAD} and keeps it for next time.
           </p>
           {local.status === 'loading' ? (
@@ -216,7 +224,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
           ) : (
             <div className="mt-2 flex items-center gap-2">
               <button type="button" onClick={() => void localPi.load().catch(() => {})} className="rounded-sm border border-borderFolk bg-card px-2 py-1 text-[12px] font-semibold hover:bg-ink/5">
-                Download Pi ({PI_LOCAL_DOWNLOAD})
+                Download Spinner ({PI_LOCAL_DOWNLOAD})
               </button>
               {apiOk && (
                 <button type="button" onClick={() => piSession.setBrain('api')} className="text-[11px] text-muted underline hover:text-ink">
@@ -234,7 +242,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
         {items.length === 0 && (
           <div className="space-y-2 pt-1">
             <p className="text-muted">
-              Pi builds and runs this world with you: places, people, what is going on. Ask in your own words, by voice, or start with one of these.
+              Spinner builds and runs this world with you: places, people, what is going on. Ask in your own words, by voice, or start with one of these.
               Every change can be undone with the undo arrow, top right.
             </p>
             <div className="flex flex-wrap gap-1">
@@ -259,7 +267,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
             </div>
           ) : it.kind === 'pi' ? (
             <div key={it.id} className="mr-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">Pi</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">Spinner</div>
               <MiniMarkdown text={it.text + (it.streaming ? ' ▍' : '')} className="break-words" />
             </div>
           ) : it.kind === 'tool' ? (
@@ -357,8 +365,8 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
             }}
             rows={3}
             disabled={!canTalk}
-            placeholder={canTalk ? 'Tell Pi what you want to make or change…' : brain === 'api' ? 'Set a Brain API in the settings first' : 'Download Pi above to start'}
-            aria-label="Message Pi"
+            placeholder={canTalk ? 'Tell Spinner what you want to make or change…' : brain === 'api' ? 'Set a Brain API in the settings first' : 'Download Spinner above to start'}
+            aria-label="Message Spinner"
             className="thin-scroll relative block min-h-[82px] max-h-[168px] w-full resize-none bg-transparent px-3 py-2.5 text-xs leading-relaxed text-ink placeholder:text-muted focus:outline-none disabled:opacity-50"
           />
         </div>
@@ -383,7 +391,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
               disabled={!canTalk || hearing}
               onClick={() => void toggleVoice()}
               aria-pressed={Boolean(recording)}
-              aria-label={recording ? 'Stop and write down what I said' : 'Speak to Pi'}
+              aria-label={recording ? 'Stop and write down what I said' : 'Speak to Spinner'}
               title={recording ? 'Stop recording' : hearing ? 'Writing down what you said…' : 'Speak (the words go into the box)'}
               className={`glyph-button relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm disabled:opacity-40 ${recording ? 'glyph-on stitch-thread' : 'text-ink'}`}
             >
@@ -397,7 +405,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
             <button
               type="button"
               onClick={() => piSession.stop()}
-              aria-label="Stop Pi"
+              aria-label="Stop Spinner"
               title="Stop"
               className="glyph-button glyph-on stitch-thread relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
             >
@@ -407,7 +415,7 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
             <button
               type="submit"
               disabled={!canTalk || !draft.trim()}
-              aria-label="Send to Pi"
+              aria-label="Send to Spinner"
               title="Send"
               className="glyph-button glyph-on stitch-thread relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm disabled:opacity-45"
             >

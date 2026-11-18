@@ -1194,7 +1194,7 @@ export function App() {
   const panelTabs = (inVillage: boolean) => {
     const modes: Array<[string, string, PanelMode | null]> = [
       ...(inVillage ? [['storyline', 'Storyline', null] as [string, string, null]] : []),
-      ['pi', 'Pi', 'pi'],
+      ['pi', 'Spinner', 'pi'],
       ['style', 'Style', 'style'],
       ['data', 'World & Data', 'data'],
     ];
@@ -1392,7 +1392,10 @@ export function App() {
             onUpdateAesthetic={handleUpdateAesthetic}
             sidebarOpen={sidebarOpen}
             sidebarSwap={sidePanel ? sidePanelNode(true) : undefined}
-            onShowStoryline={() => setSidePanel(null)}
+            onAskSpinner={(text) => {
+              openPanel('pi');
+              piSession.ask(text);
+            }}
             panelTabs={panelTabs(true)}
             toolbarSlot={toolbarSlot}
             onPanelWidth={setPanelWidth}

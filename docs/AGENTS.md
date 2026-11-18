@@ -50,14 +50,16 @@ browser supports WebMCP, and as `window.seloAI.callTool(name, args)` for scripts
 other origins can call tools over `postMessage` only if their origin is listed in
 `VITE_SELOAI_ALLOWED_ORIGINS`.
 
-## Pi, the in-app agent
+## Spinner, the in-app agent
 
-The **Pi** tab of the side panel is an agent inside the app (`src/agent/`). It thinks either:
+The **Spinner** tab of the side panel is an agent inside the app (`src/agent/`; the code calls it Pi, after the Pi agent whose event vocabulary it follows). Write `@Spinner …` in the Storyline chat or in the field that `/` opens on the world, and the message goes to Spinner instead of a character: its tab opens and it answers there. If Spinner is not ready yet (the model is not downloaded), the message waits in its box.
+
+It thinks either:
 
 - **on this machine**: LiquidAI LFM3-1.7B (GGUF) on WebGPU, through the vendored runtime
   `public/vendor/Lfm3ForCausalLM.js` (from the `webml-community/LFM3-1.7B-WebGPU-Pi` Space,
   Apache-2.0). The weights (about 1.1 GB) download once, only when the person clicks
-  "Download Pi". Nothing leaves the browser.
+  "Download Spinner". Nothing leaves the browser.
 - **with a cloud model**: the Brain API in the settings (OpenAI-compatible with tools:
   OpenAI, OpenRouter, Ollama, LM Studio, GitHub Models; or Anthropic). Gemini is not supported
   for tools yet.
@@ -66,7 +68,7 @@ Small models get a small tool set; strong ones more. The loop and its events fol
 agent's vocabulary (`agent_start`, `turn_start`, `message_update`, `tool_execution_start/end`,
 `agent_end`).
 
-To try Pi against a real model from the command line:
+To try Spinner against a real model from the command line:
 
 ```bash
 PI_LIVE_MODEL=qwen3:8b PI_LIVE_URL=http://localhost:11434/v1 pnpm exec vitest run src/agent/__tests__/piLive.test.ts
@@ -74,7 +76,7 @@ PI_LIVE_MODEL=qwen3:8b PI_LIVE_URL=http://localhost:11434/v1 pnpm exec vitest ru
 
 ## Not done yet
 
-- Pi as a separate, embeddable script for other pages (the agent and the runtime are ready to
+- Spinner as a separate, embeddable script for other pages (the agent and the runtime are ready to
   be packaged; the page integration is not).
 - The local model has only been wired, not yet tried in a browser on a full download.
 - MCP over HTTP (for hosted agents): stdio only for now.

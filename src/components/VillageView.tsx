@@ -109,8 +109,8 @@ interface VillageViewProps {
    * stays mounted underneath, hidden, so it comes back as it was.
    */
   sidebarSwap?: React.ReactNode;
-  /** Switch the side panel back to the Storyline (the village's own inspector). */
-  onShowStoryline?: () => void;
+  /** A message for Spinner, the world-building agent ("@Spinner …"): opens its panel and sends it. */
+  onAskSpinner?: (text: string) => void;
   /** The panel's mode tabs (Storyline, Style, World & Data), shown above whichever is open. */
   panelTabs?: React.ReactNode;
   /** A place in the app's top bar to draw the village controls into, instead of over the map. */
@@ -484,7 +484,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onUpdateAesthetic,
   sidebarOpen: sidebarOpenProp,
   sidebarSwap,
-  onShowStoryline,
+  onAskSpinner,
   panelTabs,
   toolbarSlot,
   onPanelWidth,
@@ -1628,6 +1628,16 @@ export const VillageView: React.FC<VillageViewProps> = ({
       accentColor: '#c98a3b',
       statusHint: settings.narratorEnabled ? 'voice on' : 'text',
     },
+    {
+      id: 'spinner',
+      name: 'Spinner',
+      displayLabel: 'Spinner',
+      tokenText: '@Spinner',
+      role: 'The helper that builds and changes the world with you',
+      accentColor: '#7a5c9e',
+      statusHint: 'helper',
+      searchAliases: 'spinner helper agent builder pi',
+    },
     ...villagers.map((v) => ({
       id: v.id,
       name: v.name,
@@ -1801,9 +1811,9 @@ export const VillageView: React.FC<VillageViewProps> = ({
   const handleTriggerAtMention = () => insertTriggerChar('@');
   const handleTriggerHashMention = () => insertTriggerChar('#');
 
-  // `/` speaks to the world. With the panel open it jumps to the Storyline's message box;
-  // with the panel hidden a small field opens where the pointer is, so the map stays in view.
-  // Double-clicking a character opens the same field already addressed to them.
+  // `/` speaks to the world: a small field opens where the pointer is, so the map stays in view,
+  // whether or not the side panel is open. Double-clicking a character opens the same field
+  // already addressed to them. "@Spinner …" (here or in the Storyline chat) goes to Spinner.
   const pointerAtRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
   const [quickSay, setQuickSay] = useState<{ x: number; y: number } | null>(null);
   const [quickText, setQuickText] = useState('');
@@ -1820,12 +1830,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       e.preventDefault();
-      if (sidebarOpen) {
-        if (sidebarSwap) onShowStoryline?.();
-        // The Storyline renders on the next frame when it was swapped out.
-        requestAnimationFrame(() => requestAnimationFrame(() => composerRef.current?.focus()));
-        return;
-      }
+      // Always the same: a field at the pointer, whatever the side panel is showing.
       setQuickText('');
       setQuickSay({ ...pointerAtRef.current });
     };
@@ -1835,13 +1840,24 @@ export const VillageView: React.FC<VillageViewProps> = ({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('keydown', onKey);
     };
-  }, [sidebarOpen, sidebarSwap, onShowStoryline]);
+  }, []);
+
+  /** The message with "@Spinner" taken out, if it is for Spinner; otherwise null. */
+  const forSpinner = (text: string): string | null => {
+    if (!/(^|\s)@spinner\b/i.test(text)) return null;
+    return text.replace(/(^|\s)@spinner\b[,:]?/gi, '$1').replace(/\s+/g, ' ').trim();
+  };
 
   const sendQuickSay = async () => {
     const text = quickText.trim();
     setQuickSay(null);
     setQuickText('');
     if (!text || sending) return;
+    const spin = forSpinner(text);
+    if (spin !== null) {
+      onAskSpinner?.(spin);
+      return;
+    }
     setSending(true);
     setVoiceError(null);
     try {
@@ -1865,6 +1881,11 @@ export const VillageView: React.FC<VillageViewProps> = ({
     lastRangeRef.current = null;
     setChatInput('');
     setMentionMatch(null);
+    const spin = forSpinner(text);
+    if (spin !== null) {
+      onAskSpinner?.(spin);
+      return;
+    }
     setSending(true);
     setVoiceError(null);
     try {
@@ -2300,7 +2321,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
                 }}
                 onBlur={() => setQuickSay(null)}
                 aria-label={`Say something to ${isScribeSelected ? narratorName : selectedCfg?.name ?? 'the village'}`}
-                placeholder={isScribeSelected ? `Tell ${narratorName}, or @someone…` : `Say to ${selectedCfg?.name ?? 'the village'}, or @someone…`}
+                placeholder={isScribeSelected ? `Tell ${narratorName}, or @someone…` : `Say to ${selectedCfg?.name ?? 'the village'}, or @someone, or @Spinner…`}
                 className="w-full bg-transparent text-xs leading-relaxed text-ink placeholder:text-muted focus:outline-none"
               />
             </form>

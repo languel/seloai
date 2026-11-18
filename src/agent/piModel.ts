@@ -122,11 +122,11 @@ class LocalPi {
           onProgress: (p: { status?: string; kind?: string; loaded?: number; total?: number; progress?: number }) => {
             const fraction =
               typeof p.progress === 'number' ? (p.progress > 1 ? p.progress / 100 : p.progress) : p.total ? (p.loaded ?? 0) / p.total : this.progress.fraction;
-            this.set({ status: 'loading', fraction: Math.max(0, Math.min(1, fraction)), message: p.status === 'weights' ? 'Downloading Pi…' : 'Preparing Pi…' });
+            this.set({ status: 'loading', fraction: Math.max(0, Math.min(1, fraction)), message: p.status === 'weights' ? 'Downloading Spinner…' : 'Preparing Spinner…' });
           },
         });
         this.session = this.model.create_session();
-        this.set({ status: 'ready', fraction: 1, message: 'Pi is ready (runs on this machine)' });
+        this.set({ status: 'ready', fraction: 1, message: 'Spinner is ready (runs on this machine)' });
       } catch (err) {
         this.set({ status: 'error', fraction: 0, message: err instanceof Error ? err.message : String(err) });
         this.loading = null;
@@ -140,7 +140,7 @@ class LocalPi {
     // The download is a choice the person makes (it is large): never start it from a message.
     if (!this.session) {
       if (this.loading) await this.loading;
-      else throw new Error(`Pi's local model is not downloaded yet. Use "Download Pi" (${PI_LOCAL_DOWNLOAD}), or switch to a cloud model.`);
+      else throw new Error(`Spinner's local model is not downloaded yet. Use "Download Spinner" (${PI_LOCAL_DOWNLOAD}), or switch to a cloud model.`);
     }
     // Room for the model's thinking as well as a long answer (a table, a whole cast).
     const gen = this.session!.generate(messages, { tools, max_new_tokens: 4096, do_sample: false, signal: opts.signal });
@@ -285,7 +285,7 @@ export function apiPiModel(getSettings: () => ModelSettings): PiModel {
     },
     async complete(messages, tools, opts) {
       const settings = getSettings();
-      if (settings.localApiProvider === 'gemini') throw new Error('Pi cannot use Gemini tools yet. Choose another provider in the Brain API settings, or the local model.');
+      if (settings.localApiProvider === 'gemini') throw new Error('Spinner cannot use Gemini tools yet. Choose another provider in the Brain API settings, or the local model.');
       if (!settings.localApiUrl || !settings.localApiModel) throw new Error('Set a Brain API (address and model) in the settings first, or use the local model.');
       const req = buildPiApiRequest(settings, messages, tools);
       const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: opts.signal });

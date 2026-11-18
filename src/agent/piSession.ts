@@ -5,7 +5,7 @@
 import { SELO_TOOL_DEFINITIONS, seloToolHost } from '../api/seloToolRegistry';
 import type { ModelSettings } from '../engine/types';
 import { PiAgent, piToolSpecs, type PiEvent } from './piAgent';
-import { apiPiModel, localPiModel, type PiModel } from './piModel';
+import { apiPiModel, localPi, localPiModel, type PiModel } from './piModel';
 
 export type PiItem =
   | { id: number; kind: 'user'; text: string }
@@ -40,7 +40,7 @@ class PiSession {
   private agent: PiAgent;
   private abort: AbortController | null = null;
   private getSettings: () => ModelSettings = () => {
-    throw new Error('Pi is not connected to the app yet.');
+    throw new Error('Spinner is not connected to the app yet.');
   };
   private version = 0;
 
@@ -57,6 +57,31 @@ class PiSession {
 
   connect(getSettings: () => ModelSettings) {
     this.getSettings = getSettings;
+  }
+
+  /** Text for Spinner's message box, from somewhere else in the app (it could not be sent yet). */
+  pendingDraft: string | null = null;
+
+  /** Whether Spinner can think right now (the local model is loaded, or a cloud model is set). */
+  canTalk(): boolean {
+    return this.brain === 'api' ? this.apiAvailable() : localPi.isReady();
+  }
+
+  /**
+   * A message for Spinner from elsewhere (the Storyline chat, the field on the world). Sent
+   * at once when Spinner is ready and idle; otherwise it waits in Spinner's message box, to be
+   * sent once the person has downloaded the model or chosen a cloud one.
+   */
+  ask(text: string): 'sent' | 'drafted' {
+    const clean = text.trim();
+    if (!clean) return 'drafted';
+    if (this.busy || !this.canTalk()) {
+      this.pendingDraft = this.pendingDraft ? `${this.pendingDraft} ${clean}` : clean;
+      this.changed();
+      return 'drafted';
+    }
+    void this.send(clean);
+    return 'sent';
   }
 
   /** Whether the settings name a cloud model Pi could use. */
@@ -180,10 +205,10 @@ class PiSession {
           break;
         case 'agent_end':
           if (e.reason === 'error') this.push({ kind: 'note', text: e.error ?? 'Something went wrong.', error: true });
-          else if (e.reason === 'max_rounds') this.push({ kind: 'note', text: 'Pi stopped after many steps. Say "go on" to continue.' });
+          else if (e.reason === 'max_rounds') this.push({ kind: 'note', text: 'Spinner stopped after many steps. Say "go on" to continue.' });
           else if (e.reason === 'cancelled') this.push({ kind: 'note', text: 'Stopped.' });
-          else if (e.reason === 'too_long') this.push({ kind: 'note', text: 'Pi ran out of room for that answer. Ask for less at once (say, one part at a time).' });
-          else if (e.reason === 'silent') this.push({ kind: 'note', text: 'Pi did not put an answer into words. Ask again, perhaps more simply.' });
+          else if (e.reason === 'too_long') this.push({ kind: 'note', text: 'Spinner ran out of room for that answer. Ask for less at once (say, one part at a time).' });
+          else if (e.reason === 'silent') this.push({ kind: 'note', text: 'Spinner did not put an answer into words. Ask again, perhaps more simply.' });
           break;
         default:
           break;
