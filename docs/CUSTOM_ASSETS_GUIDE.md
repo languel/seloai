@@ -6,7 +6,7 @@ This guide explains how to author custom characters, tilesets, and maps for **Se
 
 ## 1. Reference Template Files (`public/templates/`)
 
-All templates are also accessible directly inside the **Guides & Templates** tab of the web app:
+All templates are also accessible directly inside the **Help & Guides** view of the web app:
 
 - `character-spritesheet-template-96x128.png` — Exact `96×128 px` (`3 cols × 4 rows` of `32×32 px` frames) character walk-cycle template.
 - `character-spritesheet-template-384x512.png` — `4×` upscaled (`384×512 px`) version of the same grid. **Send this one to image models** (they align much better at `384×512`), then downscale back to `96×128` using nearest-neighbor!

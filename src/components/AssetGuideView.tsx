@@ -1,9 +1,12 @@
 /**
- * Guides & Templates: how to make your own interactive story in SeloAI (a world, a cast and
- * a story), written for students, with templates to copy or download and prompts for a chat
- * assistant to help draft them.
+ * Help & Guides, in parts: Welcome (what SeloAI is and how to use it, with a guided tour; see
+ * guide/WelcomeGuide.tsx) and Make your own story: how to make an interactive story in SeloAI (a
+ * world, a cast and a story), written for students, with templates to copy or download and
+ * prompts for a chat assistant to help draft them.
  */
 import React, { useState } from 'react';
+import { WelcomeGuide } from './guide/WelcomeGuide';
+import { GuideNav, GuideSection as Section } from './guide/GuideSection';
 import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import { omniEngine } from '../ai/omniEngine';
@@ -203,17 +206,6 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
-  return (
-    <section id={id} aria-labelledby={`${id}-title`} className="rushnyk-card scroll-mt-3 rounded-sm p-3 space-y-2 text-[13px] leading-relaxed">
-      <h2 id={`${id}-title`} className="text-base font-bold">
-        {title}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
 const SECTIONS: Array<[string, string]> = [
   ['how', 'How a story runs'],
   ['first', 'Your first story in 30 minutes'],
@@ -227,7 +219,7 @@ const SECTIONS: Array<[string, string]> = [
   ['draft', 'Draft a character here'],
 ];
 
-export const AssetGuideView: React.FC = () => {
+const MakeStoryGuide: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [genConcept, setGenConcept] = useState('A ferryman who has not spoken since the flood, but writes everything down');
   const [genOutput, setGenOutput] = useState('');
@@ -294,8 +286,7 @@ export const AssetGuideView: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-linen p-3 thin-scroll">
-      <div className="mx-auto max-w-4xl space-y-4">
+      <div className="space-y-4">
         <header className="border-b border-borderFolk pb-3">
           <div className="flex items-center gap-2">
             <BookOpen className="h-5 w-5 text-crimson" />
@@ -306,13 +297,7 @@ export const AssetGuideView: React.FC = () => {
             the place, the people and the trouble; the story grows from what they want and what you do. This guide walks you
             from an empty cloth to a story you can share.
           </p>
-          <nav aria-label="Guide sections" className="mt-2 flex flex-wrap gap-1 text-[12px]">
-            {SECTIONS.map(([id, title]) => (
-              <a key={id} href={`#${id}`} className="rounded-sm border border-borderFolk bg-surface px-2 py-0.5 hover:border-ink/40">
-                {title}
-              </a>
-            ))}
-          </nav>
+          <GuideNav label="Guide sections" sections={SECTIONS} />
         </header>
 
         <Section id="how" title="How a story runs">
@@ -605,6 +590,56 @@ export const AssetGuideView: React.FC = () => {
           query the story database) through <code>window.seloAI</code> in the browser and an MCP server (<code>npm run mcp</code>
           ), and stories can run headless for experiments (<code>scripts/headless-run.ts</code>).
         </p>
+      </div>
+  );
+};
+
+const PARTS = [
+  { id: 'welcome', title: 'Welcome' },
+  { id: 'make', title: 'Make your own story' },
+] as const;
+type PartId = (typeof PARTS)[number]['id'];
+const PART_KEY = 'seloai:help-part';
+
+/** Help & Guides: the parts as tabs, Welcome first. */
+export const AssetGuideView: React.FC = () => {
+  const [part, setPartState] = useState<PartId>(() => {
+    try {
+      return localStorage.getItem(PART_KEY) === 'make' ? 'make' : 'welcome';
+    } catch {
+      return 'welcome';
+    }
+  });
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const setPart = (p: PartId) => {
+    setPartState(p);
+    scrollRef.current?.scrollTo({ top: 0 });
+    try {
+      localStorage.setItem(PART_KEY, p);
+    } catch {
+      // ignore
+    }
+  };
+  return (
+    <div ref={scrollRef} className="h-full overflow-y-auto bg-linen p-3 thin-scroll">
+      <div className="mx-auto max-w-4xl space-y-3">
+        <div role="tablist" aria-label="Help parts" className="flex gap-1 border-b border-borderFolk">
+          {PARTS.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              role="tab"
+              aria-selected={part === p.id}
+              onClick={() => setPart(p.id)}
+              className={`-mb-px rounded-t-sm border px-3 py-1.5 text-[13px] font-semibold ${
+                part === p.id ? 'border-borderFolk border-b-transparent bg-linen text-ink' : 'border-transparent text-muted hover:text-ink'
+              }`}
+            >
+              {i + 1}. {p.title}
+            </button>
+          ))}
+        </div>
+        {part === 'welcome' ? <WelcomeGuide onNext={() => setPart('make')} /> : <MakeStoryGuide />}
       </div>
     </div>
   );

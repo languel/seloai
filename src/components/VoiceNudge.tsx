@@ -92,8 +92,11 @@ export function VoiceNudge({ settings, onClose }: VoiceNudgeProps) {
           disabled={busy}
           className="rounded bg-crimson px-3 py-2 text-left text-xs font-semibold text-white hover:opacity-95 disabled:opacity-50"
         >
-          <span className="block">Voice + brain</span>
-          <span className="block font-normal opacity-90">LFM3-Omni · about 1.5 GB · WebGPU</span>
+          <span className="flex items-center justify-between gap-2">
+            Voice + brain
+            <span className="rounded-sm bg-white/20 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide">Recommended</span>
+          </span>
+          <span className="block font-normal opacity-90">LFM3-Omni: one model that thinks and speaks · about 1.5 GB · WebGPU</span>
         </button>
         <button
           type="button"

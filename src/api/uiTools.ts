@@ -17,6 +17,7 @@ import type { ModelSettings, VillageMap, VillagerConfig } from '../engine/types'
 import { resolveNear } from './authoringTools';
 import { exportProjectJson } from '../storage/villageStore';
 import type { PerformancePayload } from '../app/player';
+import { GUIDED_TOURS } from '../app/guidedTours';
 import type { SeloToolDefinition } from './seloToolRegistry';
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required });
@@ -134,6 +135,11 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
   { name: 'performance_status', description: 'How the running (or last) performance is going: the step it is on and what each step did.', inputSchema: obj({}) },
   { name: 'stop_performance', description: 'Stop the running performance (and save its recording).', inputSchema: obj({}) },
   {
+    name: 'guided_tour',
+    description: 'Start one of the built-in narrated tours of SeloAI, for someone new: "welcome" (what SeloAI is, loading a voice and a brain, and how to use it). Runs in the background with a Stop button.',
+    inputSchema: obj({ tour: str('Which tour: welcome (default).') }),
+  },
+  {
     name: 'start_recording',
     description: 'Record to a video: "app" (the whole app with sound; the person clicks Start on a card) or "world" (just the world, at once).',
     inputSchema: obj({ what: str('app or world.'), name: str('A name for the video file.') }, ['what']),
@@ -230,8 +236,8 @@ async function narrate(text: string, host: UiHost): Promise<void> {
   // At least long enough to read it (about 3 words a second), plus a breath.
   const readMs = 900 + clean.split(/\s+/).length * 330;
   const left = readMs - (performance.now() - started);
-  if (left > 0) await sleep(left);
-  await sleep(350);
+  if (left > 0) await pausable(left);
+  await pausable(350);
   if (performance.now() - started > 0) setCaption(null);
 }
 
@@ -254,10 +260,50 @@ interface Run {
   state: 'running' | 'done' | 'stopped' | 'failed';
   results: StepResult[];
   stop: boolean;
+  /** Show a small bar with the progress and a Stop button (guided tours). */
+  controls: boolean;
   recorded?: { file?: string; seconds?: number; note?: string };
 }
 
 let run: Run | null = null;
+
+const perfListeners = new Set<() => void>();
+let perfVersion = 0;
+const perfChanged = () => {
+  perfVersion++;
+  for (const fn of perfListeners) fn();
+};
+export const subscribePerformance = (fn: () => void) => {
+  perfListeners.add(fn);
+  return () => perfListeners.delete(fn);
+};
+export const performanceVersion = () => perfVersion;
+
+/** The running performance, for the overlay's progress bar. */
+export function currentPerformance(): { name: string; at: number; total: number; controls: boolean } | null {
+  return run?.state === 'running' && !run.stop ? { name: run.name, at: run.at, total: run.total, controls: run.controls } : null;
+}
+
+/** Stops the running performance at once: its voice, caption, drawings and pointer go too. */
+export function stopCurrentPerformance(): string | null {
+  if (run?.state !== 'running') return null;
+  run.stop = true;
+  brainRouter.flushAudioQueue();
+  setCaption(null);
+  clearDrawings();
+  hidePointer();
+  perfChanged();
+  return run.name;
+}
+
+/** A wait that ends early when the running performance is stopped. */
+async function pausable(ms: number) {
+  const until = performance.now() + ms;
+  while (performance.now() < until) {
+    if (run?.stop) return;
+    await sleep(Math.min(100, until - performance.now()));
+  }
+}
 
 type Step = Record<string, unknown>;
 
@@ -300,8 +346,9 @@ async function perform(args: Record<string, unknown>, host: UiHost, known: Set<s
   const plan = steps.map((s) => normalise(s, known));
   for (const p of plan) if (p.kind === 'tool' && (p.tool === 'perform' || !known.has(p.tool))) throw new Error(`Unknown or not allowed in a script: "${p.tool}".`);
   const name = String(args.name ?? 'performance');
-  const current: Run = { id: `perf-${Date.now().toString(36)}`, name, total: plan.length, at: 0, state: 'running', results: [], stop: false };
+  const current: Run = { id: `perf-${Date.now().toString(36)}`, name, total: plan.length, at: 0, state: 'running', results: [], stop: false, controls: args.controls === true };
   run = current;
+  perfChanged();
   const record = args.record === 'app' || args.record === 'world' ? (args.record as RecordWhat) : null;
   // A walkthrough holds the world still, so the characters do not talk over the narrator;
   // world: "running" keeps it going (for a staged scene). Restored at the end.
@@ -323,10 +370,11 @@ async function perform(args: Record<string, unknown>, host: UiHost, known: Set<s
       for (let i = 0; i < plan.length; i++) {
         if (current.stop) break;
         current.at = i + 1;
+        perfChanged();
         const p = plan[i];
         try {
           if (p.kind === 'wait') {
-            await sleep(Math.max(0, Math.min(600, p.seconds)) * 1000);
+            await pausable(Math.max(0, Math.min(600, p.seconds)) * 1000);
             current.results.push({ step: i + 1, did: `waited ${p.seconds} s`, ok: true });
           } else if (p.kind === 'wait_for') {
             const got = await waitFor(p.what, p.timeout, host, () => current.stop);
@@ -346,7 +394,9 @@ async function perform(args: Record<string, unknown>, host: UiHost, known: Set<s
     } finally {
       hidePointer();
       setCaption(null);
-      if (holdWorld) host.sim.paused = wasPaused;
+      // Back as it was, unless the script itself set the world playing (a tour's last step).
+      if (holdWorld && host.sim.paused) host.sim.paused = wasPaused;
+      perfChanged();
       if (record && recordingState().recording) {
         await sleep(500);
         const saved = await stopRecording();
@@ -574,8 +624,19 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
     case 'performance_status':
       return runReport(run);
     case 'stop_performance':
-      if (run?.state === 'running') run.stop = true;
-      return { ok: true, stopping: run?.name ?? null };
+      return { ok: true, stopping: stopCurrentPerformance() };
+
+    case 'guided_tour': {
+      const which = String(args.tour ?? 'welcome').toLowerCase();
+      const tour = GUIDED_TOURS.find((t) => t.id === which || t.title.toLowerCase() === which);
+      if (!tour) throw new Error(`No tour called "${which}". Tours: ${GUIDED_TOURS.map((t) => t.id).join(', ')}.`);
+      if (run?.state === 'running') stopCurrentPerformance();
+      // Let a stopped performance finish its last step before the tour begins.
+      for (let i = 0; i < 30 && run?.state === 'running'; i++) await sleep(100);
+      const steps = tour.steps({ cast: host.cast(), map: host.map() });
+      const r = await perform({ name: tour.title, steps, controls: true }, host, known);
+      return { ok: true, started: r.name, steps: r.total, note: 'The tour is running; the person can stop it with its Stop button or Escape.' };
+    }
 
     case 'start_recording': {
       const what = args.what === 'world' ? 'world' : 'app';

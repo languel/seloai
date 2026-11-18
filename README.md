@@ -16,7 +16,7 @@ All 22 SeloAI tools are defined once in `src/api/toolSchemas.json` and executed 
 - **World Editor (`WorldEditorView`)**: worlds are authored as places, not tile grids: a generator recipe (settings from its schema, a seed with a dice) plus hand edits kept on top, so a reroll keeps your work. Paint ground, place, move and cut features, name places and start points, see where people cannot walk, undo and redo. Tile maps can be turned into places. Replaces the old Level Editor and Tapestry Studio.
 - **Characters (`CharacterEditorView`, `FigureAppearance`)**: persona, voice and the procedural figure: a seed draws every trait, any trait can be chosen by hand (headdress or hat, skirt and pattern, thread colours, sleeves, hair, arms, skin, resting face), and a new seed keeps your choices; a full portrait and the five moods preview it.
 - **AI & Voice Monitor (`MonitorView`)**: Load/unload WebGPU brains (`LFM3-Omni-2B-GGUF` default, `LFM3-1.7B-ONNX`, `MiniCPM5-2B`, `Bonsai-2 27B`), configure Ollama / LM Studio endpoints, inspect `<think>` / `<thought>` / Scribe settings, test mic STT + 24 kHz PCM streaming TTS, and monitor live telemetry.
-- **Guides & Templates (`AssetGuideView`)**: Downloadable PNG grid templates (`384×512`, `96×128`, `512×512`), JSON schemas, and prompts for image and language models.
+- **Help & Guides (`AssetGuideView`, `WelcomeGuide`)**: a Welcome part for someone new (what SeloAI is, loading a voice and a brain, the screen, taking part, Spinner, saving; with a narrated guided tour) and Make your own story (world, characters, story files, templates, assistant prompts).
 
 ## World, Story & Data Portability
 

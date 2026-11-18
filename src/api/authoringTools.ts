@@ -225,8 +225,8 @@ export const PI_TOOL_NAMES = [
   'pointer',
   'draw',
   'narrate',
-  'mixer',
   'undo_world_edit',
+  'guided_tour',
 ] as const;
 
 export const AUTHORING_TOOL_NAMES = new Set(AUTHORING_TOOL_DEFINITIONS.map((t) => t.name));

@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { anchorPoint, expireOverlay, overlay, overlayVersion, subscribeOverlay, type Drawing } from '../app/overlay';
 import { answerRecordingAsk, pendingRecordingAsk, recorderVersion, recordingState, stopRecording, subscribeRecorder } from '../app/recorder';
+import { currentPerformance, performanceVersion, stopCurrentPerformance, subscribePerformance } from '../api/uiTools';
 
 /**
  * What an agent shows over the whole app: its drawings (in a running stitch, as if sewn on as
@@ -10,10 +11,23 @@ import { answerRecordingAsk, pendingRecordingAsk, recorderVersion, recordingStat
 export default function AgentOverlay() {
   useSyncExternalStore(subscribeOverlay, overlayVersion);
   useSyncExternalStore(subscribeRecorder, recorderVersion);
+  useSyncExternalStore(subscribePerformance, performanceVersion);
   const [, setFrame] = useState(0);
   const ask = pendingRecordingAsk();
   const rec = recordingState();
-  const busy = overlay.drawings.length > 0 || overlay.pointer.visible || overlay.caption !== null || Boolean(ask) || rec.recording;
+  const perf = currentPerformance();
+  const tour = perf?.controls ? perf : null;
+  const busy = overlay.drawings.length > 0 || overlay.pointer.visible || overlay.caption !== null || Boolean(ask) || rec.recording || Boolean(tour);
+
+  // Escape stops a guided tour.
+  useEffect(() => {
+    if (!tour) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') stopCurrentPerformance();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tour]);
 
   // While there is anything to show, follow the camera and the layout every frame.
   useEffect(() => {
@@ -81,6 +95,18 @@ export default function AgentOverlay() {
           Recording the world · {Math.floor(rec.seconds ?? 0)} s
           <button type="button" onClick={() => void stopRecording()} className="ml-1 rounded-sm px-1.5 text-muted hover:text-ink">
             Stop and save
+          </button>
+        </div>
+      )}
+      {/* A guided tour: where it is, and a way out. */}
+      {tour && (
+        <div className="stitch-panel pointer-events-auto absolute bottom-3 left-3 flex items-center gap-2 px-3 py-1.5 text-[12px] text-ink shadow-lg" style={{ background: 'var(--bg-card)', position: 'absolute' }} role="status">
+          <span className="font-semibold">{tour.name}</span>
+          <span className="text-muted">
+            {tour.at} / {tour.total}
+          </span>
+          <button type="button" onClick={() => stopCurrentPerformance()} className="ml-1 rounded-sm border border-borderFolk px-2 py-0.5 text-[11px] font-medium hover:border-ink/40" title="Stop the tour (Escape)">
+            Stop tour
           </button>
         </div>
       )}
@@ -159,8 +185,17 @@ function Label({ d }: { d: Drawing }) {
       transform: `translate(${leftward ? '-100%' : '0'}, ${upward ? '-100%' : '0'}) translate(${leftward ? -6 : 6}px, ${upward ? -6 : 6}px)`,
     };
   } else {
-    style = { left: at.x + (at.w ? at.w / 2 + 14 : 18), top: at.y - (at.h ? at.h / 2 : 0) - 8, transform: 'translateY(-50%)' };
+    // Beside what it marks: to its right, or its left near the right edge; below it when it sits
+    // at the top of the screen (the top bar), so the card never runs off the screen.
+    const halfW = at.w ? at.w / 2 : 0;
+    const halfH = at.h ? at.h / 2 : 0;
+    const leftward = at.x + halfW + 270 > innerWidth;
+    const below = at.y - halfH < 60;
+    style = below
+      ? { left: leftward ? at.x + halfW : at.x - halfW, top: at.y + halfH + 10, transform: leftward ? 'translateX(-100%)' : undefined }
+      : { left: leftward ? at.x - halfW - 14 : at.x + halfW + 14, top: at.y - halfH - 8, transform: `translate(${leftward ? '-100%' : '0'}, -50%)` };
   }
+  style.position = 'absolute';
   return (
     <div
       className="stitch-panel absolute max-w-[250px] whitespace-normal px-2.5 py-1.5 leading-snug text-ink shadow-md"

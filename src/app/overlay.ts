@@ -98,11 +98,17 @@ export function expireOverlay(now: number) {
 
 const CANDIDATES = 'button, [role="tab"], [role="option"], [role="button"], a[href], input, select, textarea, summary, [aria-label], [title], label';
 
+/** Shown on the page (it may be scrolled out of view: see onScreen). */
 function visible(el: Element): boolean {
   const r = el.getBoundingClientRect();
   if (r.width < 2 || r.height < 2) return false;
   const style = getComputedStyle(el);
-  return style.visibility !== 'hidden' && style.display !== 'none' && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+  return style.visibility !== 'hidden' && style.display !== 'none';
+}
+
+function onScreen(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  return r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
 }
 
 const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -132,7 +138,8 @@ export function findUi(name: string): HTMLElement {
   let bestScore = 0;
   let bestArea = Infinity;
   for (const el of all) {
-    const s = score(el);
+    // On screen beats scrolled out of view (which a pointer scrolls to first).
+    const s = score(el) && score(el) * 2 + (onScreen(el) ? 1 : 0);
     if (!s) continue;
     const r = el.getBoundingClientRect();
     const area = r.width * r.height;
@@ -144,7 +151,7 @@ export function findUi(name: string): HTMLElement {
     }
   }
   if (!best) {
-    const near = [...new Set(all.flatMap((el) => namesOf(el).filter((n) => n.length <= 40)))].slice(0, 40);
+    const near = [...new Set(all.filter(onScreen).flatMap((el) => namesOf(el).filter((n) => n.length <= 40)))].slice(0, 40);
     throw new Error(`Nothing on screen called "${name}". Some of what is there: ${near.join(' | ')}`);
   }
   return best;

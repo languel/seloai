@@ -1393,7 +1393,7 @@ export function App() {
               ['patterns', 'Pattern Studio', 'tapestry'],
               ['characters', 'Characters', 'characters'],
               ['monitor', 'AI & Voice Monitor', 'monitor'],
-              ['guides', 'Guides & Templates', 'guides'],
+              ['guides', 'Help & Guides', 'guides'],
             ] as const
           ).map(([id, label, glyph]) => {
             const active = tab === id;

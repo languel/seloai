@@ -87,6 +87,7 @@ Everything a person does with the interface is a tool too (`src/api/uiTools.ts`,
 | `draw` / `clear_drawings` | Arrows, rings, boxes, underlines, dots and labels in a running stitch, on a character (follows them), a place, a point, or a part of the interface |
 | `narrate` | Says a line in the Traveler's voice with a caption, and waits until it is said |
 | `perform` | Runs a whole script of these with waits in between, in the background; the world holds still while it runs (`world: "running"` to keep it going); `performance_status`, `stop_performance` |
+| `guided_tour` | Starts a built-in narrated tour (`welcome`: what SeloAI is, loading a voice and a brain, how to use it), with a Stop button and Escape. Tours live in `src/app/guidedTours.ts` and never change the world or a setting |
 | `mixer` | Levels for the characters' voices, the narrator, the guide (walkthrough narration) and master, 0 to 1 or off/half/on, with `fade_seconds` |
 | `export_performance` | Saves one playable HTML file: the world (no keys, no conversations) and the script. It opens SeloAI online in player mode (`?player`, which saves nothing) behind a Play card; `app_url` points it elsewhere |
 | `start_recording` / `stop_recording` | Records to a video, MP4 where the browser records it natively (WebM elsewhere): `world` (the canvas, at once) or `app` (the whole tab with panels, pointer and sound; the person clicks Start on a card, which the browser requires) |
