@@ -13,7 +13,9 @@ import type { PaletteName } from './art/looks';
 import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
 import { captureView } from './app/viewCapture';
+import { registerControls, type AppControls } from './app/uiControl';
 import PiPanel from './components/PiPanel';
+import AgentOverlay from './components/AgentOverlay';
 import { piSession } from './agent/piSession';
 
 /** The side panel's modes besides the village's own Storyline. */
@@ -128,6 +130,20 @@ export function App() {
   const [saveWorldName, setSaveWorldName] = useState<string>('');
 
   const simRef = useRef<VillageSimulation | null>(null);
+  // The app's controls for agents (filled in below, every render): declared up here, before any
+  // early return, so the hooks run in the same order on every render.
+  const appControlsRef = useRef<AppControls | null>(null);
+  useEffect(
+    () =>
+      registerControls('app', {
+        state: () => appControlsRef.current!.state(),
+        setTab: (t) => appControlsRef.current!.setTab(t),
+        setPanel: (m) => appControlsRef.current!.setPanel(m),
+        setTopBar: (show) => appControlsRef.current!.setTopBar(show),
+        exportImage: (w) => appControlsRef.current!.exportImage(w),
+      }),
+    [],
+  );
   // On a local dev server, the live simulation and Pi are reachable from the console as `__sim` and `__pi`, for debugging.
   useEffect(() => {
     if (!/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) return;
@@ -1251,6 +1267,39 @@ export function App() {
     />
   );
 
+  // The app's own controls (views, the side panel, the top bar, image export), for agents and
+  // scripted performances. Rebuilt every render; registered once through a stable proxy.
+  appControlsRef.current = {
+    state: () => ({
+      tab,
+      panel: tab === 'village' ? (sidebarOpen ? (sidePanel === 'pi' ? 'spinner' : sidePanel ?? 'storyline') : 'closed') : sidePanel === 'pi' ? 'spinner' : sidePanel ?? 'closed',
+      topBarHidden: autoHideBar && !barOut,
+    }),
+    setTab: (next) => {
+      const id = (next === 'level' ? 'world' : next === 'tapestry' ? 'patterns' : next) as TabId;
+      if (!['village', 'observatory', 'world', 'patterns', 'characters', 'monitor', 'guides'].includes(id)) throw new Error(`Unknown view "${next}".`);
+      latestRef.current.tab = id;
+      setTab(id);
+    },
+    setPanel: (mode) => {
+      if (mode === 'closed') {
+        if (tab === 'village' && sidebarOpen) toggleSidebarOpen();
+        if (tab !== 'village') setSidePanel(null);
+        return;
+      }
+      if (mode === 'storyline') {
+        setSidePanel(null);
+        if (tab === 'village' && !sidebarOpen) toggleSidebarOpen();
+        return;
+      }
+      openPanel(mode === 'spinner' ? 'pi' : mode);
+    },
+    setTopBar: (show) => {
+      setBarPinned(show);
+      setBarHover(false);
+    },
+    exportImage: (what) => (what === 'tapestry' ? handleExportTapestry() : handleExportViewImage()),
+  };
   return (
     <StitchScope look={glyphLookFor(aestheticSettings.worldLook, darkUi)}>
     <div className={`relative flex h-full flex-col bg-linen text-ink overflow-hidden ${artShell ? 'look-art' : ''}`}>
@@ -1258,6 +1307,7 @@ export function App() {
         <div aria-hidden className="absolute inset-x-0 top-0 z-40 h-1.5" onMouseEnter={() => setBarHover(true)} />
       ) : null}
       {showVoiceNudge && settings ? <VoiceNudge settings={settings} onClose={() => setShowVoiceNudge(false)} /> : null}
+      <AgentOverlay />
       <header
         ref={headerRef}
         className={`relative z-30 flex items-center gap-2 border-b border-borderFolk bg-card px-2 py-1 shrink-0 ${

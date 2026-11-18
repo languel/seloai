@@ -221,6 +221,10 @@ export const PI_TOOL_NAMES = [
   'instruct_world',
   'list_settings',
   'change_setting',
+  'ui_action',
+  'pointer',
+  'draw',
+  'narrate',
   'undo_world_edit',
 ] as const;
 
@@ -264,7 +268,7 @@ const tagOf = (name: string) =>
 const slugOf = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'someone';
 
 /** Where "near X" is: a place, a character, a character's home, or a kind of thing. */
-function resolveNear(near: string, doc: { map: VillageMap; cast: VillagerConfig[] }, sim: VillageSimulation): { x: number; y: number } | undefined {
+export function resolveNear(near: string, doc: { map: VillageMap; cast: VillagerConfig[] }, sim: VillageSimulation): { x: number; y: number } | undefined {
   const text = near.trim();
   if (!text) return undefined;
   const xy = /^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/.exec(text);

@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { registerViewCapture } from '../app/viewCapture';
+import { registerControls, type CameraCommand, type ShowWhat, type VillageControls } from '../app/uiControl';
 import {
   FIGURE_HEIGHT_SCALE,
   chooseFigureView,
@@ -1438,6 +1439,110 @@ export const VillageView: React.FC<VillageViewProps> = ({
     cam.glide = null;
     cam.targetZoom = Math.max(cam.targetZoom, 2.1);
   };
+  // The village's controls, for agents and scripted performances: the same things the
+  // toolbar, the canvas and the roster do. Rebuilt every render so they see the latest state;
+  // registered once through a stable proxy.
+  const controlsRef = useRef<VillageControls | null>(null);
+  controlsRef.current = {
+    state: () => {
+      const cam = cameraRef.current;
+      const td = sim.map.tileDim;
+      return {
+        camera: {
+          x: Math.round((cam.x / td - 0.5) * 10) / 10,
+          y: Math.round((cam.y / td - 0.5) * 10) / 10,
+          zoom: Math.round(cam.zoom * 100) / 100,
+          minZoom: Math.round(minZoom() * 100) / 100,
+          following: followSelected ? selectedId : null,
+          storyCamera: storyRef.current,
+        },
+        selected: selectedId || null,
+        shown: {
+          paths: showPaths,
+          labels: showLabels,
+          speech_bubbles: showSpeechBubbles,
+          thought_bubbles: showThoughtBubbles,
+          subtitles: showScribeSubtitles,
+          performance: showPerfHud,
+        },
+      };
+    },
+    camera: (cmd: CameraCommand) => {
+      const cam = cameraRef.current;
+      const td = sim.map.tileDim;
+      takeOver();
+      cam.anchor = null;
+      const zoom = cmd.zoom === 'whole' ? minZoom() : typeof cmd.zoom === 'number' ? Math.max(minZoom(), Math.min(3.5, cmd.zoom)) : undefined;
+      if (cmd.follow) {
+        setSelectedId(cmd.follow);
+        setFollowSelected(true);
+        cam.glide = null;
+        const rt = sim.runtimes.get(cmd.follow);
+        if (rt && cmd.move === 'cut') {
+          cam.x = (rt.x + 0.5) * td;
+          cam.y = (rt.y + 0.5) * td;
+        }
+      } else if (cmd.follow === null || cmd.x !== undefined) {
+        setFollowSelected(false);
+      }
+      if (cmd.x !== undefined && cmd.y !== undefined) {
+        const wx = (cmd.x + 0.5) * td;
+        const wy = (cmd.y + 0.5) * td;
+        if (cmd.move === 'cut') {
+          cam.glide = null;
+          cam.x = wx;
+          cam.y = wy;
+        } else cam.glide = { x: wx, y: wy };
+      } else if (cmd.zoom === 'whole') {
+        // The whole map: centre it as well.
+        const wx = (sim.map.width * td) / 2;
+        const wy = (sim.map.height * td) / 2;
+        if (cmd.move === 'cut') {
+          cam.x = wx;
+          cam.y = wy;
+        } else cam.glide = { x: wx, y: wy };
+      }
+      if (zoom !== undefined) {
+        cam.targetZoom = zoom;
+        if (cmd.move === 'cut') cam.zoom = zoom;
+      }
+    },
+    storyCamera: (on: boolean) => setStoryMode(on),
+    select: (id: string) => setSelectedId(id),
+    show: (what: ShowWhat, on: boolean) => {
+      const set = { paths: setShowPaths, labels: setShowLabels, speech_bubbles: setShowSpeechBubbles, thought_bubbles: setShowThoughtBubbles, subtitles: setShowScribeSubtitles, performance: setShowPerfHud }[what];
+      set(on);
+    },
+    characterCell: (id: string) => {
+      const rt = id === sim.player.id ? sim.player : sim.runtimes.get(id);
+      return rt ? { x: rt.x, y: rt.y } : null;
+    },
+    worldToScreen: (x: number, y: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const cam = cameraRef.current;
+      const td = sim.map.tileDim;
+      const sx = rect.left + rect.width / 2 + ((x + 0.5) * td - cam.x) * cam.zoom;
+      const sy = rect.top + rect.height / 2 + ((y + 0.5) * td - cam.y) * cam.zoom;
+      if (sx < rect.left - 40 || sx > rect.right + 40 || sy < rect.top - 40 || sy > rect.bottom + 40) return null;
+      return { x: sx, y: sy };
+    },
+  };
+  useEffect(
+    () =>
+      registerControls('village', {
+        state: () => controlsRef.current!.state(),
+        camera: (cmd) => controlsRef.current!.camera(cmd),
+        storyCamera: (on) => controlsRef.current!.storyCamera(on),
+        select: (id) => controlsRef.current!.select(id),
+        show: (what, on) => controlsRef.current!.show(what, on),
+        characterCell: (id) => controlsRef.current!.characterCell(id),
+        worldToScreen: (x, y) => controlsRef.current!.worldToScreen(x, y),
+      }),
+    [],
+  );
+
   /**
    * Double-click a name anywhere in the village view (a villager in the roster, a character
    * or a place named in the text) to guide the camera there gently.

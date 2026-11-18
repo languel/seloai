@@ -2,6 +2,7 @@ import { brainRouter } from '../ai/brainRouter';
 import toolSchemas from './toolSchemas.json';
 import { AUTHORING_TOOL_DEFINITIONS, isAuthoringTool, runAuthoringTool } from './authoringTools';
 import { isSettingsTool, runSettingsTool, SETTINGS_TOOL_DEFINITIONS, type SettingsHost } from './settingsTools';
+import { isUiTool, runUiTool, UI_TOOL_DEFINITIONS } from './uiTools';
 import { generateImageViaApi, probeApiModels } from '../ai/localApiClient';
 import { DEFAULT_MODEL_SETTINGS } from '../data/defaultData';
 import {
@@ -97,7 +98,8 @@ function findVillagerMatch(villagers: VillagerConfig[], query?: string): Village
 }
 
 /** The authoring tools first: they are the plain way in for an agent making a world. */
-export const SELO_TOOL_DEFINITIONS: SeloToolDefinition[] = [...AUTHORING_TOOL_DEFINITIONS, ...SETTINGS_TOOL_DEFINITIONS, ...(toolSchemas as SeloToolDefinition[])];
+export const SELO_TOOL_DEFINITIONS: SeloToolDefinition[] = [...AUTHORING_TOOL_DEFINITIONS, ...SETTINGS_TOOL_DEFINITIONS, ...UI_TOOL_DEFINITIONS, ...(toolSchemas as SeloToolDefinition[])];
+const KNOWN_TOOLS = new Set(SELO_TOOL_DEFINITIONS.map((t) => t.name));
 
 export class SeloToolHost {
   constructor(private hooks: SeloHostHooks) {}
@@ -128,6 +130,21 @@ export class SeloToolHost {
       title: `Tool: ${name}`,
       detail: JSON.stringify(args).slice(0, 140),
     });
+
+    if (isUiTool(name)) {
+      return runUiTool(
+        name,
+        args,
+        {
+          sim,
+          map: () => this.hooks.getMap(),
+          cast: () => this.hooks.getVillagers(),
+          settings: () => this.hooks.getSettings(),
+          call: (n, a) => this.callTool(n, a),
+        },
+        KNOWN_TOOLS,
+      );
+    }
 
     if (isSettingsTool(name)) {
       return runSettingsTool(name, args, {
