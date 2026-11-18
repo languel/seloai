@@ -180,7 +180,9 @@ describe('Agent tools', () => {
     });
 
     const tools = host.listTools();
-    expect(tools).toHaveLength(22);
+    // The 22 original tools plus the authoring set, each once.
+    expect(tools.length).toBeGreaterThanOrEqual(22);
+    expect(new Set(tools.map((t) => t.name)).size).toBe(tools.length);
     expect(tools.some((t) => t.name === 'compose_pixel_pattern')).toBe(true);
 
     // Switch to Tapestry Studio tab + run Shevitsa scenario preset
@@ -303,7 +305,7 @@ describe('Agent tools', () => {
         }) + '\n',
       );
     });
-    expect(mcpResponses[0].result.tools).toHaveLength(22);
+    expect(mcpResponses[0].result.tools.map((t: { name: string }) => t.name)).toEqual(tools.map((t) => t.name));
     expect(JSON.parse(mcpResponses[1].result.content[0].text).tab).toBe('tapestry');
     expect(JSON.parse(mcpResponses[2].result.content[0].text).preset).toBe('shevitsa');
     const mcpCompose = JSON.parse(mcpResponses[3].result.content[0].text);
