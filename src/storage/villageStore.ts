@@ -41,7 +41,16 @@ export interface PersistedVillageState {
   /** Setting-specific knowledge from the world pack this world came from. */
   world?: WorldContext;
   savedAt: number;
+  /** Which set of default voices this was saved with (see CAST_VOICES_VERSION). */
+  voicesVersion?: number;
 }
+
+/**
+ * The default voices: 2 is the roster the owner tuned (each demo villager's accent, the Scribe
+ * in Greek, the Traveler in Danish, and the voice instruction). A world saved before it gets
+ * these once when loaded, for the demo characters, the Scribe and the Traveler only.
+ */
+export const CAST_VOICES_VERSION = 2;
 
 export interface SavedWorldSlot {
   id: string;
@@ -119,6 +128,14 @@ async function idbSet<T>(key: string, value: T): Promise<void> {
  * left alone, and a figure the user chose is never overwritten.
  */
 let packFigures: VillagerConfig[] | null = null;
+let packCast: VillagerConfig[] | null = null;
+
+/** A world saved before the tuned voices: the demo characters get their voices from the pack. */
+function withPackVoice(villager: VillagerConfig): VillagerConfig {
+  packCast ??= WORLD_PACKS.flatMap((pack) => pack.build().cast ?? []);
+  const match = packCast.find((c) => c.id === villager.id && c.name === villager.name && c.voice);
+  return match ? { ...villager, voice: structuredClone(match.voice) } : villager;
+}
 
 function withPackFigure(villager: VillagerConfig): VillagerConfig {
   if (villager.figure) return villager;
@@ -146,9 +163,13 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
             ? 0
             : rawSettings.proximityRadiusTiles
           : DEFAULT_MODEL_SETTINGS.proximityRadiusTiles;
+      const oldVoices = (stored.voicesVersion ?? 1) < CAST_VOICES_VERSION;
       return {
         map: withBundledTileMeanings(stored.map),
-        villagers: stored.villagers.map(ensureVillagerSprite).map(withPackFigure),
+        villagers: stored.villagers
+          .map(ensureVillagerSprite)
+          .map(withPackFigure)
+          .map((v) => (oldVoices ? withPackVoice(v) : v)),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,
           ...rawSettings,
@@ -161,12 +182,13 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
           proximityRadiusTiles: Math.max(0, Math.min(EAVESDROP_WHOLE_MAP_RADIUS, radius)),
           narratorVoice: {
             ...DEFAULT_MODEL_SETTINGS.narratorVoice,
-            ...(stored.modelSettings?.narratorVoice ?? {}),
+            ...(oldVoices ? {} : (stored.modelSettings?.narratorVoice ?? {})),
           },
           playerVoice: {
             ...DEFAULT_MODEL_SETTINGS.playerVoice,
-            ...(stored.modelSettings?.playerVoice ?? {}),
+            ...(oldVoices ? {} : (stored.modelSettings?.playerVoice ?? {})),
           },
+          ...(oldVoices ? { ttsInstructionTemplate: DEFAULT_MODEL_SETTINGS.ttsInstructionTemplate } : {}),
         },
         conversations: Array.isArray(stored.conversations) ? stored.conversations : [],
         characterHistories:
@@ -189,7 +211,7 @@ export async function savePersistedState(state: PersistedVillageState): Promise<
   // Playing an exported performance never saves over the viewer's own world.
   if (PLAYER_MODE) return;
   try {
-    await idbSet('village_v1', { ...state, savedAt: Date.now() });
+    await idbSet('village_v1', { ...state, savedAt: Date.now(), voicesVersion: CAST_VOICES_VERSION });
   } catch {
     // Ignore storage quota / environment errors silently
   }
