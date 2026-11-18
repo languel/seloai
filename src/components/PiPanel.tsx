@@ -277,6 +277,8 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
               </span>
               <span className="min-w-0">
                 {it.label}
+                {it.done && <span className="block text-ink/70">{it.done}</span>}
+                {it.notDone && <span className="block text-crimson/80">{it.notDone}</span>}
                 {it.detail && <span className="block text-crimson/80">{it.detail}</span>}
               </span>
             </div>

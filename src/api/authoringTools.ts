@@ -51,6 +51,11 @@ take or change. Keep everything procedural and original.
 6. **Run it.** \`start_story\` begins from the top. \`read_story_log\` shows what people said;
    \`look\` shows the view (in the app). Tweak and run again.
 
+How the app looks and behaves (the look of the world, woven text or bubbles, fonts, the
+narrator's voice, how far you can hear, whether characters talk to each other) are settings:
+\`list_settings\` then \`change_setting\`. \`instruct_world\` only sends a spoken message to
+characters; it does not change settings.
+
 At any point: \`story_overview\` shows what there is and what is missing, \`read_story_markdown\`
 gives the whole story as one Markdown file (the person can keep or edit it), and
 \`write_story_markdown\` loads one. \`undo_world_edit\` undoes the last change.
@@ -214,6 +219,8 @@ export const PI_TOOL_NAMES = [
   'start_story',
   'read_story_log',
   'instruct_world',
+  'list_settings',
+  'change_setting',
   'undo_world_edit',
 ] as const;
 

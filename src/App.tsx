@@ -164,7 +164,13 @@ export function App() {
   }>({ tab, map, villagers, settings });
   latestRef.current = { tab, map, villagers, settings };
 
+  // The newest style settings and theme, for tools that read them outside a render.
+  const aestheticRef = useRef(aestheticSettings);
+  aestheticRef.current = aestheticSettings;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const handleUpdateAesthetic = (next: AestheticSettings) => {
+    aestheticRef.current = next;
     setAestheticSettings(next);
     saveAestheticSettings(next);
   };
@@ -393,6 +399,12 @@ export function App() {
       },
       getStore: () => storeRef.current,
       captureView,
+      style: {
+        get: () => aestheticRef.current,
+        update: handleUpdateAesthetic,
+        getTheme: () => themeRef.current,
+        setTheme,
+      },
       applyMap: handleApplyMap,
       applyVillagers: handleApplyVillagers,
       updateSettings: handleUpdateSettings,

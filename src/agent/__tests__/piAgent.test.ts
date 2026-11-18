@@ -93,7 +93,8 @@ describe('Pi, the in-app agent', () => {
   it('offers a small tool set to small models and more to strong ones', () => {
     const small = piToolSpecs(SELO_TOOL_DEFINITIONS, 'small').map((t) => t.function.name);
     const full = piToolSpecs(SELO_TOOL_DEFINITIONS, 'full').map((t) => t.function.name);
-    expect(small.length).toBeLessThanOrEqual(13);
+    expect(small.length).toBeLessThanOrEqual(15);
+    expect(small).toEqual(expect.arrayContaining(['list_settings', 'change_setting', 'set_appearance']));
     expect(full.length).toBeGreaterThan(small.length);
     expect(full).toContain('write_story_markdown');
   });
@@ -178,5 +179,17 @@ describe('Pi shows what it is doing', () => {
     const events: PiEvent[] = [];
     await new PiAgent({ model, tools: [], runTool: async () => ({}) }).send('Hi', (e) => events.push(e));
     expect(events.map((e) => e.type)).toEqual(['agent_start', 'turn_start', 'activity', 'activity', 'message_update', 'message_end', 'agent_end']);
+  });
+});
+
+describe('what a tool really did', () => {
+  it('reads the changes, a look, and what was not done from the result', async () => {
+    const { toolOutcome } = await import('../piAgent');
+    expect(toolOutcome({ ok: false, changed: [{ setting: 'look', from: 'Festive', to: 'Night plate' }], notChanged: [{ setting: 'narrator_speed', reason: 'x' }] })).toEqual({
+      done: 'look: Festive → Night plate',
+      notDone: 'narrator speed not changed',
+    });
+    expect(toolOutcome({ ok: true, applied: ['vest: green'], couldNotShow: ['cloaks and coats'] })).toEqual({ done: 'vest: green', notDone: 'cannot show cloaks and coats' });
+    expect(toolOutcome({ ok: true })).toEqual({});
   });
 });

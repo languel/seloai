@@ -4,13 +4,13 @@
  */
 import { SELO_TOOL_DEFINITIONS, seloToolHost } from '../api/seloToolRegistry';
 import type { ModelSettings } from '../engine/types';
-import { PiAgent, piToolSpecs, type PiEvent } from './piAgent';
+import { PiAgent, piToolSpecs, toolOutcome, type PiEvent } from './piAgent';
 import { apiPiModel, localPi, localPiModel, type PiModel } from './piModel';
 
 export type PiItem =
   | { id: number; kind: 'user'; text: string }
   | { id: number; kind: 'pi'; text: string; streaming?: boolean }
-  | { id: number; kind: 'tool'; label: string; ok?: boolean; detail?: string }
+  | { id: number; kind: 'tool'; label: string; ok?: boolean; detail?: string; done?: string; notDone?: string }
   | { id: number; kind: 'note'; text: string; error?: boolean };
 
 /** An item before it has an id (Omit spread over each kind). */
@@ -201,7 +201,10 @@ class PiSession {
           this.push({ kind: 'tool', label: e.label });
           break;
         case 'tool_execution_end':
-          this.patchLast('tool', (it) => (it.kind === 'tool' ? { ...it, ok: e.ok, detail: e.ok ? undefined : e.summary.replace(/^Error:\s*/, '') } : it));
+          {
+            const outcome = e.ok ? toolOutcome(e.result) : {};
+            this.patchLast('tool', (it) => (it.kind === 'tool' ? { ...it, ok: e.ok, detail: e.ok ? undefined : e.summary.replace(/^Error:\s*/, ''), ...outcome } : it));
+          }
           break;
         case 'agent_end':
           if (e.reason === 'error') this.push({ kind: 'note', text: e.error ?? 'Something went wrong.', error: true });

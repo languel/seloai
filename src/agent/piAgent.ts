@@ -21,7 +21,9 @@ How to work:
 - To make a world: new_world (a place), set_story (place name, premise with a problem in it, opening), add_place for 3 to 6 places, add_character for 3 to 6 people whose wants pull against each other (give each a voice like "female, Greek" and a home near a place), then start_story.
 - Say "near" places and things ("by the river") rather than coordinates.
 - If a tool fails, read the error and try once differently; do not repeat the same call.
+- The look and behaviour of the app are settings: the style of the world (night plate, festive…), woven text or bubbles, fonts, the narrator's voice, how far you can hear. Call list_settings, then change_setting. instruct_world only sends a spoken message to characters; it never changes settings.
 - To change how someone looks, call set_appearance. Figures are embroidery: cloaks, boots, jewellery, props and height cannot be shown. If the result says something could not be shown, tell the person plainly; never claim a look that was not applied.
+- Change only what the person asked for, nothing else. If a request is unclear (does "cooler" mean the voice or the colours?), ask.
 - Keep replies short and plain: one or two sentences saying what changed. Do not list the whole character sheet again, and do not end with a menu of options; at most one short question.`;
 
 export type PiEvent =
@@ -31,7 +33,7 @@ export type PiEvent =
   | { type: 'activity'; activity: PiActivity }
   | { type: 'message_end'; message: Extract<PiMessage, { role: 'assistant' }> }
   | { type: 'tool_execution_start'; call: PiToolCall; label: string }
-  | { type: 'tool_execution_end'; call: PiToolCall; label: string; ok: boolean; summary: string }
+  | { type: 'tool_execution_end'; call: PiToolCall; label: string; ok: boolean; summary: string; result?: unknown }
   | { type: 'agent_end'; reason: 'done' | 'max_rounds' | 'cancelled' | 'error' | 'silent' | 'too_long'; error?: string };
 
 export type PiToolSet = 'small' | 'full';
@@ -41,7 +43,7 @@ export function piToolSpecs(all: SeloToolDefinition[], set: PiToolSet): PiToolSp
   const wanted = new Set<string>(
     set === 'small'
       ? PI_TOOL_NAMES
-      : [...AUTHORING_TOOL_DEFINITIONS.map((t) => t.name).filter((n) => n !== 'authoring_guide'), 'instruct_world', 'remove_character', 'undo_world_edit', 'redo_world_edit', 'control_simulation'],
+      : [...AUTHORING_TOOL_DEFINITIONS.map((t) => t.name).filter((n) => n !== 'authoring_guide'), 'instruct_world', 'list_settings', 'change_setting', 'change_settings', 'remove_character', 'undo_world_edit', 'redo_world_edit', 'control_simulation'],
   );
   return all
     .filter((t) => wanted.has(t.name))
@@ -133,11 +135,13 @@ export class PiAgent {
           const key = `${call.function.name}:${JSON.stringify(call.function.arguments)}`;
           let content: string;
           let ok = false;
+          let result: unknown;
           if (call.errors?.length) content = `Error: ${call.errors.join('; ')}`;
           else if (failed.has(key)) content = 'Error: this exact call already failed. Change the arguments or do something else.';
           else {
             try {
-              content = toolResultText(await this.options.runTool(call.function.name, call.function.arguments));
+              result = await this.options.runTool(call.function.name, call.function.arguments);
+              content = toolResultText(result);
               ok = true;
             } catch (err) {
               failed.add(key);
@@ -145,7 +149,7 @@ export class PiAgent {
             }
           }
           this.messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content });
-          onEvent({ type: 'tool_execution_end', call, label, ok, summary: content.slice(0, 200) });
+          onEvent({ type: 'tool_execution_end', call, label, ok, summary: content.slice(0, 200), result });
         }
       }
       onEvent({ type: 'agent_end', reason: 'max_rounds' });
@@ -156,4 +160,24 @@ export class PiAgent {
       this.running = false;
     }
   }
+}
+
+/**
+ * What a tool really did, in a few words, from its result (not from what the model says):
+ * the settings that changed and those that did not, a look applied and what could not be shown.
+ */
+export function toolOutcome(result: unknown): { done?: string; notDone?: string } {
+  if (!result || typeof result !== 'object') return {};
+  const r = result as Record<string, unknown>;
+  const out: { done?: string; notDone?: string } = {};
+  if (Array.isArray(r.changed)) {
+    out.done = (r.changed as Array<{ setting: string; from: unknown; to: unknown }>).map((c) => `${c.setting.replace(/_/g, ' ')}: ${String(c.from)} → ${String(c.to)}`).join(' · ');
+  } else if (Array.isArray(r.applied)) {
+    out.done = (r.applied as string[]).join(' · ');
+  }
+  const not: string[] = [];
+  if (Array.isArray(r.notChanged)) not.push(...(r.notChanged as Array<{ setting: string }>).map((n) => `${n.setting.replace(/_/g, ' ')} not changed`));
+  if (Array.isArray(r.couldNotShow) && r.couldNotShow.length) not.push(`cannot show ${(r.couldNotShow as string[]).join(', ')}`);
+  if (not.length) out.notDone = not.join(' · ');
+  return out;
 }
