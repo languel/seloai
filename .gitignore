@@ -4,3 +4,6 @@ public/models
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# Exported performances and other local exports
+exports/
