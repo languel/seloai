@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { localPi, PI_LOCAL_DOWNLOAD, PI_LOCAL_MODEL_ID, type LocalLoadProgress } from '../agent/piModel';
 import { piSession, type PiBrain } from '../agent/piSession';
+import MiniMarkdown from './MiniMarkdown';
 
 const STARTERS = [
   'Make a new world with me',
@@ -122,10 +123,9 @@ export default function PiPanel() {
               {it.text}
             </div>
           ) : it.kind === 'pi' ? (
-            <div key={it.id} className="mr-4 whitespace-pre-wrap">
-              <span className="mr-1 font-semibold">Pi</span>
-              {it.text}
-              {it.streaming && <span className="ml-0.5 animate-pulse">▍</span>}
+            <div key={it.id} className="mr-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">Pi</div>
+              <MiniMarkdown text={it.text + (it.streaming ? ' ▍' : '')} className="break-words" />
             </div>
           ) : it.kind === 'tool' ? (
             <div key={it.id} className="flex items-start gap-1 text-[11px] text-muted" title={it.detail}>
