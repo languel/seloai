@@ -1,3 +1,4 @@
+import { busInput, effectiveLevel, type Bus } from './mixer';
 let sharedAudioCtx: AudioContext | null = null;
 let activePcmPlayers = 0;
 let activePcmSources = 0;
@@ -197,13 +198,17 @@ export class StreamingPcmPlayer {
   private speakingRate: number;
   private ctx: AudioContext;
 
-  /** `ctx` plays on a context of its own (a preview the world's pause must not hold). */
+  /**
+   * `ctx` plays on a context of its own (a preview the world's pause must not hold); `bus` is
+   * the mixer channel it plays through (characters' voices, the narrator, or the guide).
+   */
   constructor(
     sampleRate = 24000,
     onEnd?: () => void,
     spatial?: { gain: number; pan: number },
     acoustic?: AcousticShaping,
     ctx: AudioContext = getAudioContext(),
+    bus: Bus = 'voices',
   ) {
     this.ctx = ctx;
     this.sampleRate = sampleRate;
@@ -229,9 +234,9 @@ export class StreamingPcmPlayer {
       this.panner = ctx.createStereoPanner();
       this.panner.pan.value = spatial ? Math.max(-1, Math.min(1, spatial.pan)) : 0;
       tail.connect(this.panner);
-      this.panner.connect(ctx.destination);
+      this.panner.connect(busInput(ctx, bus));
     } else {
-      tail.connect(ctx.destination);
+      tail.connect(busInput(ctx, bus));
     }
     this.playhead = ctx.currentTime + 0.08;
     activePcmPlayers += 1;
@@ -358,7 +363,7 @@ export function speakWebSpeechFallback(
   volume = 1,
   acoustic?: AcousticShaping,
   onEnd?: () => void,
-  options: { ignorePause?: boolean } = {},
+  options: { ignorePause?: boolean; bus?: Bus } = {},
 ): boolean {
   const held = audioPaused && !options.ignorePause;
   if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
@@ -408,7 +413,8 @@ export function speakWebSpeechFallback(
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = Math.max(0.7, Math.min(1.4, acoustic?.speakingRate ?? 0.98));
     utter.pitch = Math.max(0.5, Math.min(1.6, 1.0 + (acoustic?.pitchSemitones ?? 0) * 0.05));
-    utter.volume = clamped;
+    // The browser's own voice cannot go through the mixer: it takes the bus's level as it starts.
+    utter.volume = clamped * effectiveLevel(options.bus ?? 'voices');
     utter.onend = finish;
     utter.onerror = finish;
     if (!held && window.speechSynthesis.paused) window.speechSynthesis.resume();
@@ -425,7 +431,7 @@ export function speakWebSpeechAsync(
   text: string,
   volume = 1,
   acoustic?: AcousticShaping,
-  options: { ignorePause?: boolean } = {},
+  options: { ignorePause?: boolean; bus?: Bus } = {},
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const started = speakWebSpeechFallback(text, volume, acoustic, () => {

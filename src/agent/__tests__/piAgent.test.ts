@@ -93,7 +93,7 @@ describe('Pi, the in-app agent', () => {
   it('offers a small tool set to small models and more to strong ones', () => {
     const small = piToolSpecs(SELO_TOOL_DEFINITIONS, 'small').map((t) => t.function.name);
     const full = piToolSpecs(SELO_TOOL_DEFINITIONS, 'full').map((t) => t.function.name);
-    expect(small.length).toBeLessThanOrEqual(19);
+    expect(small.length).toBeLessThanOrEqual(20);
     expect(small).toEqual(expect.arrayContaining(['list_settings', 'change_setting', 'set_appearance']));
     expect(full.length).toBeGreaterThan(small.length);
     expect(full).toContain('write_story_markdown');

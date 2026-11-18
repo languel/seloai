@@ -225,6 +225,7 @@ export const PI_TOOL_NAMES = [
   'pointer',
   'draw',
   'narrate',
+  'mixer',
   'undo_world_edit',
 ] as const;
 

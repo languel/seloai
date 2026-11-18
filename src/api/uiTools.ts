@@ -7,6 +7,7 @@
  * over MCP or WebMCP) can give a walkthrough of SeloAI, or stage a scene like a play.
  */
 import { brainRouter } from '../ai/brainRouter';
+import { mixerLevels, setLevel, type MixerChannel } from '../ai/mixer';
 import { addDrawings, clearDrawings, hidePointer, pointerDo, setCaption, type Anchor, type Drawing, type PointerAction } from '../app/overlay';
 import { recordingState, startRecording, stopRecording, type RecordWhat } from '../app/recorder';
 import { appControls, hasVillage, villageControls, type PanelMode, type ShowWhat } from '../app/uiControl';
@@ -91,15 +92,28 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
   {
     name: 'perform',
     description:
-      'Run a whole performance from a script, start to end, in the background: steps is a list, each one of { tool: name, args: {...} } (any tool: narrate, pointer, draw, ui_action, instruct_world, change_setting…), { wait: seconds }, or { wait_for: "quiet" (no one speaking) or "line" (the next line spoken), timeout: seconds }. Shorthand: { narrate: "text" } or { ui_action: {...} }. record: "app" (the whole app; the person clicks Start) or "world" records it to a video. Returns at once; follow with performance_status.',
+      'Run a whole performance from a script, start to end, in the background: steps is a list, each one of { tool: name, args: {...} } (any tool: narrate, pointer, draw, ui_action, instruct_world, change_setting…), { wait: seconds }, or { wait_for: "quiet" (no one speaking) or "line" (the next line spoken), timeout: seconds }. Shorthand: { narrate: "text" } or { ui_action: {...} }. record: "app" (the whole app; the person clicks Start) or "world" records it to a video (MP4 where the browser can). The world holds still while it runs (world: "running" to keep it going). Returns at once; follow with performance_status.',
     inputSchema: obj(
       {
         name: str('A name for the performance (used for the video file).'),
         steps: { type: 'array', items: { type: 'object' } },
         record: str('Optional: app or world.'),
+        world: str('paused (default: the characters hold still and quiet, for a walkthrough) or running (they go on living, for a staged scene).'),
       },
       ['steps'],
     ),
+  },
+  {
+    name: 'mixer',
+    description:
+      'The sound mixer: levels for voices (the characters), narrator (the Scribe), guide (narrate, in the Traveler\'s voice) and master, from 0 to 1 (or "off", "half", "on"). fade_seconds ramps smoothly, e.g. fade the voices in after a walkthrough. With no levels, says the current ones.',
+    inputSchema: obj({
+      voices: { description: 'The characters: 0 to 1, or off, half, on.' },
+      narrator: { description: 'The Scribe: 0 to 1, or off, half, on.' },
+      guide: { description: 'Walkthrough narration: 0 to 1, or off, half, on.' },
+      master: { description: 'Everything: 0 to 1, or off, half, on.' },
+      fade_seconds: { type: 'number', description: 'How long the change takes (default 0: at once).' },
+    }),
   },
   { name: 'performance_status', description: 'How the running (or last) performance is going: the step it is on and what each step did.', inputSchema: obj({}) },
   { name: 'stop_performance', description: 'Stop the running performance (and save its recording).', inputSchema: obj({}) },
@@ -273,8 +287,16 @@ async function perform(args: Record<string, unknown>, host: UiHost, known: Set<s
   const current: Run = { id: `perf-${Date.now().toString(36)}`, name, total: plan.length, at: 0, state: 'running', results: [], stop: false };
   run = current;
   const record = args.record === 'app' || args.record === 'world' ? (args.record as RecordWhat) : null;
+  // A walkthrough holds the world still, so the characters do not talk over the narrator;
+  // world: "running" keeps it going (for a staged scene). Restored at the end.
+  const holdWorld = args.world !== 'running';
+  const wasPaused = host.sim.paused;
 
   void (async () => {
+    if (holdWorld) {
+      host.sim.paused = true;
+      brainRouter.flushAudioQueue();
+    }
     try {
       if (record) {
         const r = await startRecording(record, name);
@@ -308,6 +330,7 @@ async function perform(args: Record<string, unknown>, host: UiHost, known: Set<s
     } finally {
       hidePointer();
       setCaption(null);
+      if (holdWorld) host.sim.paused = wasPaused;
       if (record && recordingState().recording) {
         await sleep(500);
         const saved = await stopRecording();
@@ -345,6 +368,7 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
         ...(village ? { camera: { ...village.camera, following }, selected, shown: village.shown } : { note: 'The village view is not showing, so there is no camera.' }),
         world: { paused: host.sim.paused, speed: host.sim.speedMultiplier },
         recording: recordingState(),
+        mixer: Object.fromEntries(Object.entries(mixerLevels()).map(([k, v]) => [k, `${Math.round(v * 100)}%`])),
         performance: runReport(run).state,
       };
     }
@@ -473,6 +497,31 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
       }
       await narrate(text, host);
       return { ok: true, said: text };
+    }
+
+    case 'mixer': {
+      const fade = Math.max(0, Math.min(30, Number(args.fade_seconds) || 0));
+      const read = (v: unknown): number | undefined => {
+        if (v === undefined || v === null || v === '') return undefined;
+        if (typeof v === 'number') return v > 1 ? v / 100 : v;
+        const t = String(v).trim().toLowerCase();
+        if (/^(off|mute|muted|silent|none|0)$/.test(t)) return 0;
+        if (/^(on|full|max|unmute|1)$/.test(t)) return 1;
+        if (/^(half|low|quiet)$/.test(t)) return t === 'half' ? 0.5 : 0.25;
+        const n = Number(t.replace('%', ''));
+        if (!Number.isFinite(n)) throw new Error(`"${v}" is not a level: use 0 to 1, or off, half, on.`);
+        return t.endsWith('%') || n > 1 ? n / 100 : n;
+      };
+      const changed: string[] = [];
+      for (const ch of ['voices', 'narrator', 'guide', 'master'] as MixerChannel[]) {
+        const level = read(args[ch]);
+        if (level === undefined) continue;
+        setLevel(ch, level, fade);
+        changed.push(`${ch} → ${Math.round(level * 100)}%`);
+      }
+      if (fade && changed.length) await sleep(fade * 1000);
+      const now = mixerLevels();
+      return { ok: true, ...(changed.length ? { changed } : {}), levels: Object.fromEntries(Object.entries(now).map(([k, v]) => [k, `${Math.round(v * 100)}%`])) };
     }
 
     case 'perform': {

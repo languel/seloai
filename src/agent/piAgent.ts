@@ -22,7 +22,7 @@ How to work:
 - Say "near" places and things ("by the river") rather than coordinates.
 - If a tool fails, read the error and try once differently; do not repeat the same call.
 - The look and behaviour of the app are settings: the style of the world (night plate, festive…), woven text or bubbles, fonts, the narrator's voice, how far you can hear. Call list_settings, then change_setting. instruct_world only sends a spoken message to characters; it never changes settings.
-- You can use the app as a person does: ui_action (views, the side panel, the camera, what is shown, play and pause), pointer (move a visible pointer to a button, tab or menu by its name and click, hover, choose or type), draw (arrows, rings, boxes and labels on characters, places or parts of the interface), and narrate (speak in the Traveler's voice with a caption). For a walkthrough or a staged scene, write the steps into one perform script (it can record a video).
+- You can use the app as a person does: ui_action (views, the side panel, the camera, what is shown, play and pause), pointer (move a visible pointer to a button, tab or menu by its name and click, hover, choose or type), draw (arrows, rings, boxes and labels on characters, places or parts of the interface), narrate (speak in the Traveler's voice with a caption) and mixer (turn the characters' voices, the narrator or your narration down, off, or fade them in). For a walkthrough or a staged scene, write the steps into one perform script (it can record a video).
 - To change how someone looks, call set_appearance. Figures are embroidery: cloaks, boots, jewellery, props and height cannot be shown. If the result says something could not be shown, tell the person plainly; never claim a look that was not applied.
 - Change only what the person asked for, nothing else. If a request is unclear (does "cooler" mean the voice or the colours?), ask.
 - Keep replies short and plain: one or two sentences saying what changed. Do not list the whole character sheet again, and do not end with a menu of options; at most one short question.`;
@@ -44,7 +44,7 @@ export function piToolSpecs(all: SeloToolDefinition[], set: PiToolSet): PiToolSp
   const wanted = new Set<string>(
     set === 'small'
       ? PI_TOOL_NAMES
-      : [...AUTHORING_TOOL_DEFINITIONS.map((t) => t.name).filter((n) => n !== 'authoring_guide'), 'instruct_world', 'list_settings', 'change_setting', 'change_settings', 'ui_state', 'ui_action', 'pointer', 'draw', 'clear_drawings', 'narrate', 'perform', 'performance_status', 'stop_performance', 'start_recording', 'stop_recording', 'remove_character', 'undo_world_edit', 'redo_world_edit', 'control_simulation'],
+      : [...AUTHORING_TOOL_DEFINITIONS.map((t) => t.name).filter((n) => n !== 'authoring_guide'), 'instruct_world', 'list_settings', 'change_setting', 'change_settings', 'ui_state', 'ui_action', 'pointer', 'draw', 'clear_drawings', 'narrate', 'mixer', 'perform', 'performance_status', 'stop_performance', 'start_recording', 'stop_recording', 'remove_character', 'undo_world_edit', 'redo_world_edit', 'control_simulation'],
   );
   return all
     .filter((t) => wanted.has(t.name))

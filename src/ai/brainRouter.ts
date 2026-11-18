@@ -2,6 +2,7 @@ import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
 import { shortName } from '../engine/names';
 import { ttsInstruction } from './voiceAccent';
 import { kokoroEngine, kokoroVoiceFor } from './kokoroEngine';
+import { busFor, busInput } from './mixer';
 import { castPronounLine, type CastEntry } from './castPronouns';
 import type {
   BrainEngineKind,
@@ -657,6 +658,8 @@ class BrainRouter {
                   },
                   currentMix,
                   voice,
+                  undefined,
+                  busFor(villager),
                 );
                 this.activePlayer = player;
                 try {
@@ -1411,7 +1414,7 @@ class BrainRouter {
               panner.pan.value = initialMix.pan;
               src.connect(gainNode);
               gainNode.connect(panner);
-              panner.connect(ctx.destination);
+              panner.connect(busInput(ctx, busFor(villager)));
               await new Promise<void>((resolve) => {
                 src!.onended = () => resolve();
                 src!.start();
@@ -1471,6 +1474,7 @@ class BrainRouter {
           initialMix,
           voice,
           previewCtx,
+          busFor(villager),
         );
         if (!preview) this.activePlayer = player;
         setActiveSpeech({
@@ -1544,6 +1548,7 @@ class BrainRouter {
             initialMix,
             { ...voice, speakingRate: 1 },
             previewCtx,
+            busFor(villager),
           );
           if (!preview) this.activePlayer = player;
           setActiveSpeech({
@@ -1589,7 +1594,7 @@ class BrainRouter {
           detail: `${cleanSpeech} [vol ${Math.round(initialMix.gain * 100)}%]`,
         });
         try {
-          await speakWebSpeechAsync(cleanSpeech, initialMix.gain, voice, { ignorePause: preview });
+          await speakWebSpeechAsync(cleanSpeech, initialMix.gain, voice, { ignorePause: preview, bus: busFor(villager) });
         } finally {
           if (this.activeSpeechInfo?.speakerId === villager.id && this.activeSpeechInfo?.text === cleanSpeech) {
             setActiveSpeech(null);
@@ -1714,6 +1719,8 @@ class BrainRouter {
             },
             undefined,
             voice,
+            undefined,
+            busFor(params.villager),
           )
         : null;
       this.activePlayer = player;

@@ -6,7 +6,8 @@
  *              capture itself only after a real click, so an agent's request shows a card the
  *              person clicks to start (which is also their consent); it can be declined.
  *
- * Stopping saves a .webm file through the browser's download.
+ * Stopping saves the video through the browser's download: MP4 where the browser records it
+ * natively (recent Chrome and Safari), WebM elsewhere.
  */
 
 export type RecordWhat = 'world' | 'app';
@@ -45,8 +46,9 @@ export function pendingRecordingAsk() {
   return pendingAsk ? { name: pendingAsk.name } : null;
 }
 
+/** MP4 (H.264 and AAC) where the browser records it (recent Chrome, Safari); WebM elsewhere. */
 function pickType(): string {
-  for (const t of ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']) if (MediaRecorder.isTypeSupported?.(t)) return t;
+  for (const t of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']) if (MediaRecorder.isTypeSupported?.(t)) return t;
   return '';
 }
 
@@ -125,9 +127,10 @@ export async function stopRecording(): Promise<{ saved: boolean; file?: string; 
   rec.recorder.stop();
   await stopped;
   for (const t of rec.stream.getTracks()) t.stop();
-  const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || 'video/webm' });
+  const type = rec.recorder.mimeType || 'video/webm';
+  const blob = new Blob(rec.chunks, { type });
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-  const file = `seloai-${rec.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'performance'}-${stamp}.webm`;
+  const file = `seloai-${rec.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'performance'}-${stamp}.${type.startsWith('video/mp4') ? 'mp4' : 'webm'}`;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
