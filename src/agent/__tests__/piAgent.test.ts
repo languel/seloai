@@ -135,3 +135,17 @@ describe('Pi over a cloud API', () => {
     expect(turn.message.tool_calls![0].function).toEqual({ name: 'add_place', arguments: { name: 'Mill' } });
   });
 });
+
+describe('Pi always answers', () => {
+  it('asks once for a word back when the model finishes silently after tools', async () => {
+    const model = scripted([[call('story_overview', {})], '', 'I looked at the story.']);
+    const agent = new PiAgent({ model, tools: [], runTool: async () => ({ ok: true }) });
+    const events: PiEvent[] = [];
+    await agent.send('Look.', (e) => events.push(e));
+    const said = events.filter((e): e is Extract<PiEvent, { type: 'message_end' }> => e.type === 'message_end').map((e) => e.message.content);
+    expect(said.at(-1)).toBe('I looked at the story.');
+    // The silent turn is not kept; the nudge is.
+    expect(agent.messages.some((m) => m.role === 'user' && /what you did/.test(m.content))).toBe(true);
+    expect(agent.messages.filter((m) => m.role === 'assistant' && !('tool_calls' in m && m.tool_calls) && !m.content).length).toBe(0);
+  });
+});

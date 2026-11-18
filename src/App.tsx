@@ -128,11 +128,12 @@ export function App() {
   const [saveWorldName, setSaveWorldName] = useState<string>('');
 
   const simRef = useRef<VillageSimulation | null>(null);
-  // On a local dev server, the live simulation is reachable from the console as `__sim`, for debugging.
+  // On a local dev server, the live simulation and Pi are reachable from the console as `__sim` and `__pi`, for debugging.
   useEffect(() => {
     if (!/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) return;
     const id = window.setInterval(() => {
-      (window as unknown as { __sim?: unknown }).__sim = simRef.current;
+      (window as unknown as { __sim?: unknown; __pi?: unknown }).__sim = simRef.current;
+      (window as unknown as { __pi?: unknown }).__pi = piSession;
     }, 1000);
     return () => window.clearInterval(id);
   }, []);

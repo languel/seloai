@@ -97,6 +97,8 @@ export class PiAgent {
     onEvent({ type: 'agent_start' });
     const failed = new Set<string>();
     const maxRounds = this.options.maxRounds ?? 12;
+    let usedTools = false;
+    let nudged = false;
     try {
       for (let round = 1; round <= maxRounds; round++) {
         if (signal?.aborted) return onEvent({ type: 'agent_end', reason: 'cancelled' });
@@ -106,7 +108,18 @@ export class PiAgent {
         onEvent({ type: 'message_end', message: turn.message });
         if (turn.finish === 'cancelled') return onEvent({ type: 'agent_end', reason: 'cancelled' });
         const calls = turn.message.tool_calls ?? [];
-        if (turn.finish !== 'tool_calls' || calls.length === 0) return onEvent({ type: 'agent_end', reason: 'done' });
+        if (turn.finish !== 'tool_calls' || calls.length === 0) {
+          // Some models finish silently after tools (all in their hidden reasoning): ask once
+          // for a word back, so the person always hears what was done.
+          if (usedTools && !nudged && !turn.message.content.trim() && round < maxRounds) {
+            nudged = true;
+            this.messages.pop();
+            this.messages.push({ role: 'user', content: '(Now tell me in one or two sentences what you did, and what you suggest next.)' });
+            continue;
+          }
+          return onEvent({ type: 'agent_end', reason: 'done' });
+        }
+        usedTools = true;
         for (const call of calls) {
           const label = toolCallLabel(call);
           onEvent({ type: 'tool_execution_start', call, label });
