@@ -7,35 +7,60 @@
  * implementations the app uses, with no rendering or audio.
  */
 import { SELO_TOOL_DEFINITIONS, seloToolHost } from '../src/api/seloToolRegistry';
+import { AUTHORING_GUIDE, AUTHORING_PROMPTS, authoringPromptMessages, toolResultContent } from '../src/api/authoringTools';
 import { startHeadlessHost, type HeadlessHost } from '../src/headless/headlessHost';
 
-const BRIDGE_URL = process.env.SELOAI_BRIDGE_URL || 'http://localhost:5173/__seloai_bridge/call';
+// The dev server's bridge: SELOAI_BRIDGE_URL if set, else the usual dev ports in turn.
 const BRIDGE_DISABLED = process.env.SELOAI_BRIDGE_URL === 'off';
+const BRIDGE_URLS = process.env.SELOAI_BRIDGE_URL && !BRIDGE_DISABLED
+  ? [process.env.SELOAI_BRIDGE_URL]
+  : ['http://localhost:5183/__seloai_bridge/call', 'http://localhost:5173/__seloai_bridge/call'];
+let bridgeUrl: string | null = null;
 
 let host: HeadlessHost | null = null;
 let bridgeDownUntil = 0;
 
-async function tryBridgeCall(name: string, args: unknown): Promise<{ hit: boolean; result?: unknown }> {
-  // Once the engine is running here, stay here: switching worlds mid-session would lose state.
-  if (BRIDGE_DISABLED || host || Date.now() < bridgeDownUntil) return { hit: false };
+async function postBridge(url: string, name: string, args: unknown): Promise<{ hit: boolean; result?: unknown; reached: boolean }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  const timeout = setTimeout(() => controller.abort(), 65_000);
   try {
-    const res = await fetch(BRIDGE_URL, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, args }),
       signal: controller.signal,
     });
     const json = await res.json();
-    if (res.ok && json.ok) return { hit: true, result: json.result };
-    return { hit: false };
-  } catch {
-    bridgeDownUntil = Date.now() + 15_000;
-    return { hit: false };
+    if (res.ok && json.ok) return { hit: true, result: json.result, reached: true };
+    if (json && json.ok === false && typeof json.error === 'string' && !/no active|timeout|timed out/i.test(json.error)) {
+      // The tab answered with a real tool error: report it rather than falling back.
+      throw new Error(json.error);
+    }
+    return { hit: false, reached: true };
+  } catch (err) {
+    if (err instanceof Error && !/abort|fetch failed|ECONNREFUSED|Unexpected/i.test(err.message)) throw err;
+    return { hit: false, reached: false };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function tryBridgeCall(name: string, args: unknown): Promise<{ hit: boolean; result?: unknown }> {
+  // Once the engine is running here, stay here: switching worlds mid-session would lose state.
+  if (BRIDGE_DISABLED || host || Date.now() < bridgeDownUntil) return { hit: false };
+  for (const url of bridgeUrl ? [bridgeUrl] : BRIDGE_URLS) {
+    const res = await postBridge(url, name, args);
+    if (res.hit) {
+      bridgeUrl = url;
+      return res;
+    }
+    if (res.reached) {
+      bridgeUrl = url;
+      break;
+    }
+  }
+  bridgeDownUntil = Date.now() + 15_000;
+  return { hit: false };
 }
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -54,7 +79,7 @@ async function handleRpc(message: any): Promise<any> {
       id,
       result: {
         protocolVersion: params?.protocolVersion || '2024-11-05',
-        capabilities: { tools: {}, resources: {} },
+        capabilities: { tools: {}, resources: {}, prompts: {} },
         serverInfo: { name: 'seloai-mcp', version: '2.0.0' },
       },
     };
@@ -66,7 +91,7 @@ async function handleRpc(message: any): Promise<any> {
   if (method === 'tools/call') {
     try {
       const output = await callTool(String(params?.name || ''), params?.arguments ?? {});
-      return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
+      return { jsonrpc: '2.0', id, result: { content: toolResultContent(output) } };
     } catch (err: any) {
       return {
         jsonrpc: '2.0',
@@ -82,6 +107,8 @@ async function handleRpc(message: any): Promise<any> {
       id,
       result: {
         resources: [
+          { uri: 'seloai://guide', name: 'How to make a world with someone', mimeType: 'text/markdown' },
+          { uri: 'seloai://story', name: 'The current story, as Markdown', mimeType: 'text/markdown' },
           { uri: 'seloai://state', name: 'SeloAI World State', mimeType: 'application/json' },
           { uri: 'seloai://tools', name: 'SeloAI Tool Schemas', mimeType: 'application/json' },
         ],
@@ -91,12 +118,25 @@ async function handleRpc(message: any): Promise<any> {
 
   if (method === 'resources/read') {
     const uri = String(params?.uri || '');
+    if (uri === 'seloai://guide' || uri === 'seloai://story') {
+      const text = uri === 'seloai://guide' ? AUTHORING_GUIDE : ((await callTool('read_story_markdown', {})) as { markdown: string }).markdown;
+      return { jsonrpc: '2.0', id, result: { contents: [{ uri, mimeType: 'text/markdown', text }] } };
+    }
     const payload = uri === 'seloai://tools' ? SELO_TOOL_DEFINITIONS : await callTool('get_world_state', {});
     return {
       jsonrpc: '2.0',
       id,
       result: { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(payload, null, 2) }] },
     };
+  }
+
+  if (method === 'prompts/list') return { jsonrpc: '2.0', id, result: { prompts: AUTHORING_PROMPTS } };
+  if (method === 'prompts/get') {
+    const name = String(params?.name || '');
+    if (!AUTHORING_PROMPTS.some((p) => p.name === name)) {
+      return { jsonrpc: '2.0', id, error: { code: -32602, message: `Unknown prompt: ${name}` } };
+    }
+    return { jsonrpc: '2.0', id, result: { messages: authoringPromptMessages(name, params?.arguments ?? {}) } };
   }
 
   if (id !== undefined) {
@@ -161,11 +201,16 @@ async function drain() {
   }
 }
 
+let draining_: Promise<void> = Promise.resolve();
 process.stdin.on('data', (chunk: Buffer) => {
   rawBuffer = Buffer.concat([rawBuffer, chunk]);
-  void drain();
+  draining_ = draining_.then(() => drain());
 });
+// At the end of input, answer what is still in flight, then stop.
 process.stdin.on('end', () => {
-  host?.stop();
-  process.exit(0);
+  void draining_.then(async () => {
+    while (draining) await new Promise((r) => setTimeout(r, 50));
+    host?.stop();
+    process.exit(0);
+  });
 });

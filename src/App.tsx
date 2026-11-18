@@ -12,6 +12,7 @@ import { shellVars } from './art/uiChrome';
 import type { PaletteName } from './art/looks';
 import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
+import { captureView } from './app/viewCapture';
 import {
   ChevronDown,
   FolderOpen,
@@ -384,6 +385,7 @@ export function App() {
         setTab(nextTab);
       },
       getStore: () => storeRef.current,
+      captureView,
       applyMap: handleApplyMap,
       applyVillagers: handleApplyVillagers,
       updateSettings: handleUpdateSettings,

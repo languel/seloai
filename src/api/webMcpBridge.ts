@@ -1,5 +1,6 @@
 import { registerAgentImageHandler, type AgentImageHandler } from '../ai/localApiClient';
 import { SELO_TOOL_DEFINITIONS, seloToolHost, type SeloToolDefinition } from './seloToolRegistry';
+import { toolResultContent } from './authoringTools';
 
 /**
  * Tool calls over postMessage can reconfigure backends and export the world, so they are
@@ -45,14 +46,7 @@ function registerWithNavigatorModelContext(tools: SeloToolDefinition[]): () => v
     inputSchema: tool.inputSchema,
     async execute(input: Record<string, any>) {
       const result = await seloToolHost.callTool(tool.name, input ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return { content: toolResultContent(result) };
     },
   }));
 

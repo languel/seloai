@@ -1,5 +1,6 @@
 import { brainRouter } from '../ai/brainRouter';
 import toolSchemas from './toolSchemas.json';
+import { AUTHORING_TOOL_DEFINITIONS, isAuthoringTool, runAuthoringTool } from './authoringTools';
 import { generateImageViaApi, probeApiModels } from '../ai/localApiClient';
 import { DEFAULT_MODEL_SETTINGS } from '../data/defaultData';
 import {
@@ -63,6 +64,8 @@ export interface SeloHostHooks {
   persistAll?: () => void;
   /** The world store, when the host routes edits through commands (enables undo). */
   getStore?: () => WorldStore;
+  /** A PNG data URL of the current view, where the host has one. */
+  captureView?: () => Promise<string | null>;
 }
 
 export interface SeloToolDefinition {
@@ -90,7 +93,8 @@ function findVillagerMatch(villagers: VillagerConfig[], query?: string): Village
   );
 }
 
-export const SELO_TOOL_DEFINITIONS: SeloToolDefinition[] = toolSchemas as SeloToolDefinition[];
+/** The authoring tools first: they are the plain way in for an agent making a world. */
+export const SELO_TOOL_DEFINITIONS: SeloToolDefinition[] = [...AUTHORING_TOOL_DEFINITIONS, ...(toolSchemas as SeloToolDefinition[])];
 
 export class SeloToolHost {
   constructor(private hooks: SeloHostHooks) {}
@@ -121,6 +125,15 @@ export class SeloToolHost {
       title: `Tool: ${name}`,
       detail: JSON.stringify(args).slice(0, 140),
     });
+
+    if (isAuthoringTool(name)) {
+      return runAuthoringTool(name, args, {
+        store: this.requireStore(),
+        sim,
+        captureView: this.hooks.captureView,
+        persist: this.hooks.persistAll,
+      });
+    }
 
     switch (name) {
       case 'get_world_state': {

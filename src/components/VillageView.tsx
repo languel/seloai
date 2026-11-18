@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { registerViewCapture } from '../app/viewCapture';
 import {
   FIGURE_HEIGHT_SCALE,
   chooseFigureView,
@@ -490,6 +491,21 @@ export const VillageView: React.FC<VillageViewProps> = ({
   onResetStory,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Agents can look at the view (the `look` tool): a reduced PNG of the canvas as drawn.
+  useEffect(
+    () =>
+      registerViewCapture(async () => {
+        const canvas = canvasRef.current;
+        if (!canvas || !canvas.width || !canvas.height) return null;
+        const scale = Math.min(1, 1024 / Math.max(canvas.width, canvas.height));
+        const out = document.createElement('canvas');
+        out.width = Math.round(canvas.width * scale);
+        out.height = Math.round(canvas.height * scale);
+        out.getContext('2d')?.drawImage(canvas, 0, 0, out.width, out.height);
+        return out.toDataURL('image/jpeg', 0.82);
+      }),
+    [],
+  );
   const composerRef = useRef<HTMLDivElement | null>(null);
   const lastRangeRef = useRef<Range | null>(null);
   const [selectedId, setSelectedId] = useState<string>(villagers[0]?.id ?? 'narrator');

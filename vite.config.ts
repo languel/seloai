@@ -71,7 +71,13 @@ function seloBridgePlugin(): Plugin {
             res.end('null');
             return;
           }
-          inflight.set(item.id, { resolve: item.resolve, reject: item.reject, timer: item.timer });
+          // The tab has it: give the call time to finish (a character may be answering).
+          clearTimeout(item.timer);
+          const timer = setTimeout(() => {
+            inflight.delete(item.id);
+            item.reject(new Error('The SeloAI tab took too long to answer (timeout).'));
+          }, 60_000);
+          inflight.set(item.id, { resolve: item.resolve, reject: item.reject, timer });
           res.end(JSON.stringify({ id: item.id, name: item.name, args: item.args }));
           return;
         }
@@ -103,7 +109,7 @@ function seloBridgePlugin(): Plugin {
                 if (idx >= 0) queue.splice(idx, 1);
                 inflight.delete(id);
                 reject(new Error('No active SeloAI browser tab answered within timeout.'));
-              }, 8000);
+              }, 3000);
               queue.push({ id, name: data.name, args: data.args ?? {}, resolve, reject, timer });
             });
             res.setHeader('Content-Type', 'application/json');
