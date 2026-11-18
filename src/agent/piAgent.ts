@@ -8,7 +8,7 @@
  */
 import { AUTHORING_TOOL_DEFINITIONS, PI_TOOL_NAMES } from '../api/authoringTools';
 import type { SeloToolDefinition } from '../api/seloToolRegistry';
-import type { PiMessage, PiModel, PiToolCall, PiToolSpec } from './piModel';
+import type { PiActivity, PiMessage, PiModel, PiToolCall, PiToolSpec } from './piModel';
 
 /** Kept short and stable: a small model follows it better, and it stays cached between turns. */
 export const PI_INSTRUCTIONS = `You are Pi, the helper inside SeloAI, a living story world drawn as folk embroidery. You help the person make and run their own world: a place, its people, and what is going on.
@@ -27,6 +27,7 @@ export type PiEvent =
   | { type: 'agent_start' }
   | { type: 'turn_start'; round: number }
   | { type: 'message_update'; delta: string }
+  | { type: 'activity'; activity: PiActivity }
   | { type: 'message_end'; message: Extract<PiMessage, { role: 'assistant' }> }
   | { type: 'tool_execution_start'; call: PiToolCall; label: string }
   | { type: 'tool_execution_end'; call: PiToolCall; label: string; ok: boolean; summary: string }
@@ -103,7 +104,7 @@ export class PiAgent {
       for (let round = 1; round <= maxRounds; round++) {
         if (signal?.aborted) return onEvent({ type: 'agent_end', reason: 'cancelled' });
         onEvent({ type: 'turn_start', round });
-        const turn = await this.options.model.complete(this.messages, this.options.tools, { signal, onText: (delta) => onEvent({ type: 'message_update', delta }) });
+        const turn = await this.options.model.complete(this.messages, this.options.tools, { signal, onText: (delta) => onEvent({ type: 'message_update', delta }), onActivity: (activity) => onEvent({ type: 'activity', activity }) });
         this.messages.push(turn.message);
         onEvent({ type: 'message_end', message: turn.message });
         if (turn.finish === 'cancelled') return onEvent({ type: 'agent_end', reason: 'cancelled' });

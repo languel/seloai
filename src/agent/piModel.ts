@@ -32,10 +32,19 @@ export interface PiTurn {
   finish: 'stop' | 'tool_calls' | 'length' | 'cancelled';
 }
 
+/** What a model is doing before its words come: taking in the conversation, or thinking. */
+export type PiActivity = { kind: 'reading'; fraction: number } | { kind: 'thinking'; delta: string };
+
+export interface PiCompleteOptions {
+  signal?: AbortSignal;
+  onText?: (delta: string) => void;
+  onActivity?: (activity: PiActivity) => void;
+}
+
 export interface PiModel {
   /** Shown in the panel. */
   label: string;
-  complete(messages: PiMessage[], tools: PiToolSpec[], opts: { signal?: AbortSignal; onText?: (delta: string) => void }): Promise<PiTurn>;
+  complete(messages: PiMessage[], tools: PiToolSpec[], opts: PiCompleteOptions): Promise<PiTurn>;
 }
 
 let callCounter = 0;
@@ -50,7 +59,7 @@ export const PI_LOCAL_MODEL_ID = 'LiquidAI/LFM3-1.7B-GGUF';
 export const PI_LOCAL_DOWNLOAD = 'about 1.1 GB';
 
 interface LocalSession {
-  generate(messages: unknown[], opts: Record<string, unknown>): AsyncIterable<{ type: string; text?: string }> & {
+  generate(messages: unknown[], opts: Record<string, unknown>): AsyncIterable<{ type: string; text?: string; done?: number; total?: number }> & {
     result: Promise<{ finish_reason: string; message: { role: 'assistant'; content: string; tool_calls?: PiToolCall[] } }>;
   };
   dispose?(): Promise<void> | void;
@@ -127,7 +136,7 @@ class LocalPi {
     return this.loading;
   }
 
-  async complete(messages: PiMessage[], tools: PiToolSpec[], opts: { signal?: AbortSignal; onText?: (delta: string) => void }): Promise<PiTurn> {
+  async complete(messages: PiMessage[], tools: PiToolSpec[], opts: PiCompleteOptions): Promise<PiTurn> {
     // The download is a choice the person makes (it is large): never start it from a message.
     if (!this.session) {
       if (this.loading) await this.loading;
@@ -135,7 +144,11 @@ class LocalPi {
     }
     // Room for the model's thinking as well as a long answer (a table, a whole cast).
     const gen = this.session!.generate(messages, { tools, max_new_tokens: 4096, do_sample: false, signal: opts.signal });
-    for await (const ev of gen) if (ev.type === 'text' && ev.text) opts.onText?.(ev.text);
+    for await (const ev of gen) {
+      if (ev.type === 'text' && ev.text) opts.onText?.(ev.text);
+      else if (ev.type === 'reasoning' && ev.text) opts.onActivity?.({ kind: 'thinking', delta: ev.text });
+      else if (ev.type === 'prefill' && ev.total) opts.onActivity?.({ kind: 'reading', fraction: Math.min(1, (ev.done ?? 0) / ev.total) });
+    }
     const res = await gen.result;
     const calls = (res.message.tool_calls ?? []).map((c) => ({ ...c, id: c.id || newCallId() }));
     return {

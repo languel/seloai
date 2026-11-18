@@ -21,6 +21,20 @@ function refAt(text: string, caret: number): { sign: '@' | '#'; start: number; q
   return m ? { sign: m[2] as '@' | '#', start: caret - m[3].length - 1, query: m[3] } : null;
 }
 
+/** A running stitch being sewn: Pi at work. */
+function Sewing({ className }: { className?: string }) {
+  return (
+    <span className={`pi-stitch ${className ?? ''}`} aria-hidden="true">
+      <i />
+      <i />
+      <i />
+      <i />
+    </span>
+  );
+}
+
+const PHASE_WORDS = { reading: 'Reading', thinking: 'Thinking', writing: 'Writing', tool: 'Working' } as const;
+
 const STARTERS = [
   'Make a new world with me',
   'What is this story about?',
@@ -47,6 +61,15 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => localPi.subscribe(setLocal), []);
+  // While Pi works, tick the elapsed time.
+  const [, setTick] = useState(0);
+  const working = piSession.busy;
+  useEffect(() => {
+    if (!working) return;
+    const id = window.setInterval(() => setTick((t) => t + 1), 500);
+    return () => window.clearInterval(id);
+  }, [working]);
+  const status = piSession.status;
   const items = piSession.items;
   const busy = piSession.busy;
   const brain = piSession.brain;
@@ -241,8 +264,8 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
             </div>
           ) : it.kind === 'tool' ? (
             <div key={it.id} className="flex items-start gap-1 text-[11px] text-muted" title={it.detail}>
-              <span aria-hidden className={it.ok === false ? 'text-crimson' : ''}>
-                {it.ok === undefined ? '…' : it.ok ? '✓' : '✗'}
+              <span aria-hidden className={`inline-flex w-4 shrink-0 justify-center pt-[0.45em] ${it.ok === false ? 'text-crimson' : ''}`}>
+                {it.ok === undefined ? <Sewing /> : <span className="-mt-[0.45em]">{it.ok ? '✓' : '✗'}</span>}
               </span>
               <span className="min-w-0">
                 {it.label}
@@ -254,6 +277,21 @@ export default function PiPanel({ people = [], places = [] }: { people?: string[
               {it.text}
             </div>
           ),
+        )}
+        {busy && status && status.phase !== 'tool' && (
+          <div className="flex items-start gap-2 pt-0.5 text-[11px] text-muted" role="status" aria-live="polite">
+            <Sewing className="mt-[0.55em] shrink-0 text-ink/70" />
+            <div className="min-w-0 flex-1">
+              <span className="font-medium text-ink/80">{PHASE_WORDS[status.phase]}…</span>
+              <span className="ml-1.5 tabular-nums">{Math.max(0, Math.floor((Date.now() - status.since) / 1000))} s</span>
+              {status.phase === 'reading' && status.fraction !== undefined && (
+                <div className="mt-1 h-[2px] w-full overflow-hidden rounded-full bg-ink/10">
+                  <div className="h-full bg-ink/50 transition-[width] duration-200" style={{ width: `${Math.round(status.fraction * 100)}%` }} />
+                </div>
+              )}
+              {status.phase === 'thinking' && status.detail && <p className="mt-0.5 truncate italic opacity-70">{status.detail}</p>}
+            </div>
+          </div>
         )}
       </div>
 

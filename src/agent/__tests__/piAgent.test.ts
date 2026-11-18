@@ -163,3 +163,20 @@ describe('Pi never leaves the person with nothing', () => {
     expect(b.at(-1)).toEqual({ type: 'agent_end', reason: 'too_long' });
   });
 });
+
+describe('Pi shows what it is doing', () => {
+  it('passes reading progress and thoughts through as activity, before the words', async () => {
+    const model: PiModel = {
+      label: 'thinker',
+      async complete(_m, _t, opts) {
+        opts.onActivity?.({ kind: 'reading', fraction: 0.5 });
+        opts.onActivity?.({ kind: 'thinking', delta: 'The well is dry, so' });
+        opts.onText?.('Hello.');
+        return { message: { role: 'assistant', content: 'Hello.' }, finish: 'stop' };
+      },
+    };
+    const events: PiEvent[] = [];
+    await new PiAgent({ model, tools: [], runTool: async () => ({}) }).send('Hi', (e) => events.push(e));
+    expect(events.map((e) => e.type)).toEqual(['agent_start', 'turn_start', 'activity', 'activity', 'message_update', 'message_end', 'agent_end']);
+  });
+});

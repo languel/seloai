@@ -17,11 +17,23 @@ export type PiItem =
 type NewItem = PiItem extends infer T ? (T extends PiItem ? Omit<T, 'id'> : never) : never;
 
 export type PiBrain = 'local' | 'api';
+
+/** What Pi is doing right now, for the live status line. */
+export interface PiStatus {
+  phase: 'reading' | 'thinking' | 'writing' | 'tool';
+  /** Since when this whole answer has been under way (ms). */
+  since: number;
+  /** Reading: how much of the conversation is taken in. */
+  fraction?: number;
+  /** Thinking: the latest few words of its thoughts; tool: what it is doing. */
+  detail?: string;
+}
 const BRAIN_KEY = 'seloai:pi-brain';
 
 class PiSession {
   items: PiItem[] = [];
   busy = false;
+  status: PiStatus | null = null;
   brain: PiBrain;
   private nextId = 1;
   private listeners = new Set<() => void>();
@@ -125,12 +137,28 @@ class PiSession {
     this.abort = new AbortController();
     this.push({ kind: 'user', text: clean });
     let streaming = false;
+    const since = Date.now();
+    let thoughts = '';
+    this.status = { phase: 'thinking', since };
     const onEvent = (e: PiEvent) => {
       switch (e.type) {
         case 'turn_start':
           streaming = false;
+          thoughts = '';
+          this.status = { phase: 'thinking', since };
+          this.changed();
+          break;
+        case 'activity':
+          if (e.activity.kind === 'reading') this.status = { phase: 'reading', since, fraction: e.activity.fraction };
+          else {
+            thoughts = (thoughts + e.activity.delta).slice(-240);
+            const tail = thoughts.replace(/\s+/g, ' ').trim().split(' ').slice(-9).join(' ');
+            this.status = { phase: 'thinking', since, detail: tail };
+          }
+          this.changed();
           break;
         case 'message_update':
+          if (this.status?.phase !== 'writing') this.status = { phase: 'writing', since };
           if (!streaming) {
             streaming = true;
             this.push({ kind: 'pi', text: e.delta, streaming: true });
@@ -144,6 +172,7 @@ class PiSession {
           break;
         }
         case 'tool_execution_start':
+          this.status = { phase: 'tool', since, detail: e.label };
           this.push({ kind: 'tool', label: e.label });
           break;
         case 'tool_execution_end':
@@ -164,6 +193,7 @@ class PiSession {
       await this.agent.send(clean, onEvent, this.abort.signal);
     } finally {
       this.busy = false;
+      this.status = null;
       this.abort = null;
       this.changed();
     }

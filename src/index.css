@@ -337,3 +337,44 @@ dialog::backdrop {
   outline: 1px dashed var(--stitch-thread, currentColor);
   outline-offset: 2px;
 }
+
+/* Pi at work: a running stitch being sewn, dash after dash. */
+.pi-stitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.pi-stitch i {
+  display: block;
+  width: 6px;
+  height: 1.8px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.15;
+  animation: pi-sew 1.6s ease-in-out infinite;
+}
+.pi-stitch i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.pi-stitch i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.pi-stitch i:nth-child(4) {
+  animation-delay: 0.6s;
+}
+@keyframes pi-sew {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  35%,
+  65% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pi-stitch i {
+    animation: none;
+    opacity: 0.6;
+  }
+}
