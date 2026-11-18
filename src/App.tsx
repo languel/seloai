@@ -1224,7 +1224,7 @@ export function App() {
     );
   };
 
-  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : sidePanel === 'pi' ? <PiPanel /> : null);
+  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : sidePanel === 'pi' ? <PiPanel people={villagers.map((v) => v.name)} places={(map.pointsOfInterest ?? []).map((p) => p.label)} /> : null);
 
   const stylePanel = (fill: boolean) => (
     <AestheticStudioPanel
