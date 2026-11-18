@@ -149,3 +149,17 @@ describe('Pi always answers', () => {
     expect(agent.messages.filter((m) => m.role === 'assistant' && !('tool_calls' in m && m.tool_calls) && !m.content).length).toBe(0);
   });
 });
+
+describe('Pi never leaves the person with nothing', () => {
+  it('says so when the model stays silent even after being asked, or runs out of room', async () => {
+    const silent = new PiAgent({ model: scripted([[call('story_overview', {})], '', '']), tools: [], runTool: async () => ({}) });
+    const a: PiEvent[] = [];
+    await silent.send('Table please.', (e) => a.push(e));
+    expect(a.at(-1)).toEqual({ type: 'agent_end', reason: 'silent' });
+
+    const long: PiModel = { label: 'long', complete: async () => ({ message: { role: 'assistant', content: '' }, finish: 'length' }) };
+    const b: PiEvent[] = [];
+    await new PiAgent({ model: long, tools: [], runTool: async () => ({}) }).send('Everything!', (e) => b.push(e));
+    expect(b.at(-1)).toEqual({ type: 'agent_end', reason: 'too_long' });
+  });
+});

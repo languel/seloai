@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Just enough Markdown for chat replies: paragraphs, line breaks, headings, bullet and numbered
- * lists, **bold**, *italic*, `code` and [links](https://…). Builds React elements directly (no
+ * lists, tables, **bold**, *italic*, `code` and [links](https://…). Builds React elements directly (no
  * HTML strings), so model output can never inject markup. Half-written syntax while a reply is
  * still streaming simply shows as text until it closes.
  */
@@ -10,11 +10,37 @@ import React from 'react';
 type Block =
   | { kind: 'p'; lines: string[] }
   | { kind: 'h'; level: number; text: string }
-  | { kind: 'ul' | 'ol'; items: string[]; start: number };
+  | { kind: 'ul' | 'ol'; items: string[]; start: number }
+  | { kind: 'table'; head: string[]; align: Array<'left' | 'center' | 'right'>; rows: string[][] };
 
 const BULLET = /^\s*[-*+•]\s+(.*)$/;
 const NUMBER = /^\s*(\d+)[.)]\s+(.*)$/;
 const HEADING = /^\s*(#{1,4})\s+(.*?)\s*#*\s*$/;
+/** The line under a table's header: | --- | :--: | ---: | */
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+/** A table row's cells; a pipe inside `code` or escaped as \| stays in its cell. */
+export function tableCells(line: string): string[] {
+  const cells: string[] = [];
+  let cell = '';
+  let inCode = false;
+  const body = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '\\' && body[i + 1] === '|') {
+      cell += '|';
+      i++;
+    } else if (ch === '`') {
+      inCode = !inCode;
+      cell += ch;
+    } else if (ch === '|' && !inCode) {
+      cells.push(cell.trim());
+      cell = '';
+    } else cell += ch;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
 
 export function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
@@ -23,10 +49,28 @@ export function parseBlocks(text: string): Block[] {
     if (para.length) blocks.push({ kind: 'p', lines: para });
     para = [];
   };
-  for (const raw of text.replace(/\r\n?/g, '\n').split('\n')) {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const line = raw.replace(/\s+$/, '');
     if (!line.trim()) {
       flush();
+      continue;
+    }
+    // A table: a row with pipes, then a rule line, then rows until a line without a pipe.
+    if (line.includes('|') && TABLE_RULE.test(lines[i + 1] ?? '') && (lines[i + 1] ?? '').includes('-')) {
+      flush();
+      const head = tableCells(line);
+      const align = tableCells(lines[i + 1]).map((c): 'left' | 'center' | 'right' => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left'));
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) {
+        const cells = tableCells(lines[i]);
+        rows.push(head.map((_, c) => cells[c] ?? ''));
+        i++;
+      }
+      i--;
+      blocks.push({ kind: 'table', head, align, rows });
       continue;
     }
     const h = HEADING.exec(line);
@@ -91,6 +135,34 @@ export default function MiniMarkdown({ text, className }: { text: string; classN
             <p key={i} className={`font-semibold ${b.level <= 2 ? 'text-[1.05em]' : ''}`}>
               {renderInline(b.text, `h${i}`)}
             </p>
+          );
+        }
+        if (b.kind === 'table') {
+          return (
+            <div key={i} className="thin-scroll overflow-x-auto">
+              <table className="w-full border-collapse text-[0.92em] leading-snug">
+                <thead>
+                  <tr>
+                    {b.head.map((cell, c) => (
+                      <th key={c} style={{ textAlign: b.align[c] ?? 'left' }} className="border-b border-borderFolk px-1.5 py-1 align-bottom font-semibold">
+                        {renderInline(cell, `t${i}-h${c}`)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.rows.map((row, r) => (
+                    <tr key={r} className="even:bg-ink/[0.03]">
+                      {row.map((cell, c) => (
+                        <td key={c} style={{ textAlign: b.align[c] ?? 'left' }} className="border-b border-borderFolk/50 px-1.5 py-1 align-top">
+                          {renderInline(cell, `t${i}-${r}-${c}`)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
         if (b.kind !== 'p') {

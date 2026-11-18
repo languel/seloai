@@ -1,3 +1,4 @@
+import { Send, Square } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { localPi, PI_LOCAL_DOWNLOAD, PI_LOCAL_MODEL_ID, type LocalLoadProgress } from '../agent/piModel';
 import { piSession, type PiBrain } from '../agent/piSession';
@@ -145,41 +146,86 @@ export default function PiPanel() {
         )}
       </div>
 
+      {/* The same message box as the Storyline's: a stitched patch, @ and # helpers, a stitched send. */}
       <form
-        className="shrink-0 border-t border-borderFolk p-2"
+        className="shrink-0 space-y-1.5 border-t border-borderFolk p-2"
         onSubmit={(e) => {
           e.preventDefault();
           send(draft);
         }}
       >
-        <textarea
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              send(draft);
-            }
-          }}
-          rows={2}
-          disabled={!canTalk}
-          placeholder={canTalk ? 'Tell Pi what you want to make or change…' : brain === 'api' ? 'Set a Brain API in the settings first' : 'Download Pi above to start'}
-          aria-label="Message Pi"
-          className="w-full resize-none rounded border border-borderFolk bg-card px-2 py-1.5 text-[12.5px] leading-relaxed text-ink placeholder:text-muted focus:outline-none disabled:opacity-50"
-        />
-        <div className="mt-1 flex items-center justify-between text-[10px] text-muted">
-          <span>Every change can be undone (the undo arrow, top right).</span>
+        {/* A textarea cannot carry the stitched edge (it is drawn with ::before), so a patch holds it. */}
+        <div className={`stitch-panel ${canTalk ? '' : 'opacity-60'}`}>
+          <textarea
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send(draft);
+              }
+            }}
+            rows={3}
+            disabled={!canTalk}
+            placeholder={canTalk ? 'Tell Pi what you want to make or change…' : brain === 'api' ? 'Set a Brain API in the settings first' : 'Download Pi above to start'}
+            aria-label="Message Pi"
+            className="thin-scroll relative block min-h-[82px] max-h-[168px] w-full resize-none bg-transparent px-3 py-2.5 text-xs leading-relaxed text-ink placeholder:text-muted focus:outline-none disabled:opacity-50"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {(['@', '#'] as const).map((sign) => (
+              <button
+                key={sign}
+                type="button"
+                disabled={!canTalk}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const el = inputRef.current;
+                  const at = el?.selectionStart ?? draft.length;
+                  const before = draft.slice(0, at);
+                  const insert = `${before && !/\s$/.test(before) ? ' ' : ''}${sign}`;
+                  setDraft(before + insert + draft.slice(el?.selectionEnd ?? at));
+                  requestAnimationFrame(() => {
+                    el?.focus();
+                    el?.setSelectionRange(at + insert.length, at + insert.length);
+                  });
+                }}
+                aria-label={sign === '@' ? 'Name a character with @' : 'Name a place with #'}
+                title={sign === '@' ? 'Insert @ to name a character' : 'Insert # to name a place'}
+                className="glyph-button relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm font-display text-sm text-ink disabled:opacity-40"
+              >
+                {sign}
+              </button>
+            ))}
+            <span className="stitch-muted truncate text-[10px]">
+              Type <kbd className="font-mono">@</kbd> person · <kbd className="font-mono">#</kbd> place
+            </span>
+          </div>
           {busy ? (
-            <button type="button" onClick={() => piSession.stop()} className="rounded-sm border border-borderFolk px-2 py-0.5 text-[11px] text-ink hover:bg-ink/5">
-              Stop
+            <button
+              type="button"
+              onClick={() => piSession.stop()}
+              aria-label="Stop Pi"
+              title="Stop"
+              className="glyph-button glyph-on stitch-thread relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
+            >
+              <Square className="h-3 w-3" aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" disabled={!canTalk || !draft.trim()} className="rounded-sm border border-borderFolk px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-ink/5 disabled:opacity-40">
-              Send
+            <button
+              type="submit"
+              disabled={!canTalk || !draft.trim()}
+              aria-label="Send to Pi"
+              title="Send"
+              className="glyph-button glyph-on stitch-thread relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm disabled:opacity-45"
+            >
+              <Send className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           )}
         </div>
+        <p className="text-[10px] text-muted">Every change can be undone (the undo arrow, top right).</p>
       </form>
     </div>
   );

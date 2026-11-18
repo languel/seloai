@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseBlocks, renderInline } from '../MiniMarkdown';
+import { parseBlocks, renderInline, tableCells } from '../MiniMarkdown';
 
 const flat = (nodes: unknown[]): string =>
   nodes
@@ -28,5 +28,28 @@ describe('the little Markdown renderer', () => {
     expect(flat(renderInline('a **half written'))).toBe('a **half written');
     expect(flat(renderInline('<b>not html</b>'))).toBe('<b>not html</b>');
     expect(flat(renderInline('snake_case_name and 2*3*4'))).toBe('snake_case_name and 2*3*4');
+  });
+});
+
+describe('tables', () => {
+  it('reads a table with its header, alignment and rows, padding short rows', () => {
+    const blocks = parseBlocks('Here are the characters:\n\n| Name | Role | Voice |\n|------|:----:|------:|\n| **Lamia** (lamia) | Serpent Keeper | female, Portuguese |\n| Baba Rada | Herb-keeper |\n\nAfter.');
+    expect(blocks.map((b) => b.kind)).toEqual(['p', 'table', 'p']);
+    expect(blocks[1]).toEqual({
+      kind: 'table',
+      head: ['Name', 'Role', 'Voice'],
+      align: ['left', 'center', 'right'],
+      rows: [
+        ['**Lamia** (lamia)', 'Serpent Keeper', 'female, Portuguese'],
+        ['Baba Rada', 'Herb-keeper', ''],
+      ],
+    });
+  });
+
+  it('keeps pipes inside code or escaped, and does not mistake a plain pipe for a table', () => {
+    expect(tableCells('| `a|b` | c \\| d |')).toEqual(['`a|b`', 'c | d']);
+    expect(parseBlocks('either this | or that').map((b) => b.kind)).toEqual(['p']);
+    // While streaming, the header row before its rule line is just text.
+    expect(parseBlocks('| Name | Role |').map((b) => b.kind)).toEqual(['p']);
   });
 });

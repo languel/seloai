@@ -30,7 +30,7 @@ export type PiEvent =
   | { type: 'message_end'; message: Extract<PiMessage, { role: 'assistant' }> }
   | { type: 'tool_execution_start'; call: PiToolCall; label: string }
   | { type: 'tool_execution_end'; call: PiToolCall; label: string; ok: boolean; summary: string }
-  | { type: 'agent_end'; reason: 'done' | 'max_rounds' | 'cancelled' | 'error'; error?: string };
+  | { type: 'agent_end'; reason: 'done' | 'max_rounds' | 'cancelled' | 'error' | 'silent' | 'too_long'; error?: string };
 
 export type PiToolSet = 'small' | 'full';
 
@@ -117,7 +117,12 @@ export class PiAgent {
             this.messages.push({ role: 'user', content: '(Now tell me in one or two sentences what you did, and what you suggest next.)' });
             continue;
           }
-          return onEvent({ type: 'agent_end', reason: 'done' });
+          if (!turn.message.content.trim()) {
+            // Never leave the person with nothing: say why there is no answer.
+            this.messages.pop();
+            return onEvent({ type: 'agent_end', reason: turn.finish === 'length' ? 'too_long' : 'silent' });
+          }
+          return onEvent({ type: 'agent_end', reason: turn.finish === 'length' ? 'too_long' : 'done' });
         }
         usedTools = true;
         for (const call of calls) {

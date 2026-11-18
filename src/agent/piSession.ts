@@ -153,6 +153,8 @@ class PiSession {
           if (e.reason === 'error') this.push({ kind: 'note', text: e.error ?? 'Something went wrong.', error: true });
           else if (e.reason === 'max_rounds') this.push({ kind: 'note', text: 'Pi stopped after many steps. Say "go on" to continue.' });
           else if (e.reason === 'cancelled') this.push({ kind: 'note', text: 'Stopped.' });
+          else if (e.reason === 'too_long') this.push({ kind: 'note', text: 'Pi ran out of room for that answer. Ask for less at once (say, one part at a time).' });
+          else if (e.reason === 'silent') this.push({ kind: 'note', text: 'Pi did not put an answer into words. Ask again, perhaps more simply.' });
           break;
         default:
           break;

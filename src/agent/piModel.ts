@@ -133,7 +133,8 @@ class LocalPi {
       if (this.loading) await this.loading;
       else throw new Error(`Pi's local model is not downloaded yet. Use "Download Pi" (${PI_LOCAL_DOWNLOAD}), or switch to a cloud model.`);
     }
-    const gen = this.session!.generate(messages, { tools, max_new_tokens: 1200, do_sample: false, signal: opts.signal });
+    // Room for the model's thinking as well as a long answer (a table, a whole cast).
+    const gen = this.session!.generate(messages, { tools, max_new_tokens: 4096, do_sample: false, signal: opts.signal });
     for await (const ev of gen) if (ev.type === 'text' && ev.text) opts.onText?.(ev.text);
     const res = await gen.result;
     const calls = (res.message.tool_calls ?? []).map((c) => ({ ...c, id: c.id || newCallId() }));
