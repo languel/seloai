@@ -350,6 +350,8 @@ export interface FigureRig {
   density: number;
   build: FigureBuild;
   view: FigureView;
+  /** What sort of being: a serpent glides and its tail ripples instead of stepping. */
+  kind?: FigureKind;
   /** The arms raised, as in the khoro, for when the figure dances. */
   danceArms?: { left: PartSprite; right: PartSprite };
 }
@@ -483,6 +485,7 @@ export function getFigureRig(
       density: DENSITY,
       build,
       view,
+      kind,
       danceArms,
     };
     rigCache.set(bodyKey, body);
@@ -622,6 +625,39 @@ function drawPart(ctx: CanvasRenderingContext2D, part: PartSprite, density: numb
   ctx.drawImage(part.canvas, -part.ox / density, -part.oy / density, part.canvas.width / density, part.canvas.height / density);
 }
 
+/**
+ * A serpent's tail drawn in thin strips, each shifted along a wave that travels away from the
+ * waist: seen side-on the coils rise and fall along their length; seen head-on they sway from
+ * side to side, more toward the tip. The waist stays put, so the woman sits still on the coils.
+ */
+function drawSlithering(ctx: CanvasRenderingContext2D, part: PartSprite, density: number, waist: Pt, side: boolean, phase: number, amplitude: number) {
+  const c = part.canvas;
+  const strips = 18;
+  const w = c.width / density;
+  const h = c.height / density;
+  const x0 = -part.ox / density;
+  const y0 = -part.oy / density;
+  for (let i = 0; i < strips; i++) {
+    if (side) {
+      // Vertical strips along the tail; distance from the waist sets how much each one moves.
+      const sx = (c.width * i) / strips;
+      const sw = Math.ceil(c.width / strips) + 1;
+      const xMid = x0 + (w * (i + 0.5)) / strips;
+      const reach = Math.min(1, Math.abs(xMid - waist[0]) / (w * 0.5));
+      const dy = Math.sin(phase - reach * 5) * amplitude * reach;
+      ctx.drawImage(c, sx, 0, sw, c.height, x0 + (w * i) / strips, y0 + dy, sw / density, h);
+    } else {
+      // Horizontal strips down the coils; the lower (and nearer the tip), the more they sway.
+      const sy = (c.height * i) / strips;
+      const sh = Math.ceil(c.height / strips) + 1;
+      const yMid = y0 + (h * (i + 0.5)) / strips;
+      const reach = Math.max(0, Math.min(1, (yMid - waist[1]) / Math.max(1, -waist[1])));
+      const dx = Math.sin(phase - reach * 4) * amplitude * reach;
+      ctx.drawImage(c, 0, sy, c.width, sh, x0 + dx, y0 + (h * i) / strips, w, sh / density);
+    }
+  }
+}
+
 function aboutPivot(ctx: CanvasRenderingContext2D, pivot: Pt, rotate: number, scaleX = 1, scaleY = 1) {
   ctx.translate(pivot[0], pivot[1]);
   ctx.rotate(rotate);
@@ -677,7 +713,9 @@ export function paintRig(
   // Dancing: a springy bounce on the beat (about two steps a second).
   const dance = memory.dance * memory.dance * (3 - 2 * memory.dance);
   const beat = t * 4.2 + phase;
-  const lift = move * Math.abs(step) * h * 0.05 + dance * Math.abs(Math.sin(beat)) * h * 0.035;
+  const serpent = rig.kind === 'serpent';
+  // A serpent glides: no step to bob on, only a slow sway of the body over the moving coils.
+  const lift = serpent ? 0 : move * Math.abs(step) * h * 0.05 + dance * Math.abs(Math.sin(beat)) * h * 0.035;
   const squashY = 1 - move * 0.06 * contact + still * 0.01 * breath;
   const squashX = 1 + move * 0.05 * contact - still * 0.006 * breath;
   const facingSign = memory.flip >= 0 ? 1 : -1;
@@ -686,8 +724,8 @@ export function paintRig(
   const side = rig.view === 'side';
   // Side-on the body leans into travel. Walking toward us or away, it rolls and shifts its
   // weight over the planted foot instead, the way a person sways when seen head-on.
-  const roll = side ? move * 0.07 * facingSign : move * step * 0.04;
-  const weightShift = side ? 0 : -move * step * h * 0.022;
+  const roll = serpent ? move * Math.sin(t * 2.4 + phase) * 0.035 : side ? move * 0.07 * facingSign : move * step * 0.04;
+  const weightShift = serpent ? move * Math.sin(t * 2.4 + phase) * h * 0.02 : side ? 0 : -move * step * h * 0.022;
   const bodyRotate = rig.lean + roll + still * Math.sin(t * 0.6 + phase) * 0.012;
 
   ctx.save();
@@ -728,6 +766,10 @@ export function paintRig(
     }
   }
 
+  if (serpent) {
+    // The coils: a wave travels down the tail, faster when she moves, a slow ripple at rest.
+    drawSlithering(ctx, rig.parts.skirt, density, waist, side, t * (2.2 + move * 4) + phase, h * (0.012 + move * 0.03));
+  } else {
   ctx.save();
   // The skirt swings late; head-on it sways against the weight shift rather than rotating.
   const skirtSwing = side
@@ -736,6 +778,7 @@ export function paintRig(
   aboutPivot(ctx, waist, skirtSwing, 1 + move * 0.035 * Math.abs(Math.sin(stride - 0.9)), 1);
   drawPart(ctx, rig.parts.skirt, density);
   ctx.restore();
+  }
 
   // Breathing lifts the chest; the head and arms ride on it.
   const chest = 1 + still * 0.022 * breath + talk * 0.01 * Math.sin(t * 6.5);

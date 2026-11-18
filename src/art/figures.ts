@@ -995,7 +995,8 @@ function scaleAbout(shapes: Shape[], [ox, oy]: Pt, k: number): Shape[] {
  * the ground and lifts its tip, worked in the hair ink with gold scale knots.
  */
 function serpentTail(t: Traits, height: number, view: FigureView): Shape[] {
-  const flip = view === 'back' ? -1 : 1;
+  // Side-on she faces +x, so the coils trail behind her (-x); from behind they are mirrored.
+  const flip = view === 'back' || view === 'side' ? -1 : 1;
   const waistY = -t.skirtH;
   const spine: Pt[] = [
     [0, waistY],
