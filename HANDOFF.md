@@ -39,6 +39,7 @@ The full design and every setting is in [docs/WORLD_EDITOR_PLAN.md](docs/WORLD_E
 
 - **State:** an agent can build a world from nothing with a person, change any style or setting, edit looks from plain words, drive the interface, draw, narrate, run a scripted performance and record it. Tested: headless tests for every tool family, a live Qwen 3.8 9B (Ollama) run that built a whole world, and scripted walkthroughs in the app.
 - **Not yet tested:** recording the whole app tab (needs the person's click), a model writing a long walkthrough on its own, and the local LFM3-1.7B on multi-step requests (small models over-reach: the panel shows what really changed under each tool step).
+- **Also:** a sound mixer (`src/ai/mixer.ts`, every playback goes through a bus), playable HTML export of a performance with a player mode that never saves (`src/app/player.ts`, `src/app/playerMode.ts`), the Lamia slithers (tail behind, a wave down the coils).
 - **Not built:** recording a person's own clicks and drags as a replayable script; Spinner as an embeddable script for other pages; MCP over HTTP; Gemini tool calling.
 - **Live model test:** `PI_LIVE_MODEL=<ollama model> pnpm exec vitest run src/agent/__tests__/piLive.test.ts`.
 - **Known flaky:** `src/api/__tests__/tools.test.ts` (spawns the MCP server) times out under the full suite; it passes alone.

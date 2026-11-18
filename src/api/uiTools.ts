@@ -15,6 +15,8 @@ import { findNamedCharacter } from '../engine/names';
 import type { VillageSimulation } from '../engine/simulation';
 import type { ModelSettings, VillageMap, VillagerConfig } from '../engine/types';
 import { resolveNear } from './authoringTools';
+import { exportProjectJson } from '../storage/villageStore';
+import type { PerformancePayload } from '../app/player';
 import type { SeloToolDefinition } from './seloToolRegistry';
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required });
@@ -114,6 +116,20 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
       master: { description: 'Everything: 0 to 1, or off, half, on.' },
       fade_seconds: { type: 'number', description: 'How long the change takes (default 0: at once).' },
     }),
+  },
+  {
+    name: 'export_performance',
+    description:
+      'Save a performance as one playable HTML file: the current world (place, characters, story; no keys, no conversations) and the script (same steps as perform). Opening the file shows a Play button; it plays in SeloAI online (or app_url), in a player that saves nothing. For a video instead, use perform with record.',
+    inputSchema: obj(
+      {
+        name: str('The title of the performance.'),
+        steps: { type: 'array', items: { type: 'object' } },
+        world: str('paused (default) or running, as for perform.'),
+        app_url: str('Where SeloAI is served (default: the published app).'),
+      },
+      ['name', 'steps'],
+    ),
   },
   { name: 'performance_status', description: 'How the running (or last) performance is going: the step it is on and what each step did.', inputSchema: obj({}) },
   { name: 'stop_performance', description: 'Stop the running performance (and save its recording).', inputSchema: obj({}) },
@@ -528,6 +544,33 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
       const r = await perform(args, host, known);
       return { ok: true, started: r.name, steps: r.total, note: 'Running in the background: use performance_status to follow it.' };
     }
+    case 'export_performance': {
+      const steps = Array.isArray(args.steps) ? (args.steps as Step[]) : [];
+      if (!steps.length) throw new Error('A performance needs steps.');
+      // Checked as perform would, so a broken script fails here and not in a student's browser.
+      for (const st of steps) {
+        const p = normalise(st, known);
+        if (p.kind === 'tool' && (p.tool === 'perform' || p.tool === 'export_performance' || !known.has(p.tool))) throw new Error(`Unknown or not allowed in a script: "${p.tool}".`);
+      }
+      const name = String(args.name ?? 'Performance').trim() || 'Performance';
+      const project = exportProjectJson({ map: host.map(), villagers: host.cast(), modelSettings: host.settings(), conversations: [], world: host.sim.world, savedAt: Date.now() });
+      const payload: PerformancePayload = { format: 'seloai-performance', version: 1, name, project, steps, world: args.world === 'running' ? 'running' : 'paused' };
+      const appUrl = typeof args.app_url === 'string' && args.app_url.trim() ? args.app_url.trim() : defaultAppUrl();
+      const html = playerHtml(payload, appUrl);
+      const file = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'performance'}.html`;
+      if (typeof document !== 'undefined') {
+        const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+      return { ok: true, file, kilobytes: Math.round(html.length / 102.4) / 10, plays_in: appUrl, ...(typeof document === 'undefined' ? { html } : {}) };
+    }
+
     case 'performance_status':
       return runReport(run);
     case 'stop_performance':
@@ -544,4 +587,90 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
     default:
       throw new Error(`Unknown tool "${name}".`);
   }
+}
+
+/** The published app, unless this app is itself served from somewhere else that is not local. */
+function defaultAppUrl(): string {
+  const PUBLISHED = 'https://languel.github.io/seloai/';
+  if (typeof location === 'undefined') return PUBLISHED;
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return PUBLISHED;
+  const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
+  return new URL(base, location.origin).href;
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/**
+ * A playable performance as one HTML page: a Play screen (a click lets the sound play), and the
+ * app in a frame in player mode, which gets the world and the script from this page.
+ */
+export function playerHtml(payload: PerformancePayload, appUrl: string): string {
+  const url = new URL(appUrl);
+  url.searchParams.set('player', '1');
+  const data = JSON.stringify(payload).replace(/</g, '\\u003c');
+  const title = escapeHtml(payload.name);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} · SeloAI</title>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; height: 100%; background: #e3d8c2; font-family: Georgia, 'Iowan Old Style', serif; color: #231f1c; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  #cover { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgb(227 216 194 / 0.92); z-index: 2; }
+  .card { text-align: center; padding: 28px 36px; border: 2px dashed #231f1c; border-radius: 14px; background: #efe7d6; max-width: 34rem; margin: 16px; }
+  h1 { font-size: 26px; margin: 0 0 6px; font-weight: 600; }
+  p { margin: 4px 0 18px; color: #5e554a; font-size: 15px; }
+  button { font: inherit; font-size: 18px; padding: 10px 26px; border-radius: 10px; border: 2px dashed #b0241c; background: #f6efe0; color: #b0241c; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  #note { font-size: 13px; color: #5e554a; margin-top: 12px; min-height: 1em; }
+</style>
+</head>
+<body>
+<iframe id="app" src="${escapeHtml(url.href)}" allow="autoplay; fullscreen" title="${title}"></iframe>
+<div id="cover"><div class="card">
+  <h1>${title}</h1>
+  <p>A performance made in SeloAI.</p>
+  <button id="play" disabled>Loading…</button>
+  <button id="look" style="display:none;margin-left:8px;border-color:#5e554a;color:#5e554a">Look around</button>
+  <div id="note"></div>
+</div></div>
+<script type="application/json" id="performance">${data}</script>
+<script>
+(function () {
+  var payload = JSON.parse(document.getElementById('performance').textContent);
+  var frame = document.getElementById('app');
+  var cover = document.getElementById('cover');
+  var button = document.getElementById('play');
+  var note = document.getElementById('note');
+  var origin = new URL(frame.src).origin;
+  var ready = false;
+  window.addEventListener('message', function (e) {
+    if (e.origin !== origin || !e.data) return;
+    if (e.data.type === 'SELOAI_PLAYER_READY') { ready = true; button.disabled = false; button.textContent = 'Play'; }
+    if (e.data.type === 'SELOAI_PLAYER_STATE') {
+      if (e.data.state === 'running') cover.style.display = 'none';
+      if (e.data.state === 'done' || e.data.state === 'stopped') {
+        cover.style.display = 'flex'; cover.style.background = 'rgb(227 216 194 / 0.6)';
+        button.textContent = 'Play again'; look.style.display = 'inline-block'; note.textContent = 'The world goes on: look around, or play it again.';
+      }
+      if (e.data.state === 'failed') { cover.style.display = 'flex'; note.textContent = 'It could not play: ' + (e.data.error || 'unknown error'); }
+    }
+  });
+  button.addEventListener('click', function () {
+    if (!ready) return;
+    button.disabled = true; note.textContent = '';
+    frame.contentWindow.postMessage({ type: 'SELOAI_PLAY', payload: payload }, origin);
+    setTimeout(function () { button.disabled = false; }, 1500);
+  });
+  var look = document.getElementById('look');
+  look.addEventListener('click', function () { cover.style.display = 'none'; });
+  setTimeout(function () { if (!ready) note.textContent = 'Waiting for SeloAI to load from ' + origin + ' (it needs a connection and a browser with WebGPU for the best voices).'; }, 8000);
+})();
+</script>
+</body>
+</html>
+`;
 }

@@ -13,6 +13,8 @@ import type { PaletteName } from './art/looks';
 import { glyphLookFor } from './art/glyphRender';
 import React, { useEffect, useRef, useState } from 'react';
 import { captureView } from './app/viewCapture';
+import { startPlayerBridge } from './app/player';
+import { PLAYER_MODE } from './app/playerMode';
 import { registerControls, type AppControls } from './app/uiControl';
 import PiPanel from './components/PiPanel';
 import AgentOverlay from './components/AgentOverlay';
@@ -133,6 +135,9 @@ export function App() {
   // The app's controls for agents (filled in below, every render): declared up here, before any
   // early return, so the hooks run in the same order on every render.
   const appControlsRef = useRef<AppControls | null>(null);
+  // Played by an exported performance (?player): take the performance from the page around us
+  // once the app is ready. Nothing is saved in player mode.
+  useEffect(() => (ready ? startPlayerBridge() : undefined), [ready]);
   useEffect(
     () =>
       registerControls('app', {
@@ -449,7 +454,7 @@ export function App() {
       if (!candidate) {
         // No cached brain: load the light voice if it was chosen before, otherwise offer a voice.
         if (lightVoiceWasChosen()) kokoroEngine.load().catch(() => {});
-        else if (!voiceNudgeDismissed() && !omniEngine.isReady()) setShowVoiceNudge(true);
+        else if (!PLAYER_MODE && !voiceNudgeDismissed() && !omniEngine.isReady()) setShowVoiceNudge(true);
         return;
       }
       if (

@@ -464,6 +464,7 @@ export function loadAestheticSettings(): AestheticSettings {
 export function saveAestheticSettings(settings: AestheticSettings): void {
   try {
     if (typeof localStorage === 'undefined') return;
+    if (new URLSearchParams(location.search).has('player')) return;
     localStorage.setItem(AESTHETIC_STORAGE_KEY, JSON.stringify(settings));
   } catch {
     // ignore quota / private mode failures

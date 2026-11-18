@@ -1,4 +1,5 @@
 import { storyPackFromMarkdown } from '../world/storyText';
+import { PLAYER_MODE } from '../app/playerMode';
 import { normalizeWorldContext } from '../world/worldContext';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, withBundledTileMeanings } from '../world/packs';
 import type { WorldContext } from '../world/worldContext';
@@ -185,6 +186,8 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
 }
 
 export async function savePersistedState(state: PersistedVillageState): Promise<void> {
+  // Playing an exported performance never saves over the viewer's own world.
+  if (PLAYER_MODE) return;
   try {
     await idbSet('village_v1', { ...state, savedAt: Date.now() });
   } catch {
@@ -222,6 +225,7 @@ export async function saveWorldToMemory(
   state: PersistedVillageState,
   existingId?: string,
 ): Promise<SavedWorldSlot> {
+  if (PLAYER_MODE) throw new Error('A performance player does not save worlds.');
   const cleanName = name.trim() || state.map.name || 'Untitled World';
   const clonedState: PersistedVillageState = {
     ...structuredClone(state),
@@ -256,6 +260,7 @@ export async function saveWorldToMemory(
 }
 
 export async function deleteSavedWorld(id: string): Promise<SavedWorldSlot[]> {
+  if (PLAYER_MODE) return listSavedWorlds();
   const existing = await listSavedWorlds();
   const next = existing.filter((item) => item.id !== id);
   memorySavedWorldsCache = next;

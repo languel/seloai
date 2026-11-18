@@ -150,12 +150,13 @@ function Label({ d }: { d: Drawing }) {
   if (d.shape === 'arrow') {
     // The card sits past the tail, so the whole arrow shows between it and its target.
     const tail = (d.from && anchorPoint(d.from)) || { x: at.x - 120, y: at.y - 90 };
-    const dx = tail.x - at.x;
-    const dy = tail.y - at.y;
+    // Past the tail on its own side, unless that would run off the screen (then the other side).
+    const leftward = tail.x - at.x <= 0 ? tail.x > 260 : tail.x > innerWidth - 260;
+    const upward = tail.y - at.y <= 0 ? tail.y > 70 : tail.y > innerHeight - 70;
     style = {
       left: tail.x,
       top: tail.y,
-      transform: `translate(${dx <= 0 ? '-100%' : '0'}, ${dy <= 0 ? '-100%' : '0'}) translate(${dx <= 0 ? -6 : 6}px, ${dy <= 0 ? -6 : 6}px)`,
+      transform: `translate(${leftward ? '-100%' : '0'}, ${upward ? '-100%' : '0'}) translate(${leftward ? -6 : 6}px, ${upward ? -6 : 6}px)`,
     };
   } else {
     style = { left: at.x + (at.w ? at.w / 2 + 14 : 18), top: at.y - (at.h ? at.h / 2 : 0) - 8, transform: 'translateY(-50%)' };
