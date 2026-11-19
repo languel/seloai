@@ -1739,9 +1739,11 @@ export class VillageSimulation {
       if (this.planningVillagers.has(rt.id)) {
         // The mind is busy with the story's own lines and voices: go about the day meanwhile,
         // so the village is alive from the first moment rather than waiting to be told.
+        // Someone on their way to talk with them is waited for, not walked away from.
+        const awaited = runtimesList.some((o) => o.errand?.targetId === rt.id);
         const since = this.planningSince.get(rt.id) ?? this.simTimeMs;
         const lastStroll = this.lastStrollSimMs.get(rt.id) ?? -Infinity;
-        if (this.simTimeMs - since > STROLL_AFTER_MS && this.simTimeMs - lastStroll > STROLL_EVERY_MS) this.strollNearby(rt);
+        if (!awaited && this.simTimeMs - since > STROLL_AFTER_MS && this.simTimeMs - lastStroll > STROLL_EVERY_MS) this.strollNearby(rt);
         continue;
       }
       const lastMoveSim = this.lastMoveSimMs.get(rt.id) ?? -9999;
