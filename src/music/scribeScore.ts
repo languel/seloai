@@ -103,7 +103,7 @@ export function parseScore(text: string): ScribeScore | null {
 }
 
 /** Asked at most this often, in seconds, so the story's own lines keep the model's time. */
-export const SCORE_EVERY = 20;
+export const SCORE_EVERY = 40;
 /** A reading older than this gives way to the word lists. */
 export const SCORE_STALE = 150;
 

@@ -126,12 +126,12 @@ describe("the Scribe's ear", () => {
     expect(ear.shouldAsk([{ text: 'Hello', at: 1 }], 2)).toBe(true);
     let release!: (v: null) => void;
     const pending = ear.ask(2, () => new Promise((r) => (release = r)));
-    expect(ear.shouldAsk([{ text: 'x', kind: 'narration', at: 30 }], 40)).toBe(false); // in flight
+    expect(ear.shouldAsk([{ text: "x", kind: "narration", at: 45 }], 50)).toBe(false); // in flight
     release(null);
     await pending;
     expect(ear.shouldAsk([{ text: 'x', at: 5 }], 10)).toBe(false); // too soon
-    expect(ear.shouldAsk([{ text: 'one', at: 30 }], 40)).toBe(false); // one line is not enough
-    expect(ear.shouldAsk([{ text: 'x', kind: 'narration', at: 30 }], 40)).toBe(true);
+    expect(ear.shouldAsk([{ text: 'one', at: 45 }], 50)).toBe(false); // one line is not enough
+    expect(ear.shouldAsk([{ text: 'x', kind: 'narration', at: 45 }], 50)).toBe(true);
   });
 
   it("leads the mood while fresh, then gives way", async () => {

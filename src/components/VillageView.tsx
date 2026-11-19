@@ -567,7 +567,12 @@ export const VillageView: React.FC<VillageViewProps> = ({
     const start = () => villageMusic.resume();
     window.addEventListener('pointerdown', start, { once: true });
     // The Scribe's model is the band's ear when one is loaded: it names the mood of the moment.
-    villageMusic.setScorer((lines) => brainRouter.scoreMusic({ lines, world: sim.world, settings: sim.modelSettings }));
+    // It never asks while the model is wanted for the story itself (someone thinking or speaking,
+    // a voice playing): the story's lines and voices come first.
+    villageMusic.setScorer((lines) => {
+      const busy = Boolean(brainRouter.activeSpeechInfo) || [...sim.runtimes.values()].some((rt) => rt.state === 'thinking' || rt.state === 'speaking');
+      return busy ? Promise.resolve(null) : brainRouter.scoreMusic({ lines, world: sim.world, settings: sim.modelSettings });
+    });
     const timer = window.setInterval(() => {
       if (!villageMusic.enabled) return;
       const cutoff = Date.now() - 180_000;

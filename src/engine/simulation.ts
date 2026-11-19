@@ -188,7 +188,9 @@ const MAX_MESSAGES_PER_CONV = 160;
 const MAX_CONVERSATIONS = 40;
 const DEFAULT_MAX_TIMELINE_FRAMES = 450;
 /** World time a character rests after a conversation before starting another (usual talk density). */
-const REST_AFTER_TALK_MS = 75000;
+const REST_AFTER_TALK_MS = 95000;
+/** How soon someone may first talk after the story begins or is reset (usual pace), world ms. */
+const FIRST_TALK_MS = 15000;
 /** A breath between two lines of a conversation (usual talk density), world ms. */
 const LINE_BEAT_MS = 1300;
 /** Two people talk only side by side; from up to this far apart one walks over first. */
@@ -698,6 +700,7 @@ export class VillageSimulation {
    * well added since counts) with their opening intention. The world and cast are kept.
    */
   resetStory() {
+    this.hasTalked.clear();
     this.mind.flushAudioQueue();
     this.mind.resetStoryMemory?.();
     this.clearDatabase();
@@ -1493,8 +1496,8 @@ export class VillageSimulation {
         !otherRt.activeConversationId &&
         otherRt.state !== 'thinking' &&
         otherRt.state !== 'speaking' &&
-        this.simTimeMs - (this.lastThinkSimMs.get(rt.id) ?? -Infinity) >= REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch() &&
-        this.simTimeMs - (this.lastThinkSimMs.get(otherRt.id) ?? -Infinity) >= REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch()
+        this.simTimeMs - (this.lastThinkSimMs.get(rt.id) ?? -Infinity) >= this.restMs(rt.id) &&
+        this.simTimeMs - (this.lastThinkSimMs.get(otherRt.id) ?? -Infinity) >= this.restMs(otherRt.id)
       ) {
         rt.path = [];
         otherRt.path = [];
@@ -1551,17 +1554,28 @@ export class VillageSimulation {
     return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
   }
 
-  /** How much longer than usual the story's waits are, from its pace: 2.2x when slow, 0.55x when brisk. */
+  /** How much longer than usual the story's waits are, from its pace: 1.8x when slow, 0.6x when brisk. */
   private paceStretch(): number {
     const v = this.modelSettings.storyPace;
     const p = typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
-    return p < 0.5 ? 2.2 - 1.2 * p * 2 : 1 - 0.45 * (p - 0.5) * 2;
+    return p < 0.5 ? 1.8 - 0.8 * p * 2 : 1 - 0.4 * (p - 0.5) * 2;
   }
 
-  /** How much longer than usual characters wait before talking again: 5x when sparse, 0.45x when dense. */
+  /** Who has had a conversation since the story began or was reset. */
+  private hasTalked = new Set<string>();
+
+  /**
+   * How long someone rests before starting a conversation, world ms: after a conversation, the
+   * usual rest scaled by talk density and pace; before their first one in a story, a short wait.
+   */
+  private restMs(id: string): number {
+    return this.hasTalked.has(id) ? REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch() : FIRST_TALK_MS * this.paceStretch();
+  }
+
+  /** How much longer than usual characters wait before talking again: 3x when sparse, 0.5x when dense. */
   private talkGap(): number {
     const d = this.density('talk');
-    return d >= 0.5 ? 1 - 0.55 * (d - 0.5) * 2 : 5 - 4 * d * 2;
+    return d >= 0.5 ? 1 - 0.5 * (d - 0.5) * 2 : 3 - 4 * d;
   }
 
   /**
@@ -1617,8 +1631,8 @@ export class VillageSimulation {
     this.maybeTellPrologue();
     this.maybeTellVillageLife();
     const talk = this.density('talk');
-    // Rest after a conversation, counted from its end.
-    const gap = REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch();
+    // Rest after a conversation, counted from its end (short before someone's first one).
+    const gapFor = (id: string) => this.restMs(id);
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
     if (this.modelSettings.autoConverse && !this.holdStory && talk > 0) {
@@ -1635,7 +1649,7 @@ export class VillageSimulation {
           continue;
         }
         const lastThinkSim = this.lastThinkSimMs.get(a.id) ?? -9999;
-        if (this.simTimeMs - lastThinkSim < gap || now - a.lastThinkAt < 3500) continue;
+        if (this.simTimeMs - lastThinkSim < gapFor(a.id) || now - a.lastThinkAt < 3500) continue;
 
         for (let j = i + 1; j < runtimesList.length; j++) {
           const b = runtimesList[j];
@@ -1650,7 +1664,7 @@ export class VillageSimulation {
             continue;
           }
           const bThinkSim = this.lastThinkSimMs.get(b.id) ?? -9999;
-          if (this.simTimeMs - bThinkSim < gap || now - b.lastThinkAt < 3500) continue;
+          if (this.simTimeMs - bThinkSim < gapFor(b.id) || now - b.lastThinkAt < 3500) continue;
 
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
           if (dist > APPROACH_FROM || this.rng() >= 0.22 * Math.min(1, talk * 2)) continue;
@@ -2205,6 +2219,7 @@ export class VillageSimulation {
           rt.lastThinkAt = this.now();
           rt.lastMoveAt = this.now();
           this.lastThinkSimMs.set(rt.id, this.simTimeMs);
+          this.hasTalked.add(rt.id);
         }
       }
       this.notify(true);
