@@ -406,6 +406,17 @@ export interface ModelSettings {
   speakReasoning: boolean;
   ambientAudioEnabled: boolean;
   autoConverse: boolean;
+  /**
+   * How much the characters talk among themselves, 0 to 1 (0.5 is usual): how soon they strike
+   * up a conversation again, how readily, and how long it runs. 0: they go about their business.
+   */
+  talkDensity?: number;
+  /**
+   * How much the Scribe tells, 0 to 1 (0.5 is usual): below the middle fewer scenes are framed
+   * with an opening and a closing beat; above it the Scribe also tells quiet moments of village
+   * life between conversations, more often the higher it is. 0: the Scribe stays silent.
+   */
+  scribeDensity?: number;
   narratorEnabled: boolean;
   narratorName: string;
   narratorStyle: 'dungeon-master' | 'storybook' | 'chronicler';

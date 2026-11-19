@@ -34,7 +34,7 @@ import { clothAccent, clothPalette, setActiveWorldThreads, worldPalette, type Pa
 import { bakeScene } from '../world/worldScene';
 import { glyphLookFor, isLightColour } from '../art/glyphRender';
 import { getLastSimStepMs } from '../app/simulationDriver';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Director, type DirectorActor } from '../engine/director';
 import {
   ArrowDown,
@@ -86,6 +86,8 @@ import {
   type DeferredCanvasDraw,
 } from '../engine/renderer';
 import type { VillageSimulation } from '../engine/simulation';
+import { villageMusic } from '../music/villageMusic';
+import type { StoryLine } from '../music/listener';
 import type {
   ModelSettings,
   PointOfInterest,
@@ -556,6 +558,49 @@ export const VillageView: React.FC<VillageViewProps> = ({
     }
   });
   const storyRef = useRef(storyMode);
+  // The band: it listens to the story about once a second and plays to it.
+  useSyncExternalStore(villageMusic.subscribe, villageMusic.getVersion);
+  const music = villageMusic.status();
+  useEffect(() => {
+    // Browsers let sound start only after a click: the band starts on the first one if it was left on.
+    const start = () => villageMusic.resume();
+    window.addEventListener('pointerdown', start, { once: true });
+    // The Scribe's model is the band's ear when one is loaded: it names the mood of the moment.
+    villageMusic.setScorer((lines) => brainRouter.scoreMusic({ lines, world: sim.world, settings: sim.modelSettings }));
+    const timer = window.setInterval(() => {
+      if (!villageMusic.enabled) return;
+      const cutoff = Date.now() - 180_000;
+      const lines: StoryLine[] = [];
+      for (const conv of sim.conversations) {
+        for (let i = conv.messages.length - 1; i >= 0; i--) {
+          const m = conv.messages[i];
+          if (m.timestamp < cutoff) break;
+          lines.push({ text: m.text, kind: m.kind ?? 'speech', speaker: m.senderName, at: m.timestamp / 1000 });
+        }
+      }
+      let speaking = 0;
+      let dancing = 0;
+      const dim = sim.map.tileDim;
+      for (const rt of sim.runtimes.values()) {
+        if (rt.state === 'speaking') speaking++;
+        const moving = rt.state === 'walking' || rt.path.length > 0;
+        if (isDancing(sim, { id: rt.id, tileX: rt.x * dim, tileY: rt.y * dim, tileDim: dim, moving, state: rt.state })) dancing++;
+      }
+      villageMusic.hear({
+        now: Date.now() / 1000,
+        lines,
+        activeConversations: sim.conversations.filter((c) => c.active).length,
+        speaking,
+        dancing,
+        backdrop: sim.world?.premise,
+      });
+    }, 1000);
+    return () => {
+      window.removeEventListener('pointerdown', start);
+      window.clearInterval(timer);
+      villageMusic.setScorer(null);
+    };
+  }, [sim]);
   /** Speech and thoughts embroidered onto the cloth, when the woven text style is on. */
   const wovenRef = useRef(new WovenText());
   /** The Scribe's band along the bottom of the cloth (woven text style), and its current line. */
@@ -2239,6 +2284,17 @@ export const VillageView: React.FC<VillageViewProps> = ({
               pressed={storyMode}
               dimOff
               onClick={() => setStoryMode(!storyMode)}
+            />
+            <GlyphButton
+              glyph="music"
+              label={
+                music.on
+                  ? `Music is on: ${music.cue.mood}${music.direction ? ' (directed)' : ''}${music.playing ? `, ${music.playing}` : ''}. Click to turn it off.`
+                  : 'Music: a tapan, a gaida and a kaval play to the story'
+              }
+              pressed={music.on}
+              dimOff
+              onClick={() => villageMusic.setEnabled(!music.on)}
             />
             {storyMode && shotCaption && (
               <span className="stitch-muted max-w-[11rem] truncate text-[10px]" title={shotCaption}>

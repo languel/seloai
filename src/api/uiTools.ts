@@ -8,6 +8,11 @@
  */
 import { brainRouter } from '../ai/brainRouter';
 import { mixerLevels, setLevel, type MixerChannel } from '../ai/mixer';
+import { MOOD_IDS, isMood } from '../music/cue';
+import { DANCES, type DanceId } from '../music/theory';
+import { villageMusic, type MusicDirection } from '../music/villageMusic';
+import { TONE_PRESETS } from '../music/tone';
+import { SOUND_MODES, applySoundMode, findSoundMode } from '../app/soundModes';
 import { addDrawings, clearDrawings, hidePointer, pointerDo, setCaption, type Anchor, type Drawing, type PointerAction } from '../app/overlay';
 import { recordingState, startRecording, stopRecording, type RecordWhat } from '../app/recorder';
 import { appControls, hasVillage, villageControls, type PanelMode, type ShowWhat } from '../app/uiControl';
@@ -32,12 +37,12 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
   {
     name: 'ui_action',
     description:
-      'Do what a person does with the app. action is one of: view (village, observatory, world, patterns, characters, monitor, guides), panel (storyline, spinner, style, data, closed), camera (focus on a character, a place or "the whole map", or x,y; zoom 1 is usual, up to 3.5; move cut or glide; follow true/false), story_camera (on: the camera follows the story by itself), select (a character), show (what: labels, speech_bubbles, thought_bubbles, subtitles, paths, performance; on), top_bar (show), play, pause, speed (number), export_image (view or tapestry).',
+      'Do what a person does with the app. action is one of: view (village, observatory, world, patterns, characters, monitor, guides), panel (storyline, spinner, style, sound, data, closed), camera (focus on a character, a place or "the whole map", or x,y; zoom 1 is usual, up to 3.5; move cut or glide; follow true/false), story_camera (on: the camera follows the story by itself), select (a character), show (what: labels, speech_bubbles, thought_bubbles, subtitles, paths, performance; on), top_bar (show), play, pause, speed (number), export_image (view or tapestry).',
     inputSchema: obj(
       {
         action: str('view, panel, camera, story_camera, select, show, top_bar, play, pause, speed or export_image.'),
         view: str('For view.'),
-        panel: str('For panel: storyline, spinner, style, data or closed.'),
+        panel: str('For panel: storyline, spinner, style, sound, data or closed.'),
         focus: str('For camera: a character, a place or thing ("the well"), or "the whole map".'),
         x: { type: 'number', description: 'For camera: cell x.' },
         y: { type: 'number', description: 'For camera: cell y.' },
@@ -109,13 +114,37 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
   {
     name: 'mixer',
     description:
-      'The sound mixer: levels for voices (the characters), narrator (the Scribe), guide (narrate, in the Traveler\'s voice) and master, from 0 to 1 (or "off", "half", "on"). fade_seconds ramps smoothly, e.g. fade the voices in after a walkthrough. With no levels, says the current ones.',
+      'The sound mixer: levels for voices (the characters), narrator (the Scribe), guide (narrate, in the Traveler\'s voice), music (the band; see the music tool) and master, from 0 to 1 (or "off", "half", "on"). fade_seconds ramps smoothly, e.g. fade the voices in after a walkthrough. mode sets a whole listening mode (e.g. ambient). With no levels, says the current ones. The Sound panel shows the same mixer.',
     inputSchema: obj({
       voices: { description: 'The characters: 0 to 1, or off, half, on.' },
       narrator: { description: 'The Scribe: 0 to 1, or off, half, on.' },
       guide: { description: 'Walkthrough narration: 0 to 1, or off, half, on.' },
+      music: { description: 'The band (tapan, gaida, kaval): 0 to 1, or off, half, on.' },
+      mode: str('A listening mode, setting levels and how much each part says at once: story (usual), chatty, chronicle (the Scribe leads), village (village life: little talk), ambient (only music and people at their work). Fine-tune how much characters talk and the Scribe tells with change_setting talk_density / scribe_density.'),
       master: { description: 'Everything: 0 to 1, or off, half, on.' },
       fade_seconds: { type: 'number', description: 'How long the change takes (default 0: at once).' },
+    }),
+  },
+  {
+    name: 'music',
+    description:
+      'The village band (tapan drum, gaida bagpipe, kaval flute), composed live and scored to the story: the Scribe\'s model reads the latest moment and names its mood (word lists fill in between and when no model is loaded), and the band picks an intensity, from a bare drone (0) through a free-rhythm kaval (0.3) and a slow dance (0.5) to a wild horo (1). Direct it like a musical director: a mood, an intensity, a dance or a lead, held for hold_seconds or until released; what you leave out still follows the story. Use it to score a scene, build tension before a reveal, or start a wedding horo. With no arguments, says what is playing and why.',
+    inputSchema: obj({
+      action: str('on, off, direct (default when a mood, intensity, dance or lead is given), release (let the story lead again), or status.'),
+      mood: str('pastoral, lament, mystery, dread, tension, joy, festive or triumph.'),
+      intensity: { type: 'number', description: '0 (a drone) to 1 (a wild dance).' },
+      dance: str('free (unmetered), bavno, pravo, paidushko (5/16), lesnoto (7/8), rachenitsa (7/16), daychovo (9/16) or kopanitsa (11/16).'),
+      lead: str('kaval or gaida.'),
+      urgent: { type: 'boolean', description: 'Reach the intensity in a few seconds instead of easing over half a minute.' },
+      hold_seconds: { type: 'number', description: 'How long the direction holds (default: until released or replaced).' },
+      reason: str('Why, in a few words (shown in status).'),
+      listen: str("Who reads the story for the band: scribe (the Scribe's model names the mood of the moment when one is loaded; the default) or words (word lists only)."),
+      density: { type: 'number', description: 'How much music, 0 (sparse, long silences) to 1 (it never stops); 0.7 is usual.' },
+      tone: {
+        type: 'object',
+        description:
+          'The band\'s sound; give only what changes. gaida, kaval, tapan and drone each take level, breath (air and noise) and character (0 a clean electronic synth, 0.5 usual, 1 gritty), all 0 to 1; drone also takes voicing (tonic, fifth, octave, open), movement and beating; ambience takes reverb, room (0 a small house to 1 a gorge) and echo. Or preset: village, synth, gritty or mountain.',
+      },
     }),
   },
   {
@@ -448,8 +477,8 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
           return { ok: true, view: appControls().state().tab };
         case 'panel': {
           const raw = String(args.panel ?? 'closed').toLowerCase();
-          const mode = (['storyline', 'spinner', 'style', 'data', 'closed'].find((m) => raw.includes(m)) ?? (/world|data/.test(raw) ? 'data' : /close|hide|none|off/.test(raw) ? 'closed' : undefined)) as PanelMode | undefined;
-          if (!mode) throw new Error('panel is storyline, spinner, style, data or closed.');
+          const mode = (['storyline', 'spinner', 'style', 'sound', 'data', 'closed'].find((m) => raw.includes(m)) ?? (/world|data/.test(raw) ? 'data' : /mix|audio|music/.test(raw) ? 'sound' : /close|hide|none|off/.test(raw) ? 'closed' : undefined)) as PanelMode | undefined;
+          if (!mode) throw new Error('panel is storyline, spinner, style, sound, data or closed.');
           appControls().setPanel(mode);
           return { ok: true, panel: mode };
         }
@@ -579,7 +608,13 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
         return t.endsWith('%') || n > 1 ? n / 100 : n;
       };
       const changed: string[] = [];
-      for (const ch of ['voices', 'narrator', 'guide', 'master'] as MixerChannel[]) {
+      if (args.mode !== undefined) {
+        const m = findSoundMode(String(args.mode));
+        if (!m) throw new Error(`"${args.mode}" is not a mode: use ${SOUND_MODES.map((x) => x.id).join(', ')}.`);
+        applySoundMode(m, (patch) => void host.call('change_settings', { changes: { talk_density: patch.talkDensity, scribe_density: patch.scribeDensity } }));
+        changed.push(`mode → ${m.label}: ${m.about}`);
+      }
+      for (const ch of ['voices', 'narrator', 'guide', 'music', 'master'] as MixerChannel[]) {
         const level = read(args[ch]);
         if (level === undefined) continue;
         setLevel(ch, level, fade);
@@ -588,6 +623,81 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
       if (fade && changed.length) await sleep(fade * 1000);
       const now = mixerLevels();
       return { ok: true, ...(changed.length ? { changed } : {}), levels: Object.fromEntries(Object.entries(now).map(([k, v]) => [k, `${Math.round(v * 100)}%`])) };
+    }
+
+    case 'music': {
+      const music = villageMusic;
+      const given = ['mood', 'intensity', 'dance', 'lead', 'urgent'].some((k) => args[k] !== undefined && args[k] !== null && args[k] !== '');
+      if (args.density !== undefined) {
+        const n = Number(args.density);
+        if (!Number.isFinite(n)) throw new Error('density is a number from 0 to 1.');
+        music.setDensity(n > 1 ? n / 100 : n);
+      }
+      if (args.tone && typeof args.tone === 'object') {
+        const t = args.tone as Record<string, any>;
+        if (t.preset !== undefined) {
+          const p = TONE_PRESETS[String(t.preset).toLowerCase()];
+          if (!p) throw new Error(`"${t.preset}" is not a preset: use ${Object.keys(TONE_PRESETS).join(', ')}.`);
+          music.setTone(p.tone);
+        }
+        const { preset: _preset, ...rest } = t;
+        void _preset;
+        if (Object.keys(rest).length) music.setTone(rest);
+      }
+      if (args.listen !== undefined) {
+        const who = String(args.listen).toLowerCase();
+        if (who !== 'scribe' && who !== 'words') throw new Error('listen is scribe or words.');
+        music.listenWith(who);
+      }
+      const action = String(args.action ?? (given ? 'direct' : 'status')).toLowerCase();
+      if (action === 'on') music.setEnabled(true);
+      else if (action === 'off') music.setEnabled(false);
+      else if (action === 'release' || action === 'auto') music.release();
+      else if (action === 'direct') {
+        const d: MusicDirection = {};
+        if (args.mood !== undefined) {
+          const m = String(args.mood).toLowerCase();
+          if (!isMood(m)) throw new Error(`"${args.mood}" is not a mood: use ${MOOD_IDS.join(', ')}.`);
+          d.mood = m;
+        }
+        if (args.intensity !== undefined) {
+          const n = Number(args.intensity);
+          if (!Number.isFinite(n)) throw new Error('intensity is a number from 0 to 1.');
+          d.intensity = n > 1 ? n / 100 : n;
+        }
+        if (args.dance !== undefined) {
+          const dn = String(args.dance).toLowerCase() as DanceId;
+          if (!(dn in DANCES)) throw new Error(`"${args.dance}" is not a dance: use ${Object.keys(DANCES).join(', ')}.`);
+          d.dance = dn;
+        }
+        if (args.lead !== undefined) {
+          const l = String(args.lead).toLowerCase();
+          if (l !== 'kaval' && l !== 'gaida') throw new Error('lead is kaval or gaida.');
+          d.lead = l;
+        }
+        if (args.urgent) d.urgent = true;
+        if (args.reason) d.reason = String(args.reason);
+        if (Number(args.hold_seconds) > 0) d.holdSeconds = Number(args.hold_seconds);
+        music.direct(d);
+        if (!music.enabled) music.setEnabled(true);
+      } else if (action !== 'status') throw new Error('action is on, off, direct, release or status.');
+      const st = music.status();
+      return {
+        ok: true,
+        on: st.on,
+        playing: st.playing ?? (st.on ? 'waiting for a click to start the sound' : 'off'),
+        mood: st.cue.mood,
+        intensity: { target: st.cue.intensity, now: Math.round(st.intensity * 100) / 100 },
+        ...(st.cue.dance ? { dance: st.cue.dance } : {}),
+        ...(st.cue.lead ? { lead: st.cue.lead } : {}),
+        why: st.cue.reason,
+        story_alone: `${st.heard.mood} at ${st.heard.intensity}`,
+        listening: st.listening,
+        ...(st.scribe ? { scribe_heard: `${st.scribe.mood} ${st.scribe.intensity}${st.scribe.reason ? ` — ${st.scribe.reason}` : ''}` } : {}),
+        density: Math.round(music.density * 100) / 100,
+        tone: music.tone,
+        directed: st.direction ? (st.direction.until ? `for ${Math.max(0, Math.round((st.direction.until - Date.now()) / 1000))} more seconds` : 'until released') : false,
+      };
     }
 
     case 'perform': {

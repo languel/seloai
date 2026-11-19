@@ -21,7 +21,7 @@ import AgentOverlay from './components/AgentOverlay';
 import { piSession } from './agent/piSession';
 
 /** The side panel's modes besides the village's own Storyline. */
-type PanelMode = 'pi' | 'style' | 'data';
+type PanelMode = 'pi' | 'style' | 'sound' | 'data';
 import {
   ChevronDown,
   FolderOpen,
@@ -48,6 +48,7 @@ import {
   type AestheticSettings,
 } from './utils/aestheticThemes';
 import { AestheticStudioPanel } from './components/AestheticStudioPanel';
+import { SoundPanel } from './components/SoundPanel';
 import { AssetGuideView } from './components/AssetGuideView';
 import { CharacterEditorView } from './components/CharacterEditorView';
 import { MonitorView } from './components/MonitorView';
@@ -1229,6 +1230,7 @@ export function App() {
       ...(inVillage ? [['storyline', 'Storyline', null] as [string, string, null]] : []),
       ['pi', 'Spinner', 'pi'],
       ['style', 'Style', 'style'],
+      ['sound', 'Sound', 'sound'],
       ['data', 'World & Data', 'data'],
     ];
     return (
@@ -1257,7 +1259,7 @@ export function App() {
     );
   };
 
-  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'data' ? dataPanel(fill) : sidePanel === 'pi' ? <PiPanel people={villagers.map((v) => v.name)} places={(map.pointsOfInterest ?? []).map((p) => p.label)} /> : null);
+  const sidePanelNode = (fill: boolean) => (sidePanel === 'style' ? stylePanel(fill) : sidePanel === 'sound' ? <SoundPanel settings={settings} onUpdateSettings={handleUpdateSettings} fill={fill} /> : sidePanel === 'data' ? dataPanel(fill) : sidePanel === 'pi' ? <PiPanel people={villagers.map((v) => v.name)} places={(map.pointsOfInterest ?? []).map((p) => p.label)} /> : null);
 
   const stylePanel = (fill: boolean) => (
     <AestheticStudioPanel

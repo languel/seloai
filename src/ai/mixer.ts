@@ -1,16 +1,28 @@
 /**
  * A small mixer for everything the app says aloud, so a person or an agent can turn parts down,
- * mute them or fade them in: the characters' voices, the narrator (the Scribe), and the guide
- * (a walkthrough's narration in the Traveler's voice), each with its own level, under a master.
- * Every playback connects to its bus instead of the speakers; a level change ramps smoothly on
+ * mute them or fade them in: the characters' voices, the narrator (the Scribe), the guide
+ * (a walkthrough's narration in the Traveler's voice) and the music (`src/music/`), each with
+ * its own level, under a master.
+ * Levels are remembered on this device. Every playback connects to its bus instead of the speakers; a level change ramps smoothly on
  * every audio context in use. The browser's built-in voice cannot be routed, so it takes the
  * level when a line starts.
  */
 
-export type Bus = 'voices' | 'narrator' | 'guide';
+export type Bus = 'voices' | 'narrator' | 'guide' | 'music';
 export type MixerChannel = Bus | 'master';
 
-const levels: Record<MixerChannel, number> = { voices: 1, narrator: 1, guide: 1, master: 1 };
+const levels: Record<MixerChannel, number> = { voices: 1, narrator: 1, guide: 1, music: 0.8, master: 1 };
+const STORE = 'seloai.mixer';
+
+// Levels are remembered on this device.
+try {
+  const saved = JSON.parse(globalThis.localStorage?.getItem(STORE) ?? 'null') as Partial<Record<MixerChannel, number>> | null;
+  for (const [k, v] of Object.entries(saved ?? {})) {
+    if (k in levels && typeof v === 'number' && Number.isFinite(v)) levels[k as MixerChannel] = Math.max(0, Math.min(1, v));
+  }
+} catch {
+  // nothing saved, or no storage
+}
 
 interface ContextNodes {
   master: GainNode;
@@ -83,5 +95,10 @@ export function setLevel(channel: MixerChannel, level: number, fadeSeconds = 0) 
     else node.gain.setValueAtTime(value, now);
   }
   version++;
+  try {
+    globalThis.localStorage?.setItem(STORE, JSON.stringify(levels));
+  } catch {
+    // no storage
+  }
   for (const fn of listeners) fn();
 }

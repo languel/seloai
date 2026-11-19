@@ -296,6 +296,8 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   speakReasoning: false,
   ambientAudioEnabled: false,
   autoConverse: true,
+  talkDensity: 0.5,
+  scribeDensity: 0.5,
   narratorEnabled: true,
   narratorName: 'The Scribe',
   narratorStyle: 'dungeon-master',

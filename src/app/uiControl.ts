@@ -6,7 +6,7 @@
  * screen; a command for a part that is not showing says so.
  */
 
-export type PanelMode = 'storyline' | 'spinner' | 'style' | 'data' | 'closed';
+export type PanelMode = 'storyline' | 'spinner' | 'style' | 'sound' | 'data' | 'closed';
 export type ShowWhat = 'paths' | 'labels' | 'speech_bubbles' | 'thought_bubbles' | 'subtitles' | 'performance';
 
 export interface CameraCommand {

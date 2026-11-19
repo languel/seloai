@@ -245,6 +245,9 @@ export class VillageSimulation {
    */
   public storySet = false;
   private prologueRunning = false;
+  /** A quiet moment of village life being told, and when the Scribe last spoke (sim ms). */
+  private villageLifeRunning = false;
+  private lastNarrationSimMs = 0;
   /** Setting-specific knowledge supplied by the active world pack. */
   public world: WorldContext;
 
@@ -689,7 +692,7 @@ export class VillageSimulation {
    */
   private maybeTellPrologue() {
     if (this.storySet || this.prologueRunning || this.holdStory || this.paused) return;
-    if (!this.modelSettings.narratorEnabled) {
+    if (!this.modelSettings.narratorEnabled || this.density('scribe') === 0) {
       this.storySet = true;
       return;
     }
@@ -1439,6 +1442,7 @@ export class VillageSimulation {
       res.blockerId &&
       res.blockerId !== this.player.id &&
       this.modelSettings.autoConverse &&
+      this.density('talk') > 0 &&
       !this.holdStory &&
       !rt.activeConversationId &&
       !rt.walkAndTalk &&
@@ -1450,8 +1454,8 @@ export class VillageSimulation {
         !otherRt.activeConversationId &&
         otherRt.state !== 'thinking' &&
         otherRt.state !== 'speaking' &&
-        now - rt.lastThinkAt >= 6000 &&
-        now - otherRt.lastThinkAt >= 6000
+        now - rt.lastThinkAt >= 6000 * this.talkGap() &&
+        now - otherRt.lastThinkAt >= 6000 * this.talkGap()
       ) {
         rt.path = [];
         otherRt.path = [];
@@ -1502,13 +1506,71 @@ export class VillageSimulation {
     return true;
   }
 
+  /** The talk and Scribe densities, 0 to 1 (0.5 is usual). */
+  private density(which: 'talk' | 'scribe'): number {
+    const v = which === 'talk' ? this.modelSettings.talkDensity : this.modelSettings.scribeDensity;
+    return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
+  }
+
+  /** How much longer than usual characters wait before talking again: 5x when sparse, 0.45x when dense. */
+  private talkGap(): number {
+    const d = this.density('talk');
+    return d >= 0.5 ? 1 - 0.55 * (d - 0.5) * 2 : 5 - 4 * d * 2;
+  }
+
+  /** Whether the Scribe frames this scene with a beat. Always at the usual density and above. */
+  private scribeFrames(): boolean {
+    const d = this.density('scribe');
+    if (d >= 0.5) return true;
+    return d > 0 && this.rng() < d * 2;
+  }
+
+  /**
+   * Above the usual Scribe density, the Scribe tells a quiet moment of village life when no
+   * one has been told about for a while: every four minutes of world time just above the
+   * middle, every fifty seconds at the top.
+   */
+  private maybeTellVillageLife() {
+    const d = this.density('scribe');
+    if (d <= 0.5 || !this.modelSettings.narratorEnabled || !this.storySet || this.holdStory || this.paused) return;
+    if (this.villageLifeRunning || this.prologueRunning) return;
+    const every = (240 - 190 * (d - 0.5) * 2) * 1000;
+    if (this.simTimeMs - this.lastNarrationSimMs < every) return;
+    if ([...this.runtimes.values()].some((rt) => rt.activeConversationId)) return;
+    this.villageLifeRunning = true;
+    this.lastNarrationSimMs = this.simTimeMs;
+    void (async () => {
+      try {
+        const conv = this.getOrCreateHumanConversation('narrator');
+        const res = await this.mind.generateNarratorReply({
+          world: this.world,
+          cast: this.castPronouns(),
+          prompt:
+            'Tell a quiet moment of everyday village life, right now, in one or two sentences: what people are doing, the light, the sounds, the work of their hands. No dialogue, nothing dramatic.',
+          sceneContext: this.buildSceneContext(),
+          history: [],
+          settings: this.modelSettings,
+        });
+        const text = parseDialogueAndNarration(res.text, this.modelSettings.narratorName.trim() || 'Scribe').display.trim();
+        if (text) await this.emitNarrationTurn(conv, text, true, undefined, res.source);
+      } catch {
+        // A moment that cannot be told is simply not told.
+      } finally {
+        this.villageLifeRunning = false;
+      }
+    })();
+  }
+
   private runAutonomousDecisions() {
     const now = this.now();
     const runtimesList = [...this.runtimes.values()];
     this.maybeTellPrologue();
+    this.maybeTellVillageLife();
+    const talk = this.density('talk');
+    const gap = 10500 * this.talkGap();
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
-    if (this.modelSettings.autoConverse && !this.holdStory) {
+    if (this.modelSettings.autoConverse && !this.holdStory && talk > 0) {
       for (let i = 0; i < runtimesList.length; i++) {
         const a = runtimesList[i];
         if (
@@ -1522,7 +1584,7 @@ export class VillageSimulation {
           continue;
         }
         const lastThinkSim = this.lastThinkSimMs.get(a.id) ?? -9999;
-        if (this.simTimeMs - lastThinkSim < 10500 || now - a.lastThinkAt < 3500) continue;
+        if (this.simTimeMs - lastThinkSim < gap || now - a.lastThinkAt < 3500) continue;
 
         for (let j = i + 1; j < runtimesList.length; j++) {
           const b = runtimesList[j];
@@ -1537,10 +1599,10 @@ export class VillageSimulation {
             continue;
           }
           const bThinkSim = this.lastThinkSimMs.get(b.id) ?? -9999;
-          if (this.simTimeMs - bThinkSim < 10500 || now - b.lastThinkAt < 3500) continue;
+          if (this.simTimeMs - bThinkSim < gap || now - b.lastThinkAt < 3500) continue;
 
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
-          if (dist <= 3.8 && this.rng() < 0.65) {
+          if (dist <= 3.8 && this.rng() < 0.65 * Math.min(1, talk * 2)) {
             this.lastThinkSimMs.set(a.id, this.simTimeMs);
             this.lastThinkSimMs.set(b.id, this.simTimeMs);
             this.startAutonomousConversation(a.id, b.id);
@@ -1855,6 +1917,7 @@ export class VillageSimulation {
   ): Promise<void> {
     const clean = text.trim();
     if (!clean) return;
+    this.lastNarrationSimMs = this.simTimeMs;
     this.noticeWellWater(clean);
     this.pushConversationMessage(conv, {
       id: `msg-nar-${this.now()}-${this.rng().toString(36).slice(2, 6)}`,
@@ -1932,7 +1995,7 @@ export class VillageSimulation {
       const hearThoughts = eavesdropEnabled && this.modelSettings.eavesdropThoughts;
       const landmarkName = this.getNearestLandmarkName((rtA.x + rtB.x) / 2, (rtA.y + rtB.y) / 2);
       await this.whenRunning();
-      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet) {
+      if (this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet && this.scribeFrames()) {
         const introBeat = await this.mind.generateSceneBeat({
         world: this.world,
         cast: this.castPronouns(),
@@ -1956,11 +2019,12 @@ export class VillageSimulation {
         await this.paceLine(introBeat, beatStartedSimMs);
       }
 
-      const turns: Array<[VillagerConfig, VillagerRuntime, VillagerConfig]> = [
-        [cfgA, rtA, cfgB],
-        [cfgB, rtB, cfgA],
-        [cfgA, rtA, cfgB],
-      ];
+      // Two lines when the village is quiet, three as usual, four when it is talkative.
+      const talk = this.density('talk');
+      const lineCount = talk < 0.25 ? 2 : talk > 0.75 ? 4 : 3;
+      const turns: Array<[VillagerConfig, VillagerRuntime, VillagerConfig]> = Array.from({ length: lineCount }, (_, i) =>
+        i % 2 === 0 ? [cfgA, rtA, cfgB] : [cfgB, rtB, cfgA],
+      );
 
       let calledAway = false;
       for (const [speakerCfg, speakerRt, partnerCfg] of turns) {
@@ -2036,7 +2100,7 @@ export class VillageSimulation {
       });
       this.appendWorldEvent(rtB, bSummary);
 
-      if (!calledAway && this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet) {
+      if (!calledAway && this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet && this.scribeFrames()) {
         const closing = await this.mind.generateSceneBeat({
         world: this.world,
         cast: this.castPronouns(),
@@ -2211,6 +2275,7 @@ export class VillageSimulation {
     if (dist > 2.2) return;
     if (
       this.modelSettings.autoConverse &&
+      this.density('talk') > 0 &&
       !rt.activeConversationId &&
       !target.activeConversationId &&
       rt.state !== 'thinking' &&
@@ -2578,7 +2643,7 @@ export class VillageSimulation {
         }
       }
 
-      if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled) {
+      if (parsed.narration.length > 0 && this.modelSettings.narratorEnabled && this.density('scribe') > 0) {
         for (const beat of parsed.narration) {
           const actionText = `${speakerCfg.name} ${beat.charAt(0).toLowerCase()}${beat.slice(1)}`;
           await this.emitNarrationTurn(

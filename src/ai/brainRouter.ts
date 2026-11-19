@@ -1,4 +1,6 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
+import type { StoryLine } from '../music/listener';
+import { parseScore, scorePrompt, type ScribeScore } from '../music/scribeScore';
 import { shortName } from '../engine/names';
 import { ttsInstruction } from './voiceAccent';
 import { kokoroEngine, kokoroVoiceFor } from './kokoroEngine';
@@ -1058,6 +1060,27 @@ class BrainRouter {
       durationMs,
     });
     return { text: reply, source: 'story-sim', durationMs };
+  }
+
+  /**
+   * The Scribe's ear for music: one short line naming the mood and intensity of the moment,
+   * for the village band (`src/music/scribeScore.ts`). Only uses a model that is already
+   * loaded or a configured API; null when none answers or the answer names no mood.
+   */
+  async scoreMusic(params: { lines: StoryLine[]; world?: WorldContext; settings: ModelSettings }): Promise<ScribeScore | null> {
+    if (params.settings.inferenceMode === 'story-sim') return null;
+    const narratorName = params.settings.narratorName.trim() || 'Scribe';
+    const world = params.world ?? GENERIC_WORLD_CONTEXT;
+    try {
+      const routed = await this.runTextBrain(
+        scorePrompt({ lines: params.lines, narratorName, placeName: placeName(world), premise: params.world?.premise }),
+        params.settings,
+        { maxTokens: 24, temperature: 0.3, logLabel: `Music (${narratorName}'s ear)`, allowOmniFallback: true },
+      );
+      return routed ? parseScore(routed.text) : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

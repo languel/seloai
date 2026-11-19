@@ -47,6 +47,7 @@ export type GlyphName =
   | 'dice'
   | 'walkable'
   | 'story'
+  | 'music'
   | 'rotate'
   | 'layers'
   | 'eye'
@@ -293,6 +294,16 @@ const GLYPHS: Record<GlyphName, () => Shape[]> = {
     knot([-1.5, 0], 1.3, 'primary'),
     knot([2, 0.5], 1, 'accent'),
     line(quadCurve([-1.5, 0], [0.2, -2], [2, 0.5], 5), 'secondary', 0.6),
+  ],
+  // A kaval: a long flute held aslant, its finger holes stitched as knots, a curl of song.
+  music: () => [
+    line([[-6.5, 6.5], [4.5, -4.5]], 'dark', 1.7),
+    line([[4.5, -4.5], [5.6, -5.6]], 'secondary', 1.2),
+    knot([-3.4, 3.4], 0.75, 'primary'),
+    knot([-1.4, 1.4], 0.75, 'primary'),
+    knot([0.6, -0.6], 0.75, 'primary'),
+    line(arc([4, 1.5], 2.2, -Math.PI * 0.35, Math.PI * 0.35, 8), 'accent', 0.8),
+    line(arc([4, 1.5], 3.9, -Math.PI * 0.3, Math.PI * 0.3, 10), 'gold', 0.8),
   ],
   // A square turning about its centre, with an arrow round it.
   rotate: () => [

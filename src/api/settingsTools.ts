@@ -93,6 +93,7 @@ const SPECS: readonly Spec[] = [
     { id: 'chronicler', label: 'Chronicler' },
   ]),
   bool('narrator_tells_events', 'narrator', 'model', 'narrateEvents', 'The narrator also tells scenes as they open and close.'),
+  num('scribe_density', 'narrator', 'model', 'scribeDensity', 'How much the narrator tells, 0 to 1 (0.5 is usual): lower frames fewer scenes; higher also tells quiet moments of village life between conversations; 0 is silent.', 0, 1),
   choice('narrator_voice_gender', 'narrator', 'model', 'narratorVoice.gender', "The narrator's voice: male or female.", [
     { id: 'male', label: 'Male' },
     { id: 'female', label: 'Female' },
@@ -111,6 +112,7 @@ const SPECS: readonly Spec[] = [
   bool('speak_thinking', 'sound', 'model', 'speakReasoning', 'Speak that thinking aloud (off is usual).'),
   // The story and who is in it
   bool('characters_talk', 'story', 'model', 'autoConverse', 'Characters strike up conversations with each other on their own.'),
+  num('talk_density', 'story', 'model', 'talkDensity', 'How much the characters talk among themselves, 0 to 1 (0.5 is usual): how soon and how readily they start a conversation, and how long it runs; 0 and they go about their business.', 0, 1),
   text('my_name', 'story', 'model', 'playerName', "What the Traveler (you) are called; empty keeps the world's own name.", 40),
   text('story_language', 'story', 'model', 'worldLanguage', 'The language every line is written and spoken in (English, Greek…).', 30),
 ];
