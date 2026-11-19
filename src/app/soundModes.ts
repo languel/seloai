@@ -25,7 +25,7 @@ export interface SoundMode {
 }
 
 export const SOUND_MODES: SoundMode[] = [
-  { id: 'story', label: 'Story', about: 'The usual mix: conversations, the Scribe framing scenes, music underneath.', talk: 0.5, scribe: 0.5, pace: 0.5, music: true, amounts: { ambience: 0.6, between: 0.6, song: 0.5 }, levels: { voices: 1, narrator: 1, music: 0.8 } },
+  { id: 'story', label: 'Story', about: 'The usual mix: conversations, the Scribe framing scenes, music always underneath and answering the lines.', talk: 0.57, scribe: 0.67, pace: 0.28, music: true, amounts: { ambience: 0.97, between: 1, song: 0.71 }, levels: { voices: 0.75, narrator: 0.78, music: 0.59 } },
   { id: 'chatty', label: 'Chatty', about: 'The characters talk a lot; the Scribe and the music step back.', talk: 0.9, scribe: 0.3, pace: 0.65, music: true, amounts: { ambience: 0.45, between: 0.35, song: 0.25 }, levels: { voices: 1, narrator: 0.9, music: 0.5 } },
   { id: 'chronicle', label: 'Chronicle', about: 'The Scribe leads, telling scenes and village life; fewer conversations.', talk: 0.3, scribe: 0.9, pace: 0.4, music: true, amounts: { ambience: 0.6, between: 0.8, song: 0.45 }, levels: { voices: 0.9, narrator: 1, music: 0.6 } },
   { id: 'village', label: 'Village life', about: 'People mostly go about their work; a word now and then, the Scribe noting the day, music.', talk: 0.12, scribe: 0.62, pace: 0.3, music: true, amounts: { ambience: 0.7, between: 0.5, song: 0.7 }, levels: { voices: 0.85, narrator: 0.9, music: 0.85 } },

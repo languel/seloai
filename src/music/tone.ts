@@ -44,11 +44,11 @@ export interface BandTone {
 }
 
 export const DEFAULT_TONE: BandTone = {
-  gaida: { level: 0.8, breath: 0.4, character: 0.5 },
-  drone: { level: 0.8, breath: 0.35, character: 0.5, voicing: 'tonic', movement: 0.4, beating: 0.3 },
-  kaval: { level: 0.8, breath: 0.5, character: 0.5 },
-  tapan: { level: 0.8, breath: 0.5, character: 0.5 },
-  ambience: { reverb: 0.4, room: 0.5, echo: 0.15 },
+  gaida: { level: 0.4, breath: 0.4, character: 0.5 },
+  drone: { level: 0.27, breath: 1, character: 0.5, voicing: 'open', movement: 1, beating: 0.91 },
+  kaval: { level: 0.8, breath: 0.78, character: 0.25 },
+  tapan: { level: 1, breath: 0.5, character: 0.56 },
+  ambience: { reverb: 0.48, room: 0.72, echo: 0.15 },
 };
 
 /** A few starting points for the whole band's sound. */

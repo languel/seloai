@@ -11,7 +11,7 @@
 export type Bus = 'voices' | 'narrator' | 'guide' | 'music';
 export type MixerChannel = Bus | 'master';
 
-const levels: Record<MixerChannel, number> = { voices: 1, narrator: 1, guide: 1, music: 0.8, master: 1 };
+const levels: Record<MixerChannel, number> = { voices: 0.75, narrator: 0.78, guide: 1, music: 0.59, master: 1 };
 const STORE = 'seloai.mixer';
 
 // Levels are remembered on this device.

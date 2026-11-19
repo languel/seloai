@@ -332,14 +332,46 @@ const BLOCKING_TERRAIN: ReadonlySet<Terrain> = new Set(['water', 'wall']);
  * their top row (so people pass behind a roof); trees only their trunk; flat things such
  * as fields, flowers and dancing grounds, and all ambient detail, block nothing.
  */
+/** Kinds that are solid buildings: always blocking, whatever an older base grid says. */
+const SOLID_KINDS = new Set(['house', 'well', 'hearth']);
+
+/**
+ * The cells a feature stands on, turned with it: a building rotated a quarter turn blocks the
+ * cells it covers on the cloth, not the ones it would cover upright.
+ */
 function blockedCells(f: SceneFeature): Array<[number, number]> {
+  const cells = uprightBlockedCells(f);
+  if (!f.angle || Math.abs(f.angle) < 1e-3) return cells;
+  const cx = f.x + f.w / 2;
+  const cy = f.y + f.h / 2;
+  const cos = Math.cos(f.angle);
+  const sin = Math.sin(f.angle);
+  const seen = new Set<string>();
+  const out: Array<[number, number]> = [];
+  for (const [x, y] of cells) {
+    const dx = x + 0.5 - cx;
+    const dy = y + 0.5 - cy;
+    const rx = Math.floor(cx + dx * cos - dy * sin);
+    const ry = Math.floor(cy + dx * sin + dy * cos);
+    const key = `${rx},${ry}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push([rx, ry]);
+  }
+  return out;
+}
+
+function uprightBlockedCells(f: SceneFeature): Array<[number, number]> {
   if (f.id?.startsWith('amb-')) return [];
   const cells: Array<[number, number]> = [];
   const rect = (x0: number, y0: number, w: number, h: number) => {
     for (let x = x0; x < x0 + w; x++) for (let y = y0; y < y0 + h; y++) cells.push([x, y]);
   };
   switch (f.kind) {
+    // Seen from above on the cloth, a house is all house, roof included: no walking across it.
     case 'house':
+      rect(f.x, f.y, f.w, f.h);
+      break;
     case 'well':
     case 'hearth':
     case 'pool':
@@ -407,6 +439,11 @@ export function walkabilityFor(baked: BakedScene): boolean[][] {
         if (!touched.has(cellKey(x, y)) && baseBlocked[x]?.[y] !== undefined) grid[x][y] = baseBlocked[x][y];
       }
     }
+    // Buildings stay solid even where the older grid left the ground open.
+    for (const f of model.features) {
+      if (!SOLID_KINDS.has(f.kind)) continue;
+      for (const [x, y] of blockedCells(f)) if (grid[x]?.[y] !== undefined) grid[x][y] = true;
+    }
   } else {
     closePockets(grid);
   }
@@ -471,4 +508,20 @@ export function mapFromScene(scene: WorldScene, name?: string): VillageMap {
     pointsOfInterest,
     scene,
   };
+}
+
+/**
+ * A saved world drawn from a scene, with its walkability worked out again from that scene, so
+ * worlds saved before an improvement (houses made solid, turned buildings) get it on load. Only
+ * the walkable grid changes; a map without a scene, or one that cannot be rebuilt, is returned as is.
+ */
+export function withSceneWalkability(map: VillageMap): VillageMap {
+  if (!map.scene) return map;
+  try {
+    const fresh = mapFromScene(map.scene, map.name);
+    if (fresh.width !== map.width || fresh.height !== map.height) return map;
+    return { ...map, collisionGrid: fresh.collisionGrid };
+  } catch {
+    return map;
+  }
 }

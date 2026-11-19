@@ -81,13 +81,33 @@ describe('worlds authored as scenes', () => {
     expect(map.scene!.edits).toEqual([]);
   });
 
-  it('turns a tile map into a frozen scene that keeps its walkability', () => {
+  it('turns a tile map into a frozen scene that keeps its walkability, buildings always solid', () => {
     for (const generator of SCENE_GENERATORS.filter((g) => g.id === 'zmeyovo' || g.id === 'shevitsa')) {
       const map = mapFromScene({ recipe: { generator: generator.id, params: {}, seed: 0 }, edits: [] });
       const world = generator.generate({}, 0);
-      expect(map.collisionGrid).toEqual(world.blocked);
+      const solid = new Set<string>();
+      for (const f of world.model.features) {
+        if (f.kind !== 'house' && f.kind !== 'well' && f.kind !== 'hearth') continue;
+        for (let x = Math.floor(f.x) - 1; x <= Math.ceil(f.x + f.w); x++) for (let y = Math.floor(f.y) - 1; y <= Math.ceil(f.y + f.h); y++) solid.add(`${x},${y}`);
+      }
+      // Everywhere away from buildings the old grid is kept exactly; buildings are never walkable.
+      for (let x = 0; x < map.width; x++) {
+        for (let y = 0; y < map.height; y++) {
+          if (solid.has(`${x},${y}`)) continue;
+          expect(map.collisionGrid![x][y], `${generator.id} ${x},${y}`).toBe(world.blocked![x][y]);
+        }
+      }
+      for (const f of world.model.features.filter((f) => f.kind === 'house' && !f.angle)) {
+        for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y; y < f.y + f.h; y++) expect(map.collisionGrid![x][y], `house ${f.id} ${x},${y}`).toBe(true);
+      }
       expect(map.pointsOfInterest!.length).toBe(world.model.landmarks.length);
     }
+  });
+
+  it('a turned building blocks the cells it covers turned', () => {
+    const map = mapFromScene({ recipe: { generator: 'zmeyovo', params: {}, seed: 0 }, edits: [] });
+    // The house at 7,17 lies a quarter turn round: its 3x3 square is still the 3x3 it covers.
+    for (let x = 7; x < 10; x++) for (let y = 17; y < 20; y++) expect(map.collisionGrid![x][y], `${x},${y}`).toBe(true);
   });
 
   it('refuses edits an agent could get wrong, with a usable message', () => {

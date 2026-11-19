@@ -39,7 +39,7 @@ export interface MusicAmounts {
   song: number;
 }
 
-export const DEFAULT_AMOUNTS: MusicAmounts = { ambience: 0.6, between: 0.6, song: 0.5 };
+export const DEFAULT_AMOUNTS: MusicAmounts = { ambience: 0.97, between: 1, song: 0.71 };
 
 /** Intensity per second the music may move towards its cue. */
 const EASE = 0.028;

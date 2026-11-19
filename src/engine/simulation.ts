@@ -191,6 +191,9 @@ const DEFAULT_MAX_TIMELINE_FRAMES = 450;
 const REST_AFTER_TALK_MS = 95000;
 /** How soon someone may first talk after the story begins or is reset (usual pace), world ms. */
 const FIRST_TALK_MS = 15000;
+/** While a character's plan is awaited, they stroll nearby after this long, and again this often (world ms). */
+const STROLL_AFTER_MS = 1500;
+const STROLL_EVERY_MS = 6000;
 /** A breath between two lines of a conversation (usual talk density), world ms. */
 const LINE_BEAT_MS = 1300;
 /** Two people talk only side by side; from up to this far apart one walks over first. */
@@ -264,6 +267,11 @@ export class VillageSimulation {
   private listeners = new Set<() => void>();
   private aiAccumulator = 0;
   private planningVillagers = new Set<string>();
+  /** When each character's plan was asked for, and when they last strolled while waiting for it. */
+  private planningSince = new Map<string, number>();
+  private lastStrollSimMs = new Map<string, number>();
+  /** Characters on a stroll, whose plan may still take over when it comes. */
+  private strolling = new Set<string>();
   private lastNotifyAt = 0;
   private lastMoveSimMs = new Map<string, number>();
   private lastThinkSimMs = new Map<string, number>();
@@ -1690,7 +1698,14 @@ export class VillageSimulation {
     // 2. Westworld-style ongoing world-session motivation -> physical pathing
     for (const rt of runtimesList) {
       if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0 || rt.errand) continue;
-      if (this.planningVillagers.has(rt.id)) continue;
+      if (this.planningVillagers.has(rt.id)) {
+        // The mind is busy with the story's own lines and voices: go about the day meanwhile,
+        // so the village is alive from the first moment rather than waiting to be told.
+        const since = this.planningSince.get(rt.id) ?? this.simTimeMs;
+        const lastStroll = this.lastStrollSimMs.get(rt.id) ?? -Infinity;
+        if (this.simTimeMs - since > STROLL_AFTER_MS && this.simTimeMs - lastStroll > STROLL_EVERY_MS) this.strollNearby(rt);
+        continue;
+      }
       const lastMoveSim = this.lastMoveSimMs.get(rt.id) ?? -9999;
       if (this.simTimeMs - lastMoveSim < 4200 + this.rng() * 4400) continue;
 
@@ -1698,11 +1713,27 @@ export class VillageSimulation {
       if (!cfg) continue;
 
       this.planningVillagers.add(rt.id);
+      this.planningSince.set(rt.id, this.simTimeMs);
       this.lastMoveSimMs.set(rt.id, this.simTimeMs);
       void this.planNextVillagerAction(cfg, rt).finally(() => {
         this.planningVillagers.delete(rt.id);
       });
     }
+  }
+
+  /** A short walk to open ground nearby, keeping what they mean to do: life going on. */
+  private strollNearby(rt: VillagerRuntime) {
+    this.lastStrollSimMs.set(rt.id, this.simTimeMs);
+    const tx = Math.round(rt.x + (this.rng() > 0.5 ? 1 : -1) * (2 + this.rng() * 5));
+    const ty = Math.round(rt.y + (this.rng() > 0.5 ? 1 : -1) * (1 + this.rng() * 4));
+    const goal = findNearestWalkableTile(this.map, tx, ty);
+    if (goal.x === Math.round(rt.x) && goal.y === Math.round(rt.y)) return;
+    const path = findPath(this.map, { x: rt.x, y: rt.y }, goal, this.getOccupiedTileSet(rt.id));
+    if (path.length === 0) return;
+    rt.path = path;
+    rt.state = 'walking';
+    rt.lastMoveAt = this.now();
+    this.strolling.add(rt.id);
   }
 
   setFocalWorldline(targetId: string | 'traveler') {
@@ -1750,10 +1781,12 @@ export class VillageSimulation {
       settings: this.modelSettings,
     });
 
-    if (rt.activeConversationId || rt.state !== 'idle') {
+    // A stroll while waiting gives way to the plan; anything else (a conversation) keeps them.
+    if (rt.activeConversationId || (rt.state !== 'idle' && !(rt.state === 'walking' && this.strolling.has(rt.id)))) {
       rt.lastMoveAt = this.now();
       return;
     }
+    this.strolling.delete(rt.id);
 
     let safeGoal: { x: number; y: number } | null = null;
     if (decision.action === 'talk' && decision.targetName) {

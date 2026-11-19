@@ -1,4 +1,5 @@
 import { storyPackFromMarkdown } from '../world/storyText';
+import { withSceneWalkability } from '../world/worldScene';
 import { PLAYER_MODE } from '../app/playerMode';
 import { normalizeWorldContext } from '../world/worldContext';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, withBundledTileMeanings } from '../world/packs';
@@ -165,7 +166,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
           : DEFAULT_MODEL_SETTINGS.proximityRadiusTiles;
       const oldVoices = (stored.voicesVersion ?? 1) < CAST_VOICES_VERSION;
       return {
-        map: withBundledTileMeanings(stored.map),
+        map: withSceneWalkability(withBundledTileMeanings(stored.map)),
         villagers: stored.villagers
           .map(ensureVillagerSprite)
           .map(withPackFigure)
@@ -470,7 +471,7 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
     if (typeof data.story?.openingDirective === 'string' && data.story.openingDirective.trim() && !pack.world!.opening) {
       pack.world = { ...pack.world!, opening: data.story.openingDirective };
     }
-    if (data.map && Array.isArray(data.map.bgTiles) && typeof data.map.width === 'number') pack.map = withBundledTileMeanings(data.map as VillageMap);
+    if (data.map && Array.isArray(data.map.bgTiles) && typeof data.map.width === 'number') pack.map = withSceneWalkability(withBundledTileMeanings(data.map as VillageMap));
     if (Array.isArray(data.cast) && data.cast.length > 0) pack.villagers = (data.cast as VillagerConfig[]).map(ensureVillagerSprite);
     if (typeof data.story?.focalCharacterId === 'string') pack.focalWorldlineId = data.story.focalCharacterId;
     return pack;
@@ -480,7 +481,7 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
   if (Array.isArray(data.bgTiles) && typeof data.width === 'number') {
     return {
       format: 'seloai-level-v1',
-      map: withBundledTileMeanings(data as VillageMap),
+      map: withSceneWalkability(withBundledTileMeanings(data as VillageMap)),
     };
   }
 
@@ -489,7 +490,7 @@ export function parseImportedVillageJson(raw: string): ParsedImportBundle {
   };
 
   if (data.map && Array.isArray(data.map.bgTiles) && typeof data.map.width === 'number') {
-    result.map = withBundledTileMeanings(data.map as VillageMap);
+    result.map = withSceneWalkability(withBundledTileMeanings(data.map as VillageMap));
   }
   if (Array.isArray(data.villagers) && data.villagers.length > 0) {
     result.villagers = (data.villagers as VillagerConfig[]).map(ensureVillagerSprite);
