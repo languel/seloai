@@ -85,8 +85,9 @@ import {
   SPEECH_BUBBLE_LINE_H_PX,
   type DeferredCanvasDraw,
 } from '../engine/renderer';
-import type { VillageSimulation } from '../engine/simulation';
+import { estimateLineDurationMs, type VillageSimulation } from '../engine/simulation';
 import { villageMusic } from '../music/villageMusic';
+import { getAudioDebugStats } from '../ai/audioPipeline';
 import type { StoryLine } from '../music/listener';
 import type {
   ModelSettings,
@@ -595,9 +596,32 @@ export const VillageView: React.FC<VillageViewProps> = ({
         backdrop: sim.world?.premise,
       });
     }, 1000);
+    // Whether a line is being said right now, checked often so the band can answer each line:
+    // a voice playing (any voice, the guide's too), a character speaking, or a line still
+    // within its reading time.
+    const speechTimer = window.setInterval(() => {
+      if (!villageMusic.enabled) return;
+      let speaking =
+        Boolean(brainRouter.activeSpeechInfo) ||
+        getAudioDebugStats().activeSourcesCount > 0 ||
+        (typeof window.speechSynthesis !== 'undefined' && window.speechSynthesis.speaking);
+      if (!speaking) for (const rt of sim.runtimes.values()) if (rt.state === 'speaking') speaking = true;
+      if (!speaking) {
+        const now = Date.now();
+        for (const conv of sim.conversations) {
+          const m = conv.messages[conv.messages.length - 1];
+          if (m && m.kind !== 'thought' && now - m.timestamp < estimateLineDurationMs(m.text) / Math.max(0.25, Math.abs(sim.speedMultiplier) || 1)) {
+            speaking = true;
+            break;
+          }
+        }
+      }
+      villageMusic.setSpeaking(speaking && !sim.paused);
+    }, 150);
     return () => {
       window.removeEventListener('pointerdown', start);
       window.clearInterval(timer);
+      window.clearInterval(speechTimer);
       villageMusic.setScorer(null);
     };
   }, [sim]);

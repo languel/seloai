@@ -50,7 +50,7 @@ export interface PhrasePlan {
   mode: ModeId;
   dance: DanceId;
   intensity: number;
-  texture: 'drone' | 'free' | 'dance';
+  texture: 'drone' | 'free' | 'dance' | 'motif';
   /** The gaida's chanter sounds through this phrase. */
   gaidaOn: boolean;
   gaida: NoteEvent[];
@@ -123,6 +123,53 @@ export class Composer {
     if (intensity < DRONE_BELOW && !cue.dance) return this.dronePhrase(mood, intensity);
     if (!metered) return this.freePhrase(mood, intensity);
     return this.dancePhrase(cue, mood, intensity, prof.mode);
+  }
+
+  /**
+   * A motif for the gap between two lines of the story, the way a teller's accompanist fills
+   * the breath before the next sentence: a few notes from the tune being played (or a short
+   * free phrase when calm) that swell in and fade away, never longer than `maxSeconds`. The
+   * kaval carries it; the gaida only when the scene is wild and it is let lead. The tapan gives
+   * at most one soft stroke.
+   */
+  motif(cue: MusicCue, intensityNow: number, maxSeconds = 5): PhrasePlan {
+    const intensity = clamp01(intensityNow);
+    const rng = this.rng;
+    const metered = cue.dance !== 'free' && intensity >= METERED_FROM;
+    const base = metered ? this.dancePhrase(cue, cue.mood, intensity, MOODS[cue.mood].mode) : this.freePhrase(cue.mood, Math.min(intensity, METERED_FROM - 0.02));
+    const gaidaLeads = cue.lead === 'gaida' || (cue.lead !== 'kaval' && intensity > 0.75);
+    const source = base.gaida.length ? base.gaida : base.kaval;
+    // A fragment: from the start, cut at a note boundary near the limit.
+    const notes: NoteEvent[] = [];
+    for (const n of source) {
+      if (n.t + n.dur > maxSeconds && notes.length >= 3) break;
+      notes.push({ ...n });
+      if (n.t + n.dur > maxSeconds) break;
+    }
+    // The fragment ends on its last note held a little; velocities swell and fade.
+    const last = notes[notes.length - 1];
+    if (last) {
+      last.dur = Math.max(last.dur, 0.6 + rng() * 0.8);
+      last.vibrato = Math.max(last.vibrato ?? 0, 0.6);
+    }
+    notes.forEach((n, i) => {
+      const p = notes.length > 1 ? i / (notes.length - 1) : 0.5;
+      n.vel *= 0.45 + 0.55 * Math.sin(Math.PI * (0.15 + 0.7 * p));
+      if (i === 0) n.tongued = true;
+    });
+    const end = last ? last.t + last.dur : 1;
+    const strokes = base.tapan.length && rng() < MOODS[cue.mood].drums * 0.6 ? [{ t: 0, kind: 'dum' as const, vel: 0.25 + 0.3 * intensity }] : [];
+    return {
+      ...base,
+      texture: 'motif',
+      length: end + 0.4,
+      gaidaOn: gaidaLeads,
+      gaida: gaidaLeads ? notes.map((n) => ({ ...n, vibrato: 0 })) : [],
+      kaval: gaidaLeads ? [] : notes,
+      tapan: strokes,
+      drone: 0.4,
+      label: `motif · ${base.mode} · ${gaidaLeads ? 'gaida' : 'kaval'}`,
+    };
   }
 
   /** The bare drone with, now and then, a long low kaval tone and (in dark moods) a far-off drum. */

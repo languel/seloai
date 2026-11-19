@@ -143,7 +143,7 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
       tone: {
         type: 'object',
         description:
-          'The band\'s sound; give only what changes. gaida, kaval, tapan and drone each take level, breath (air and noise) and character (0 a clean electronic synth, 0.5 usual, 1 gritty), all 0 to 1; drone also takes voicing (tonic, fifth, octave, open), movement and beating; ambience takes reverb, room (0 a small house to 1 a gorge) and echo. Or preset: village, synth, gritty or mountain.',
+          'The band\'s sound; give only what changes. gaida, kaval, tapan and drone each take level, breath (air and noise) and character (0 a clean electronic synth, 0.5 usual, 1 gritty), all 0 to 1; drone also takes voicing (tonic, fifth, octave, open), movement and beating; ambience takes reverb, room (0 a small house to 1 a gorge) and echo. Or preset: village, synthfolk, gritty or mountain.',
       },
     }),
   },
@@ -693,6 +693,7 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
         why: st.cue.reason,
         story_alone: `${st.heard.mood} at ${st.heard.intensity}`,
         listening: st.listening,
+        speaking: st.speaking,
         ...(st.scribe ? { scribe_heard: `${st.scribe.mood} ${st.scribe.intensity}${st.scribe.reason ? ` — ${st.scribe.reason}` : ''}` } : {}),
         density: Math.round(music.density * 100) / 100,
         tone: music.tone,

@@ -170,3 +170,26 @@ describe('the band tone', () => {
     expect(Math.max(...gritty)).toBeLessThanOrEqual(1.0001);
   });
 });
+
+describe('storyteller motifs', () => {
+  it('fills a gap with a short motif that swells and fades, on the kaval when calm', () => {
+    const c = new Composer(4);
+    for (const intensity of [0.2, 0.5]) {
+      const m = c.motif({ mood: 'pastoral', intensity }, intensity, 5);
+      expect(m.texture).toBe('motif');
+      expect(m.gaida).toEqual([]);
+      expect(m.kaval.length).toBeGreaterThan(0);
+      const end = Math.max(...m.kaval.map((n) => n.t + n.dur));
+      expect(end).toBeLessThan(5 + 2.5);
+      expect(m.tapan.length).toBeLessThanOrEqual(1);
+      const vels = m.kaval.map((n) => n.vel);
+      if (vels.length >= 3) expect(Math.max(...vels.slice(1, -1))).toBeGreaterThanOrEqual(vels[0]);
+    }
+  });
+
+  it('lets the gaida carry a motif only when the scene is wild or it is told to', () => {
+    const c = new Composer(4);
+    expect(c.motif({ mood: 'festive', intensity: 0.9 }, 0.9).gaidaOn).toBe(true);
+    expect(c.motif({ mood: 'festive', intensity: 0.9, lead: 'kaval' }, 0.9).gaidaOn).toBe(false);
+  });
+});

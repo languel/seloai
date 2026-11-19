@@ -22,7 +22,7 @@ const PREF = 'seloai.music.on';
 const TONE_PREF = 'seloai.music.tone';
 const DENSITY_PREF = 'seloai.music.density';
 /** How far the music steps back while someone speaks. */
-const DUCK = 0.5;
+const DUCK = 0.8;
 
 export interface MusicDirection extends Partial<MusicCue> {
   /** Seconds the direction holds; left out, until it is released or replaced. */
@@ -44,6 +44,8 @@ export interface MusicStatus {
   listening: 'scribe' | 'words';
   /** The Scribe's latest reading, while it is fresh. */
   scribe: ScribeScore | null;
+  /** Whether a line is being said, so the band is holding back. */
+  speaking: boolean;
 }
 
 /** Asks a model what the latest lines feel like (the app wires in the Scribe's). */
@@ -110,6 +112,7 @@ class VillageMusic {
         density: this.densityNow,
       });
       this.player.setCue(this.cue());
+      this.player.setSpeaking(this.speakingNow);
       this.player.onPhrase(() => this.changed());
     }
     return this.player;
@@ -211,6 +214,16 @@ class VillageMusic {
   }
   private words: MusicCue = this.heard;
 
+  /**
+   * Someone has begun or stopped saying a line: the band holds back under it and fills the
+   * gap after it (see `MusicPlayer.setSpeaking`). The village view calls this as it happens.
+   */
+  setSpeaking(speaking: boolean) {
+    this.speakingNow = speaking;
+    this.player?.setSpeaking(speaking);
+  }
+  private speakingNow = false;
+
   /** Forget the story so far (a new story). */
   resetStory() {
     this.listener.reset();
@@ -226,10 +239,11 @@ class VillageMusic {
       cue,
       heard: this.heard,
       intensity: this.player?.intensity ?? cue.intensity,
-      playing: this.player?.playing ? (this.player.current?.label ?? 'starting') : null,
+      playing: this.player?.playing ? this.player.activity || 'starting' : null,
       direction: this.dir,
       listening: this.useScribe && this.scorer ? 'scribe' : 'words',
       scribe: this.useScribe ? this.ear.current(Date.now() / 1000) : null,
+      speaking: this.speakingNow,
     };
   }
 }

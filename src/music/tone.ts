@@ -54,8 +54,8 @@ export const DEFAULT_TONE: BandTone = {
 /** A few starting points for the whole band's sound. */
 export const TONE_PRESETS: Record<string, { label: string; tone: BandTone }> = {
   village: { label: 'Village', tone: DEFAULT_TONE },
-  synth: {
-    label: 'Synth (Vangelis)',
+  synthfolk: {
+    label: 'Synthfolk',
     tone: {
       gaida: { level: 0.75, breath: 0.1, character: 0.12 },
       drone: { level: 0.85, breath: 0.1, character: 0.1, voicing: 'open', movement: 0.75, beating: 0.55 },

@@ -107,9 +107,33 @@ export class Tapan {
     smooth(this.trim.gain, t.level / 0.8, this.ctx);
   }
 
+  /** Hits scheduled but perhaps not yet heard, so they can be called off. */
+  private pending: Array<{ at: number; sources: AudioScheduledSourceNode[] }> = [];
+  private collecting: AudioScheduledSourceNode[] | null = null;
+
   hit(ev: HitEvent, at: number) {
+    this.collecting = [];
     if (ev.kind === 'dum') this.dum(at, ev.vel);
     else this.tek(at, ev.vel);
+    const now = this.ctx.currentTime;
+    this.pending = this.pending.filter((p) => p.at > now - 1);
+    this.pending.push({ at, sources: this.collecting });
+    this.collecting = null;
+  }
+
+  /** Calls off every hit from `at` on. */
+  cancelFrom(at: number) {
+    for (const p of this.pending) {
+      if (p.at < at) continue;
+      for (const s of p.sources) {
+        try {
+          s.stop();
+        } catch {
+          // already stopped
+        }
+      }
+    }
+    this.pending = this.pending.filter((p) => p.at < at);
   }
 
   private env(at: number, peak: number, attack: number, decay: number): GainNode {
@@ -125,7 +149,16 @@ export class Tapan {
     const src = this.ctx.createBufferSource();
     src.buffer = this.noise;
     src.start(at, Math.random() * 1.5, dur);
+    this.collecting?.push(src);
     return src;
+  }
+
+  private osc(at: number, until: number) {
+    const o = this.ctx.createOscillator();
+    o.start(at);
+    o.stop(until);
+    this.collecting?.push(o);
+    return o;
   }
 
   private dum(at: number, vel: number) {
@@ -134,19 +167,15 @@ export class Tapan {
     const noiseMul = this.tone.breath * 2 * (1 - 0.75 * synth);
     // At the electronic end the drum is a long, deep sweep, like a drum machine's.
     const decay = 0.45 + 0.35 * vel + synth * 0.6;
-    const o = ctx.createOscillator();
+    const o = this.osc(at, at + decay + 0.05);
     o.frequency.setValueAtTime(92 + 30 * vel + synth * 110, at);
     o.frequency.exponentialRampToValueAtTime(54 - synth * 6, at + 0.09 + synth * 0.08);
     o.frequency.exponentialRampToValueAtTime(49 - synth * 6, at + decay);
     o.connect(this.env(at, 0.95 * vel, 0.003, decay));
-    o.start(at);
-    o.stop(at + decay + 0.05);
-    const o2 = ctx.createOscillator();
+    const o2 = this.osc(at, at + 0.3);
     o2.frequency.setValueAtTime(150, at);
     o2.frequency.exponentialRampToValueAtTime(88, at + 0.12);
     o2.connect(this.env(at, 0.28 * vel * (1 - synth * 0.8), 0.002, 0.2));
-    o2.start(at);
-    o2.stop(at + 0.3);
     if (noiseMul > 0.01) {
       const thud = this.noiseSource(at, 0.12);
       const lp = ctx.createBiquadFilter();
@@ -178,24 +207,21 @@ export class Tapan {
       src.connect(hp).connect(bp).connect(this.env(at, 0.55 * vel * noiseMul, 0.001, 0.06 + 0.03 * vel));
     }
     // The rod's click; at the electronic end a bright blip.
-    const click = ctx.createOscillator();
+    const click = this.osc(at, at + 0.06);
     click.type = synth > 0.3 ? 'square' : 'triangle';
     click.frequency.value = synth > 0.3 ? 2600 : 1750;
     click.connect(this.env(at, (0.07 + synth * 0.12) * vel, 0.0008, 0.014 + synth * 0.03));
-    click.start(at);
-    click.stop(at + 0.06);
-    const shell = ctx.createOscillator();
+    const shell = this.osc(at, at + 0.09);
     shell.frequency.setValueAtTime(240, at);
     shell.frequency.exponentialRampToValueAtTime(190, at + 0.06);
     shell.connect(this.env(at, 0.13 * vel, 0.001, 0.06));
-    shell.start(at);
-    shell.stop(at + 0.09);
   }
 }
 
 // ---------------------------------------------------------------------------------------------
 
-const GAIDA_PEAK = 0.16;
+/** The chanter is loud and piercing by nature: it sits well below the kaval. */
+const GAIDA_PEAK = 0.065;
 const DRONE_PEAK = 0.11;
 
 export class Gaida {
@@ -427,6 +453,18 @@ export class Gaida {
     }
   }
 
+  /** Lets the chanter fall silent from `at` over `fade` seconds, dropping what was to come. */
+  fadeChanter(at: number, fade = 0.4) {
+    const f = this.chanter.frequency;
+    const g = this.chanterGain.gain;
+    f.cancelScheduledValues(at);
+    g.cancelScheduledValues(at);
+    f.setValueAtTime(this.hz, at);
+    g.setValueAtTime(this.on ? GAIDA_PEAK * 0.9 : 0, at);
+    g.linearRampToValueAtTime(0, at + fade);
+    this.on = false;
+  }
+
   dispose() {
     for (const o of this.sources) {
       try {
@@ -529,6 +567,20 @@ export class Kaval {
     // Electronic: a pure, rounded tone; usual and up: the whole tube.
     smooth(this.toneLp.frequency, lin(1400, 9000, Math.min(1, t.character * 1.6)), this.ctx);
     smooth(this.trim.gain, t.level / 0.8, this.ctx);
+  }
+
+  /** Fades the kaval out from `at` over `fade` seconds, dropping the notes still to come. */
+  fadeOut(at: number, fade = 0.4) {
+    const params = [this.osc.frequency, this.amp.gain, this.breath.gain, this.vib.gain, this.growl.gain, this.breathFilter.frequency];
+    for (const p of params) p.cancelScheduledValues(at);
+    this.osc.frequency.setValueAtTime(this.hz, at);
+    this.breathFilter.frequency.setValueAtTime(this.hz * 2, at);
+    for (const p of [this.amp.gain, this.breath.gain, this.growl.gain]) {
+      p.setValueAtTime(p.value, at);
+      p.linearRampToValueAtTime(0, at + fade);
+    }
+    this.vib.gain.setValueAtTime(0, at);
+    this.lastEnd = at + fade;
   }
 
   play(notes: NoteEvent[], at: number) {

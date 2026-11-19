@@ -137,7 +137,8 @@ export class MusicListener {
     const activity =
       (r.activeConversations ?? 0) * 0.06 + (r.speaking ?? 0) * 0.05 + Math.min(recent, 8) * 0.03 + (dancing ? 0.25 : 0);
     const arousing = AROUSING.has(mood) ? Math.min(0.2, scores[mood] * 0.04) : 0;
-    let target = MOODS[mood].base + Math.min(0.3, arousal) + Math.min(0.3, activity) + arousing;
+    // Mostly ambience: what is happening nudges the music, it does not drive it.
+    let target = MOODS[mood].base + Math.min(0.18, arousal * 0.7) + Math.min(0.14, activity * 0.5) + arousing * 0.6;
     if (quiet > 40) target = Math.min(target, MOODS[mood].base * 0.6 + 0.04);
     target = clamp01(target);
     // Eased here too, so a burst of lines swells rather than jumps.
