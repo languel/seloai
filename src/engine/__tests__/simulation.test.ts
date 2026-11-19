@@ -89,6 +89,8 @@ describe('Simulation', () => {
       enableWebSpeechFallback: false,
       narratorEnabled: true,
       narrateEvents: true,
+      // Every scene framed by the Scribe, so these tests do not depend on chance.
+      scribeDensity: 1,
     });
     // The story is already set here, so these turns test the story itself, not the greetings before it.
     sim.storySet = true;
@@ -210,6 +212,8 @@ describe('Simulation', () => {
       enableWebSpeechFallback: false,
       narratorEnabled: true,
       narrateEvents: true,
+      // Every scene framed by the Scribe, so these tests do not depend on chance.
+      scribeDensity: 1,
     });
     // The story is already set here, so these turns test the story itself, not the greetings before it.
     sim.storySet = true;
