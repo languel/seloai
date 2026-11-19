@@ -261,12 +261,21 @@ export class MusicPlayer {
       return { input: p as AudioNode, nodes: [p, s, e] as AudioNode[] };
     };
     const g = channel(0.22, 0.6, 0.8);
+    // The drone's own send: long, dark echoes and plenty of room, so its chords hang in the air.
+    const droneFx = ctx.createGain();
+    droneFx.gain.value = 1;
+    const droneEcho = ctx.createGain();
+    droneEcho.gain.value = 0.9;
+    const droneRoom = ctx.createGain();
+    droneRoom.gain.value = 0.7;
+    droneFx.connect(droneEcho).connect(echoIn);
+    droneFx.connect(droneRoom).connect(reverb);
     const k = channel(-0.12, 0.9, 1);
     const t = channel(-0.28, 0.5, 0.35);
     const graph = {
       master,
       duck,
-      gaida: new Gaida(ctx, g.input, noise),
+      gaida: new Gaida(ctx, g.input, noise, droneFx),
       kaval: new Kaval(ctx, k.input, noise),
       tapan: new Tapan(ctx, t.input, noise),
       reverb,
@@ -274,7 +283,7 @@ export class MusicPlayer {
       echoMix,
       echoDelay,
       echoFeedback,
-      nodes: [master, duck, reverb, wet, echoIn, echoDelay, echoFeedback, echoTone, echoMix, ...g.nodes, ...k.nodes, ...t.nodes],
+      nodes: [master, duck, reverb, wet, echoIn, echoDelay, echoFeedback, echoTone, echoMix, droneFx, droneEcho, droneRoom, ...g.nodes, ...k.nodes, ...t.nodes],
     };
     this.room = -1;
     this.applyTone(graph);

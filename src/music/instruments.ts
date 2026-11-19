@@ -223,6 +223,13 @@ export class Tapan {
 /** The chanter is loud and piercing by nature: it sits well below the kaval. */
 const GAIDA_PEAK = 0.065;
 const DRONE_PEAK = 0.11;
+/**
+ * A drone change is a long chord: the new note fades in over `DRONE_IN` seconds while the old
+ * one fades out over `DRONE_OUT`, both sounding for a while. Never a glide in pitch.
+ */
+const DRONE_IN = 6;
+const DRONE_OUT = 4.5;
+const DRONE_HOLD = 18;
 
 export class Gaida {
   private chanter: OscillatorNode;
@@ -236,7 +243,20 @@ export class Gaida {
   private chCurve = { c: -1 };
 
   /** The drone's reeds: the tonic, a second reed a breath out of tune, the fifth, the octave. */
-  private drones: Array<{ osc: OscillatorNode; ratio: number; gain: GainNode }> = [];
+  /**
+   * Two banks of drone reeds (tonic, a second tonic a breath out of tune, the fifth, the
+   * octave). One sounds; when the drone changes note the other is set to the new note while
+   * silent and fades in slowly as the first fades out, so the change is a long chord, never a glide.
+   */
+  private banks: Array<{ voices: Array<{ osc: OscillatorNode; ratio: number; gain: GainNode }>; gain: GainNode }> = [];
+  private activeBank = 0;
+  /** Voice `i` (0 tonic, 1 second reed, 2 fifth, 3 octave) in both banks. */
+  private voice(i: number) {
+    return this.banks.map((b) => b.voices[i]);
+  }
+  private get allVoices() {
+    return this.banks.flatMap((b) => b.voices);
+  }
   private dShaper: WaveShaperNode;
   private dLp: BiquadFilterNode;
   private dTrim: GainNode;
@@ -257,10 +277,14 @@ export class Gaida {
   private hz = midiToHz(TONIC_MIDI);
   private readonly droneHz = midiToHz(TONIC_MIDI - 24);
 
+  /**
+   * `droneFx`, when given, also receives the drone alone (for a deep echo and room of its own).
+   */
   constructor(
     private ctx: BaseAudioContext,
     out: AudioNode,
     noise: AudioBuffer,
+    droneFx?: AudioNode,
   ) {
     const now = ctx.currentTime;
     const air = () => {
@@ -303,20 +327,27 @@ export class Gaida {
     // The drone.
     const dw = reedWave(ctx, 60, 0.8, 0.7);
     const dMix = ctx.createGain();
-    for (const [ratio, detune] of [
-      [1, 0],
-      [1, 3],
-      [1.5, 0],
-      [2, 0],
-    ] as const) {
-      const osc = ctx.createOscillator();
-      osc.setPeriodicWave(dw);
-      osc.frequency.value = this.droneHz * ratio;
-      osc.detune.value = detune;
-      const gain = ctx.createGain();
-      gain.gain.value = 0;
-      osc.connect(gain).connect(dMix);
-      this.drones.push({ osc, ratio, gain });
+    for (let b = 0; b < 2; b++) {
+      const bankGain = ctx.createGain();
+      bankGain.gain.value = b === 0 ? 1 : 0;
+      bankGain.connect(dMix);
+      const voices: Array<{ osc: OscillatorNode; ratio: number; gain: GainNode }> = [];
+      for (const [ratio, detune] of [
+        [1, 0],
+        [1, 3],
+        [1.5, 0],
+        [2, 0],
+      ] as const) {
+        const osc = ctx.createOscillator();
+        osc.setPeriodicWave(dw);
+        osc.frequency.value = this.droneHz * ratio;
+        osc.detune.value = detune;
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        osc.connect(gain).connect(bankGain);
+        voices.push({ osc, ratio, gain });
+      }
+      this.banks.push({ voices, gain: bankGain });
     }
     this.dShaper = ctx.createWaveShaper();
     this.dShaper.oversample = '2x';
@@ -330,6 +361,7 @@ export class Gaida {
     this.droneGain = ctx.createGain();
     this.droneGain.gain.value = 0;
     dMix.connect(this.dShaper).connect(this.dLp).connect(this.dTrim).connect(swell).connect(this.droneGain).connect(out);
+    if (droneFx) this.droneGain.connect(droneFx);
     // A rough, overdriven copy of the drone that the drift swells in and out over many bars.
     const gritShaper = ctx.createWaveShaper();
     gritShaper.curve = gritCurve(0.95);
@@ -361,9 +393,9 @@ export class Gaida {
     wobbleDepth.gain.value = 3;
     wobble.connect(wobbleDepth);
     wobbleDepth.connect(this.chanter.detune);
-    for (const d of this.drones) wobbleDepth.connect(d.osc.detune);
+    for (const d of this.allVoices) wobbleDepth.connect(d.osc.detune);
 
-    const oscs = [this.chanter, ...this.drones.map((d) => d.osc), move, breathe, wobble];
+    const oscs = [this.chanter, ...this.allVoices.map((d) => d.osc), move, breathe, wobble];
     for (const o of oscs) o.start(now);
     for (const s of this.sources) s.start(now);
     this.sources.push(...oscs);
@@ -391,47 +423,72 @@ export class Gaida {
     smooth(this.dLp.Q, 1.1 + synthiness(dc) * 5, ctx);
     smooth(this.dTrim.gain, drone.level / 0.8, ctx);
     smooth(this.dNoise.gain, drone.breath * 0.07, ctx);
-    smooth(this.dMoveDepth.gain, drone.movement * this.droneBase * 0.18, ctx);
+    smooth(this.dMoveDepth.gain, drone.movement * this.droneBase * 0.06, ctx);
     smooth(this.dSwellDepth.gain, drone.movement * 0.08, ctx);
-    const [tonic, second, fifth, octave] = this.drones;
-    smooth(tonic.gain.gain, 1, ctx);
-    smooth(second.gain.gain, 0.15 + 0.35 * drone.beating, ctx);
-    smooth(second.osc.detune, 1 + drone.beating * 16, ctx, 0.5);
-    smooth(fifth.gain.gain, drone.voicing === 'fifth' || drone.voicing === 'open' ? 0.45 : 0, ctx, 0.6);
-    smooth(octave.gain.gain, drone.voicing === 'octave' || drone.voicing === 'open' ? 0.32 : 0, ctx, 0.6);
+    for (const v of this.voice(0)) smooth(v.gain.gain, 1, ctx);
+    for (const v of this.voice(1)) {
+      smooth(v.gain.gain, 0.15 + 0.35 * drone.beating, ctx);
+      smooth(v.osc.detune, 1 + drone.beating * 10, ctx, 0.5);
+    }
+    for (const v of this.voice(2)) smooth(v.gain.gain, drone.voicing === 'fifth' || drone.voicing === 'open' ? 0.45 : 0, ctx, 0.6);
+    for (const v of this.voice(3)) smooth(v.gain.gain, drone.voicing === 'octave' || drone.voicing === 'open' ? 0.32 : 0, ctx, 0.6);
   }
 
   /**
-   * Brings the drone to a level (0 to 1); from silence it swells up to pitch as the bag fills.
-   * Its tone brightens with the music's intensity.
+   * Brings the drone to a level (0 to 1) on a root (semitones from the tonic). From silence it
+   * swells in as the bag fills, at pitch; a new root fades in slowly over the old one, which
+   * lingers and fades: a long chord, never a glide.
    */
   setDrone(at: number, level: number, intensity = 0.5, rootSemitones = 0) {
     const target = level * DRONE_PEAK;
     const g = this.droneGain.gain;
     const root = Math.pow(2, rootSemitones / 12);
-    if (this.droneLevel === 0 && level > 0) {
-      for (const d of this.drones) {
-        d.osc.frequency.cancelScheduledValues(at);
-        d.osc.frequency.setValueAtTime(this.droneHz * root * d.ratio * 0.94, at);
-        d.osc.frequency.exponentialRampToValueAtTime(this.droneHz * root * d.ratio, at + 0.7);
+    const tune = (bank: number, r: number) => {
+      for (const v of this.banks[bank].voices) {
+        v.osc.frequency.cancelScheduledValues(at);
+        v.osc.frequency.setValueAtTime(this.droneHz * r * v.ratio, at);
       }
+    };
+    if (this.droneLevel === 0 && level > 0) {
+      // From silence: the sounding bank on the new note, the other quiet.
+      tune(this.activeBank, root);
+      for (const [i, b] of this.banks.entries()) {
+        b.gain.gain.cancelScheduledValues(at);
+        b.gain.gain.setValueAtTime(i === this.activeBank ? 1 : 0, at);
+      }
+      this.root = root;
+      this.rootSince = at;
+      g.cancelScheduledValues(at);
       g.setValueAtTime(0, at);
       g.linearRampToValueAtTime(target, at + 0.9);
     } else if (level === 0 && this.droneLevel > 0) {
-      for (const d of this.drones) {
-        d.osc.frequency.setValueAtTime(this.droneHz * this.root * d.ratio, at);
-        d.osc.frequency.exponentialRampToValueAtTime(this.droneHz * this.root * d.ratio * 0.93, at + 0.6);
-      }
       g.setTargetAtTime(0, at, 0.25);
     } else {
       g.setTargetAtTime(target, at, 0.8);
-      // The drone moves with the tune: a slow glide to its new root, never a jump.
-      if (Math.abs(root - this.root) > 0.001) for (const d of this.drones) d.osc.frequency.setTargetAtTime(this.droneHz * root * d.ratio, at, 0.9);
+      // A chord needs time to sound: the drone holds a note at least `DRONE_HOLD` seconds.
+      if (Math.abs(root - this.root) > 0.001 && at - this.rootSince >= DRONE_HOLD) {
+        this.root = root;
+        this.rootSince = at;
+        // Set the silent bank to the new note, then let it bloom in over the old one.
+        const from = this.banks[this.activeBank].gain.gain;
+        const next = 1 - this.activeBank;
+        const to = this.banks[next].gain.gain;
+        tune(next, root);
+        from.cancelScheduledValues(at);
+        to.cancelScheduledValues(at);
+        from.setValueAtTime(from.value, at);
+        to.setValueAtTime(0, at);
+        // The old note lingers, the new one blooms in under it: for a while, a chord.
+        from.setTargetAtTime(0, at + 0.8, DRONE_OUT / 3);
+        to.setTargetAtTime(1, at, DRONE_IN / 3);
+        this.activeBank = next;
+      }
     }
-    this.root = root;
     this.intensity = intensity;
     this.droneLevel = level;
   }
+
+  private rootSince = -Infinity;
 
   private intensity = 0.3;
   private root = 1;
@@ -450,20 +507,26 @@ export class Gaida {
     const beating = t.beating * (0.25 + 1.05 * slow(143, 2.1));
     const tau = span / 3;
     const r = () => rng();
-    const bright = this.droneBase * lin(0.75, 1.35, this.intensity) * (1 + m * (r() * 1.3 - 0.55));
+    // Brightness moves only a little: a wide sweep of the filter sounds like a jet passing.
+    const bright = this.droneBase * lin(0.85, 1.2, this.intensity) * (1 + m * (r() * 0.4 - 0.2));
     this.dLp.frequency.setTargetAtTime(Math.max(180, bright), at, tau);
     this.dNoise.gain.setTargetAtTime(t.breath * 0.07 * (1 + m * (r() * 2.2 - 0.8)), at, tau);
     // Now and then the drone roughens, then smooths again.
     const grit = r() < 0.4 * m ? m * 0.55 * r() : 0;
     this.dGrit.gain.setTargetAtTime(grit, at, tau);
     this.dSwell.gain.setTargetAtTime(1 + m * (r() * 0.5 - 0.2), at, tau);
-    const [, second, fifth, octave] = this.drones;
-    second.osc.detune.setTargetAtTime(1 + beating * 16 * (0.4 + r() * 1.2), at, tau);
-    second.gain.gain.setTargetAtTime(0.15 + 0.35 * Math.min(1, beating), at, tau);
+    // The beating changes its rate only gently, so it shimmers rather than sweeps.
+    const detune = 1 + beating * 10 * (0.8 + r() * 0.4);
+    for (const v of this.voice(1)) {
+      v.osc.detune.setTargetAtTime(detune, at, tau);
+      v.gain.gain.setTargetAtTime(0.15 + 0.35 * Math.min(1, beating), at, tau);
+    }
     const hasFifth = t.voicing === 'fifth' || t.voicing === 'open';
     const hasOctave = t.voicing === 'octave' || t.voicing === 'open';
-    fifth.gain.gain.setTargetAtTime(hasFifth ? 0.45 * (0.6 + 0.5 * r()) : r() < 0.3 * m ? 0.22 * m : 0, at, tau);
-    octave.gain.gain.setTargetAtTime(hasOctave ? 0.32 * (0.6 + 0.5 * r()) : r() < 0.2 * m ? 0.15 * m : 0, at, tau);
+    const fifth = hasFifth ? 0.45 * (0.6 + 0.5 * r()) : r() < 0.3 * m ? 0.22 * m : 0;
+    const octave = hasOctave ? 0.32 * (0.6 + 0.5 * r()) : r() < 0.2 * m ? 0.15 * m : 0;
+    for (const v of this.voice(2)) v.gain.gain.setTargetAtTime(fifth, at, tau);
+    for (const v of this.voice(3)) v.gain.gain.setTargetAtTime(octave, at, tau);
   }
 
   /** Plays a phrase's notes from `at`; fills the bag or empties it as the phrase asks. */

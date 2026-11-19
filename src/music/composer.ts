@@ -181,8 +181,8 @@ export class Composer {
     }
     // Every few bars the drone may move to another degree, or home again.
     if (--this.ambienceHold <= 0 || this.ambienceMood !== mood) {
-      this.ambienceDrone = this.ambienceDrone !== 0 || rng() < 0.45 ? 0 : pick(rng, DRONE_MOVES[mood]);
-      this.ambienceHold = 2 + Math.floor(rng() * 4);
+      this.ambienceDrone = this.ambienceDrone !== 0 || rng() < 0.65 ? 0 : pick(rng, DRONE_MOVES[mood]);
+      this.ambienceHold = 6 + Math.floor(rng() * 7);
       this.ambienceMood = mood;
     }
     return {
@@ -363,7 +363,7 @@ export class Composer {
       kaval: gaidaLead ? [] : notes,
       tapan,
       drone: gaidaLead ? 1 : mood === 'lament' ? 0.4 : 0.55,
-      droneDegree: answer || rng() < 0.4 ? 0 : pick(rng, DRONE_MOVES[mood]),
+      droneDegree: answer || rng() < 0.7 ? 0 : pick(rng, DRONE_MOVES[mood]),
       label: `free · ${mode} · ${gaidaLead ? 'gaida' : 'kaval'}${answer ? ' (answer)' : ''}`,
     };
   }
@@ -386,7 +386,7 @@ export class Composer {
     const a = this.makeLine(groups, bars, pick(rng, [0, 1, 2]) + register, pick(rng, [4, 5]) + register, pick(rng, [4, 1, 4]) + register);
     // B climbs higher, often as a sequence of A's opening, and comes home to the tonic.
     const b = this.makeLine(groups, bars, pick(rng, [4, 5]) + register, pick(rng, [6, 7, 8]) + register, 0 + register);
-    return { key: `${mood}:${dance}`, mood, dance, bars, barUnits, lines: [a, b], bDrone: rng() < 0.75 ? pick(rng, DRONE_MOVES[mood]) : 0 };
+    return { key: `${mood}:${dance}`, mood, dance, bars, barUnits, lines: [a, b], bDrone: rng() < 0.5 ? pick(rng, DRONE_MOVES[mood]) : 0 };
   }
 
   /** One line of a tune: rhythm cell per group, an arching stepwise contour, a held cadence. */
