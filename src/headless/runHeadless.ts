@@ -20,6 +20,8 @@ export interface HeadlessRunOptions {
   settings?: Partial<ModelSettings>;
   /** Simulated milliseconds per step (the kernel caps a step at 100). */
   stepMs?: number;
+  /** World time left after each passage of the Scribe for music to answer it (ms). */
+  musicPauseMs?: number;
 }
 
 export interface TraceEvent {
@@ -78,6 +80,7 @@ export async function runHeadless(options: HeadlessRunOptions): Promise<Headless
       timers: 'sim',
     },
   );
+  if (options.musicPauseMs) sim.setMusicPause(() => options.musicPauseMs!);
   brainRouter.configureStoryRuntime({
     random: createSeededRng(options.seed ^ 0x9e3779b9),
     now: () => HEADLESS_EPOCH_MS + Math.round(sim.simTimeMs),

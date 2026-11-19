@@ -50,7 +50,7 @@ export interface PhrasePlan {
   mode: ModeId;
   dance: DanceId;
   intensity: number;
-  texture: 'drone' | 'free' | 'dance' | 'motif';
+  texture: 'drone' | 'free' | 'dance' | 'motif' | 'ambience';
   /** The gaida's chanter sounds through this phrase. */
   gaidaOn: boolean;
   gaida: NoteEvent[];
@@ -126,6 +126,55 @@ export class Composer {
   }
 
   /**
+   * Two bars of ambience: the drone, and the tapan keeping a sparse, soft pulse in the meter of
+   * the tune (or of the mood's first dance). Under a spoken line the drummer plays slower and
+   * much sparser rather than quieter: mostly the downbeat, now and then the long group. `amount`
+   * (0 to 1) is how much ambience there is; at 0 the bars are silent.
+   */
+  ambience(cue: MusicCue, intensityNow: number, opts: { underSpeech: boolean; amount: number }): PhrasePlan {
+    const rng = this.rng;
+    const intensity = clamp01(intensityNow);
+    const mood = cue.mood;
+    const prof = MOODS[mood];
+    const amount = clamp01(opts.amount);
+    const under = opts.underSpeech;
+    const danceId: DanceId = this.tune?.mood === mood ? this.tune.dance : cue.dance && cue.dance !== 'free' ? cue.dance : prof.dances[0];
+    const d = DANCES[danceId];
+    const drive = clamp01((intensity - 0.2) / 0.8);
+    const unit = lerp(d.unit[0], d.unit[1], drive) * (under ? 1.9 : 1.35);
+    const barUnits = d.groups.reduce((a, b) => a + b, 0);
+    const bars = 2;
+    const longest = d.groups.indexOf(Math.max(...d.groups));
+    const drums = amount * prof.drums;
+    const soft = (under ? 0.16 : 0.24) + (under ? 0.12 : 0.18) * intensity;
+    const tapan: HitEvent[] = [];
+    for (let bar = 0; bar < bars; bar++) {
+      let u = bar * barUnits;
+      d.groups.forEach((g, gi) => {
+        const pDum = drums * (gi === 0 ? (under ? 0.6 : 0.85) : gi === longest ? (under ? 0.18 : 0.4) : under ? 0.04 : 0.15);
+        if (rng() < pDum) tapan.push({ t: u * unit, kind: 'dum', vel: soft * (gi === 0 ? 1 : 0.8) * (0.85 + 0.15 * rng()) });
+        for (let k = 1; k < g; k++) if (rng() < drums * (under ? 0.03 : 0.12)) tapan.push({ t: (u + k) * unit, kind: 'tek', vel: soft * 0.6 });
+        u += g;
+      });
+    }
+    return {
+      length: bars * barUnits * unit,
+      mood,
+      mode: prof.mode,
+      dance: danceId,
+      intensity,
+      texture: 'ambience',
+      gaidaOn: false,
+      gaida: [],
+      kaval: [],
+      tapan,
+      drone: amount * 0.7,
+      unit,
+      label: `ambience · ${d.label}${under ? ' · under the line' : ''}`,
+    };
+  }
+
+  /**
    * A motif for the gap between two lines of the story, the way a teller's accompanist fills
    * the breath before the next sentence: a few notes from the tune being played (or a short
    * free phrase when calm) that swell in and fade away, never longer than `maxSeconds`. The
@@ -136,9 +185,17 @@ export class Composer {
     const intensity = clamp01(intensityNow);
     const rng = this.rng;
     const metered = cue.dance !== 'free' && intensity >= METERED_FROM;
-    const base = metered ? this.dancePhrase(cue, cue.mood, intensity, MOODS[cue.mood].mode) : this.freePhrase(cue.mood, Math.min(intensity, METERED_FROM - 0.02));
+    const phrase = () => (metered ? this.dancePhrase(cue, cue.mood, intensity, MOODS[cue.mood].mode) : this.freePhrase(cue.mood, Math.min(intensity, METERED_FROM - 0.02)));
+    const base = phrase();
     const gaidaLeads = cue.lead === 'gaida' || (cue.lead !== 'kaval' && intensity > 0.75);
-    const source = base.gaida.length ? base.gaida : base.kaval;
+    const source = [...(base.gaida.length ? base.gaida : base.kaval)];
+    // A longer answer (a musical translation of a passage) runs on into the next phrases.
+    let offset = base.length;
+    for (let k = 0; k < 3 && offset < maxSeconds * 0.75; k++) {
+      const more = phrase();
+      for (const n of more.gaida.length ? more.gaida : more.kaval) source.push({ ...n, t: n.t + offset });
+      offset += more.length;
+    }
     // A fragment: from the start, cut at a note boundary near the limit.
     const notes: NoteEvent[] = [];
     for (const n of source) {

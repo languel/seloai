@@ -2,7 +2,7 @@ import { getAudioContext } from '../ai/audioPipeline';
 import { busInput } from '../ai/mixer';
 import { clamp01, type MusicCue } from './cue';
 import { MusicListener, type SceneReading } from './listener';
-import { MusicPlayer } from './player';
+import { DEFAULT_AMOUNTS, MusicPlayer, answerSeconds, type MusicAmounts } from './player';
 import { ScribeEar, type ScribeScore } from './scribeScore';
 import { normalizeTone, type BandTone } from './tone';
 
@@ -20,9 +20,9 @@ import { normalizeTone, type BandTone } from './tone';
 
 const PREF = 'seloai.music.on';
 const TONE_PREF = 'seloai.music.tone';
-const DENSITY_PREF = 'seloai.music.density';
-/** How far the music steps back while someone speaks. */
-const DUCK = 0.8;
+const AMOUNTS_PREF = 'seloai.music.amounts';
+/** The music keeps its level under speech: the players thin out instead (see the player). */
+const DUCK = 1;
 
 export interface MusicDirection extends Partial<MusicCue> {
   /** Seconds the direction holds; left out, until it is released or replaced. */
@@ -46,6 +46,8 @@ export interface MusicStatus {
   scribe: ScribeScore | null;
   /** Whether a line is being said, so the band is holding back. */
   speaking: boolean;
+  /** The part of the music being played: ambience, in-between or song. */
+  part: 'ambience' | 'between' | 'song' | null;
 }
 
 /** Asks a model what the latest lines feel like (the app wires in the Scribe's). */
@@ -64,7 +66,7 @@ class VillageMusic {
   private useScribe = true;
   private lastReading: SceneReading | null = null;
   private toneNow: BandTone = normalizeTone(readJson(TONE_PREF));
-  private densityNow = readNumber(DENSITY_PREF, 0.7);
+  private amountsNow: MusicAmounts = readAmounts();
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -109,7 +111,7 @@ class VillageMusic {
         output: busInput(ctx, 'music'),
         seed: Math.floor(Math.random() * 1e6),
         tone: this.toneNow,
-        density: this.densityNow,
+        amounts: this.amountsNow,
       });
       this.player.setCue(this.cue());
       this.player.setSpeaking(this.speakingNow);
@@ -163,15 +165,20 @@ class VillageMusic {
     this.changed();
   }
 
-  /** How much music: 0 sparse, with long silences, to 1 continuous (0.7 is usual). */
-  get density() {
-    return this.densityNow;
+  /**
+   * How much of each part of the music there is, 0 to 1: the ambience always underneath, the
+   * in-between motifs around the lines, the songs while no one speaks. 0 turns a part off.
+   */
+  get amounts(): MusicAmounts {
+    return this.amountsNow;
   }
 
-  setDensity(density: number) {
-    this.densityNow = clamp01(density);
-    this.player?.setDensity(this.densityNow);
-    save(DENSITY_PREF, String(this.densityNow));
+  setAmounts(patch: Partial<MusicAmounts>) {
+    const next = { ...this.amountsNow };
+    for (const k of ['ambience', 'between', 'song'] as const) if (typeof patch[k] === 'number' && Number.isFinite(patch[k])) next[k] = clamp01(patch[k]!);
+    this.amountsNow = next;
+    this.player?.setAmounts(next);
+    save(AMOUNTS_PREF, JSON.stringify(next));
     this.changed();
   }
 
@@ -218,9 +225,19 @@ class VillageMusic {
    * Someone has begun or stopped saying a line: the band holds back under it and fills the
    * gap after it (see `MusicPlayer.setSpeaking`). The village view calls this as it happens.
    */
-  setSpeaking(speaking: boolean) {
+  setSpeaking(speaking: boolean, opts: { answer?: boolean } = {}) {
     this.speakingNow = speaking;
-    this.player?.setSpeaking(speaking);
+    this.player?.setSpeaking(speaking, opts);
+  }
+
+  /**
+   * How long, in milliseconds, the story should pause after a passage of the teller (the
+   * Scribe) so the band can answer it: the pause of a sung story before the instruments' turn.
+   * Nothing when the music is off or there is no in-between.
+   */
+  answerPauseMs(): number {
+    if (!this.on || !this.player?.playing) return 0;
+    return Math.round(answerSeconds(this.amountsNow.between) * 1000 * 0.85);
   }
   private speakingNow = false;
 
@@ -244,6 +261,7 @@ class VillageMusic {
       listening: this.useScribe && this.scorer ? 'scribe' : 'words',
       scribe: this.useScribe ? this.ear.current(Date.now() / 1000) : null,
       speaking: this.speakingNow,
+      part: this.player?.playing ? this.player.part : null,
     };
   }
 }
@@ -257,13 +275,11 @@ function readJson(key: string): unknown {
   }
 }
 
-function readNumber(key: string, fallback: number): number {
-  try {
-    const n = Number(localStorage.getItem(key));
-    return localStorage.getItem(key) !== null && Number.isFinite(n) ? clamp01(n) : fallback;
-  } catch {
-    return fallback;
-  }
+function readAmounts(): MusicAmounts {
+  const raw = readJson(AMOUNTS_PREF) as Partial<MusicAmounts> | null;
+  const out = { ...DEFAULT_AMOUNTS };
+  for (const k of ['ambience', 'between', 'song'] as const) if (typeof raw?.[k] === 'number' && Number.isFinite(raw[k])) out[k] = clamp01(raw[k]!);
+  return out;
 }
 
 function save(key: string, value: string) {

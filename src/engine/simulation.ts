@@ -335,6 +335,24 @@ export class VillageSimulation {
     if (remaining > 0) await this.waitSimTime(remaining);
   }
 
+  /**
+   * How long to leave after a passage of the Scribe before the story goes on, so music can
+   * answer it (milliseconds; the app's band supplies this). Nothing by default.
+   */
+  private musicPause: (() => number) | null = null;
+  setMusicPause(fn: (() => number) | null) {
+    this.musicPause = fn;
+  }
+
+  /** After a passage of the Scribe: leave the band its turn, as a sung story does. */
+  private async leaveRoomForMusic(): Promise<void> {
+    const ms = this.musicPause?.() ?? 0;
+    if (ms <= 0) return;
+    await this.whenRunning();
+    if (this.timerMode === 'sim') await this.waitSimTime(ms);
+    else await new Promise<void>((resolve) => setTimeout(resolve, ms / Math.max(0.25, Math.abs(this.speedMultiplier) || 1)));
+  }
+
   /** Resolves at once when running, or when the world is next resumed. */
   private whenRunning(): Promise<void> {
     if (!this.pausedFlag) return Promise.resolve();
@@ -2017,6 +2035,7 @@ export class VillageSimulation {
           midpointResolver,
         );
         await this.paceLine(introBeat, beatStartedSimMs);
+        await this.leaveRoomForMusic();
       }
 
       // Two lines when the village is quiet, three as usual, four when it is talkative.
@@ -2123,6 +2142,7 @@ export class VillageSimulation {
           midpointResolver,
         );
         await this.paceLine(closing, closingStartedSimMs);
+        await this.leaveRoomForMusic();
       }
       return conv;
     } catch {

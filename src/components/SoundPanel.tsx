@@ -62,12 +62,20 @@ export function SoundPanel({ settings, onUpdateSettings, fill = true }: SoundPan
   const scribe = settings.scribeDensity ?? 0.5;
   const level = (ch: MixerChannel) => (v: number) => setLevel(ch, v);
 
-  const rows: Array<{ ch: MixerChannel; name: string; amount?: { value: number; set: (v: number) => void; hint: string } }> = [
+  const rows: Array<{ ch: MixerChannel; name: string; key?: string; amount?: { value: number; set: (v: number) => void; hint: string } }> = [
     { ch: 'voices', name: 'Characters', amount: { value: talk, set: (v) => onUpdateSettings({ talkDensity: v }), hint: 'How much they talk among themselves: 0 and they go about their business' } },
     { ch: 'narrator', name: 'Scribe', amount: { value: scribe, set: (v) => onUpdateSettings({ scribeDensity: v }), hint: 'How much the Scribe tells: lower frames fewer scenes, higher also tells village life; 0 is silent' } },
-    { ch: 'music', name: 'Music', amount: { value: villageMusic.density, set: (v) => villageMusic.setDensity(v), hint: 'How much music: low leaves long silences, high never stops' } },
+    { ch: 'music', name: 'Music' },
     { ch: 'guide', name: 'Guide' },
     { ch: 'master', name: 'Everything' },
+  ];
+
+  // The music's three parts, each with its own amount (no volume of its own).
+  const amounts = villageMusic.amounts;
+  const musicParts: typeof rows = [
+    { ch: 'music', name: '· ambience', key: 'ambience', amount: { value: amounts.ambience, set: (v) => villageMusic.setAmounts({ ambience: v }), hint: 'The drone and a soft, sparse tapan, always underneath; under speech they play slower and sparser. 0 turns it off' } },
+    { ch: 'music', name: '· in-between', key: 'between', amount: { value: amounts.between, set: (v) => villageMusic.setAmounts({ between: v }), hint: 'Motifs around the lines of the story: how soon after a line, how often in a gap, how long they linger. 0 turns them off' } },
+    { ch: 'music', name: '· song', key: 'song', amount: { value: amounts.song, set: (v) => villageMusic.setAmounts({ song: v }), hint: 'The band in full while no one speaks: how soon after the story falls quiet, and how long. 0: never' } },
   ];
 
   const voice = (key: 'gaida' | 'kaval' | 'tapan' | 'drone', name: string, t: VoiceTone, extra?: React.ReactNode) => (
@@ -107,10 +115,16 @@ export function SoundPanel({ settings, onUpdateSettings, fill = true }: SoundPan
             <span className="text-[10px]" style={muted}>
               How much
             </span>
-            {rows.map((r) => (
-              <React.Fragment key={r.ch}>
-                <span className="pb-0.5 text-[11px]">{r.name}</span>
-                <input type="range" min={0} max={1} step={0.01} value={levels[r.ch]} aria-label={`${r.name} volume`} title={`${Math.round(levels[r.ch] * 100)}%`} onChange={(e) => level(r.ch)(Number(e.target.value))} className="stitch-range w-full" />
+            {rows.flatMap((r) => [r, ...(r.ch === 'music' ? musicParts : [])]).map((r) => (
+              <React.Fragment key={r.key ?? r.ch}>
+                <span className="pb-0.5 text-[11px]" style={r.key ? muted : undefined}>
+                  {r.name}
+                </span>
+                {r.key ? (
+                  <span />
+                ) : (
+                  <input type="range" min={0} max={1} step={0.01} value={levels[r.ch]} aria-label={`${r.name} volume`} title={`${Math.round(levels[r.ch] * 100)}%`} onChange={(e) => level(r.ch)(Number(e.target.value))} className="stitch-range w-full" />
+                )}
                 {r.amount ? (
                   <input type="range" min={0} max={1} step={0.01} value={r.amount.value} aria-label={`How much: ${r.name}`} title={`${r.amount.hint} (${Math.round(r.amount.value * 100)})`} onChange={(e) => r.amount!.set(Number(e.target.value))} className="stitch-range w-full" />
                 ) : (

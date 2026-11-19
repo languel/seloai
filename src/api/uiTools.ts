@@ -139,7 +139,9 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
       hold_seconds: { type: 'number', description: 'How long the direction holds (default: until released or replaced).' },
       reason: str('Why, in a few words (shown in status).'),
       listen: str("Who reads the story for the band: scribe (the Scribe's model names the mood of the moment when one is loaded; the default) or words (word lists only)."),
-      density: { type: 'number', description: 'How much music, 0 (sparse, long silences) to 1 (it never stops); 0.7 is usual.' },
+      ambience: { type: 'number', description: 'How much ambience, 0 (none) to 1: the drone drifting over many bars and a soft, sparse tapan, always underneath, thinner under speech.' },
+      between: { type: 'number', description: 'How much in-between, 0 (none) to 1: motifs around the lines of the story; higher comes sooner after a line, returns more often in a gap and lingers longer under the next line.' },
+      song: { type: 'number', description: 'How much song, 0 (never) to 1: the band in full while no one speaks; higher starts sooner after the story falls quiet and plays longer.' },
       tone: {
         type: 'object',
         description:
@@ -628,11 +630,14 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
     case 'music': {
       const music = villageMusic;
       const given = ['mood', 'intensity', 'dance', 'lead', 'urgent'].some((k) => args[k] !== undefined && args[k] !== null && args[k] !== '');
-      if (args.density !== undefined) {
-        const n = Number(args.density);
-        if (!Number.isFinite(n)) throw new Error('density is a number from 0 to 1.');
-        music.setDensity(n > 1 ? n / 100 : n);
+      const amounts: Record<string, number> = {};
+      for (const k of ['ambience', 'between', 'song'] as const) {
+        if (args[k] === undefined) continue;
+        const n = Number(args[k]);
+        if (!Number.isFinite(n)) throw new Error(`${k} is a number from 0 to 1.`);
+        amounts[k] = n > 1 ? n / 100 : n;
       }
+      if (Object.keys(amounts).length) music.setAmounts(amounts);
       if (args.tone && typeof args.tone === 'object') {
         const t = args.tone as Record<string, any>;
         if (t.preset !== undefined) {
@@ -695,7 +700,8 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
         listening: st.listening,
         speaking: st.speaking,
         ...(st.scribe ? { scribe_heard: `${st.scribe.mood} ${st.scribe.intensity}${st.scribe.reason ? ` — ${st.scribe.reason}` : ''}` } : {}),
-        density: Math.round(music.density * 100) / 100,
+        part: st.part,
+        amounts: music.amounts,
         tone: music.tone,
         directed: st.direction ? (st.direction.until ? `for ${Math.max(0, Math.round((st.direction.until - Date.now()) / 1000))} more seconds` : 'until released') : false,
       };

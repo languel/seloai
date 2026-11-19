@@ -31,3 +31,14 @@ describe('talk and Scribe density', () => {
     expect(told(r).length).toBeGreaterThan(2);
   });
 });
+
+describe('room for the music', () => {
+  it('the story pauses after a passage of the Scribe when the band asks for it', async () => {
+    const pack = findWorldPack('balkan-myth')!.build();
+    const run = (musicPauseMs: number) =>
+      runHeadless({ seed: 5, simSeconds: 150, map: pack.map, villagers: pack.cast!, world: pack.context, musicPauseMs });
+    const plain = await run(0);
+    const paused = await run(8000);
+    expect(paused.trace.length).toBeLessThan(plain.trace.length);
+  });
+});

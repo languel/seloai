@@ -243,6 +243,8 @@ export class Gaida {
   private dNoise: GainNode;
   private dMoveDepth: GainNode;
   private dSwellDepth: GainNode;
+  private dSwell: GainNode;
+  private dGrit: GainNode;
   private droneGain: GainNode;
   private dCurve = { c: -1 };
   private droneTone: DroneTone = DEFAULT_TONE.drone;
@@ -324,9 +326,17 @@ export class Gaida {
     this.dTrim = ctx.createGain();
     const swell = ctx.createGain();
     swell.gain.value = 1;
+    this.dSwell = swell;
     this.droneGain = ctx.createGain();
     this.droneGain.gain.value = 0;
     dMix.connect(this.dShaper).connect(this.dLp).connect(this.dTrim).connect(swell).connect(this.droneGain).connect(out);
+    // A rough, overdriven copy of the drone that the drift swells in and out over many bars.
+    const gritShaper = ctx.createWaveShaper();
+    gritShaper.curve = gritCurve(0.95);
+    gritShaper.oversample = '2x';
+    this.dGrit = ctx.createGain();
+    this.dGrit.gain.value = 0;
+    dMix.connect(gritShaper).connect(this.dGrit).connect(this.dLp);
     const dBp = ctx.createBiquadFilter();
     dBp.type = 'bandpass';
     dBp.frequency.value = 900;
@@ -381,8 +391,8 @@ export class Gaida {
     smooth(this.dLp.Q, 1.1 + synthiness(dc) * 5, ctx);
     smooth(this.dTrim.gain, drone.level / 0.8, ctx);
     smooth(this.dNoise.gain, drone.breath * 0.07, ctx);
-    smooth(this.dMoveDepth.gain, drone.movement * this.droneBase * 0.55, ctx);
-    smooth(this.dSwellDepth.gain, drone.movement * 0.28, ctx);
+    smooth(this.dMoveDepth.gain, drone.movement * this.droneBase * 0.18, ctx);
+    smooth(this.dSwellDepth.gain, drone.movement * 0.08, ctx);
     const [tonic, second, fifth, octave] = this.drones;
     smooth(tonic.gain.gain, 1, ctx);
     smooth(second.gain.gain, 0.15 + 0.35 * drone.beating, ctx);
@@ -414,8 +424,36 @@ export class Gaida {
     } else {
       g.setTargetAtTime(target, at, 0.8);
     }
-    this.dLp.frequency.setTargetAtTime(this.droneBase * lin(0.7, 1.5, intensity), at, 1.5);
+    this.intensity = intensity;
     this.droneLevel = level;
+  }
+
+  private intensity = 0.3;
+
+  /**
+   * The drone's long life: over the next `span` seconds (a few bars) its brightness, breath,
+   * roughness, the bloom of the fifth above, the beating between its reeds and its swell glide
+   * towards new places near the tone's settings, so it never quite stands still. How far it
+   * wanders is the tone's `movement`; the music's intensity brightens it overall.
+   */
+  drift(at: number, span: number, rng: () => number = Math.random) {
+    const t = this.droneTone;
+    const m = t.movement;
+    const tau = span / 3;
+    const r = () => rng();
+    const bright = this.droneBase * lin(0.75, 1.35, this.intensity) * (1 + m * (r() * 1.3 - 0.55));
+    this.dLp.frequency.setTargetAtTime(Math.max(180, bright), at, tau);
+    this.dNoise.gain.setTargetAtTime(t.breath * 0.07 * (1 + m * (r() * 2.2 - 0.8)), at, tau);
+    // Now and then the drone roughens, then smooths again.
+    const grit = r() < 0.4 * m ? m * 0.55 * r() : 0;
+    this.dGrit.gain.setTargetAtTime(grit, at, tau);
+    this.dSwell.gain.setTargetAtTime(1 + m * (r() * 0.5 - 0.2), at, tau);
+    const [, second, fifth, octave] = this.drones;
+    second.osc.detune.setTargetAtTime(1 + t.beating * 16 * (0.4 + r() * 1.2), at, tau);
+    const hasFifth = t.voicing === 'fifth' || t.voicing === 'open';
+    const hasOctave = t.voicing === 'octave' || t.voicing === 'open';
+    fifth.gain.gain.setTargetAtTime(hasFifth ? 0.45 * (0.6 + 0.5 * r()) : r() < 0.3 * m ? 0.22 * m : 0, at, tau);
+    octave.gain.gain.setTargetAtTime(hasOctave ? 0.32 * (0.6 + 0.5 * r()) : r() < 0.2 * m ? 0.15 * m : 0, at, tau);
   }
 
   /** Plays a phrase's notes from `at`; fills the bag or empties it as the phrase asks. */

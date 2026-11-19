@@ -193,3 +193,39 @@ describe('storyteller motifs', () => {
     expect(c.motif({ mood: 'festive', intensity: 0.9, lead: 'kaval' }, 0.9).gaidaOn).toBe(false);
   });
 });
+
+describe('ambience, in-between and song', () => {
+  it('keeps a pulse under speech, slower and sparser rather than gone', () => {
+    const count = (under: boolean) => {
+      const c = new Composer(11);
+      let hits = 0;
+      let len = 0;
+      for (let i = 0; i < 40; i++) {
+        const p = c.ambience({ mood: 'tension', intensity: 0.5 }, 0.5, { underSpeech: under, amount: 0.8 });
+        hits += p.tapan.length;
+        len += p.length;
+        expect(p.kaval).toEqual([]);
+        expect(p.gaidaOn).toBe(false);
+      }
+      return { rate: hits / len, unit: len };
+    };
+    const open = count(false);
+    const under = count(true);
+    expect(under.rate).toBeGreaterThan(0);
+    expect(under.rate).toBeLessThan(open.rate);
+    expect(under.unit).toBeGreaterThan(open.unit); // slower
+  });
+
+  it('is silent at ambience 0', () => {
+    const p = new Composer(2).ambience({ mood: 'festive', intensity: 0.8 }, 0.8, { underSpeech: false, amount: 0 });
+    expect(p.tapan).toEqual([]);
+    expect(p.drone).toBe(0);
+  });
+
+  it('answers a passage with a longer motif when given room', () => {
+    const short = new Composer(6).motif({ mood: 'lament', intensity: 0.25 }, 0.25, 4);
+    const long = new Composer(6).motif({ mood: 'lament', intensity: 0.25 }, 0.25, 13);
+    const end = (p: typeof short) => Math.max(...p.kaval.map((n) => n.t + n.dur));
+    expect(end(long)).toBeGreaterThan(end(short));
+  });
+});

@@ -1,18 +1,25 @@
 import { Composer, type PhrasePlan } from './composer';
-import { MOODS, clamp01, type MusicCue } from './cue';
+import { clamp01, type MusicCue } from './cue';
 import { Gaida, Kaval, Tapan, makeImpulse, makeNoiseBuffer } from './instruments';
 import { DEFAULT_TONE, type BandTone } from './tone';
 
 /**
- * Plays the composer's phrases on the instruments, a phrase ahead of time. A new cue lands at
- * the next phrase; the intensity eases toward it (about half a minute from still to wild, a
- * few seconds when the cue is urgent), so the music grows with the scene rather than jumping.
- * It follows a storyteller's pacing: under a spoken line only a low drone and the odd soft
- * stroke; in the gap after it, a short motif that swells and fades before the next line; and
- * after a long silence it plays on by itself (`setSpeaking`).
- * The band sits in a room with a tape echo (`tone.ambience`), each instrument shaped by its
- * tone, and steps back while someone speaks (`duck`). Below full density it leaves rests
- * between its calm phrases, longer the sparser it is.
+ * Plays the composer's music on the instruments, a little ahead of time. A new cue lands at
+ * the next bar or phrase; the intensity eases toward it (about half a minute from still to
+ * wild, a few seconds when urgent). The music moves between three parts, each with its own
+ * amount (`MusicAmounts`, 0 to 1, 0 turning that part off):
+ *
+ * - ambience: always there underneath. The drone, drifting slowly over many bars in breath,
+ *   roughness and harmonics, and the tapan keeping a sparse, soft pulse. Under a spoken line
+ *   the drummer plays slower and sparser, never simply quieter.
+ * - in-between: motifs that come in around the lines of the story, the teller's accompanist
+ *   filling the breath before the next sentence. The amount sets how soon after a line they
+ *   come, how often they return in a longer gap, and how long they linger under the next line.
+ * - song: the band playing in full, only while no one speaks: once the story has been quiet a
+ *   while (sooner the higher the amount), for a while, then back to ambience.
+ *
+ * The village view tells it when lines start and end (`setSpeaking`). The band sits in a room
+ * with a tape echo (`tone.ambience`), each instrument shaped by its tone.
  */
 
 export interface MusicPlayerOptions {
@@ -21,23 +28,33 @@ export interface MusicPlayerOptions {
   output?: AudioNode;
   seed?: number;
   tone?: BandTone;
-  /** How much music, 0 (sparse, long silences) to 1 (it never stops); 0.7 is usual. */
-  density?: number;
+  amounts?: MusicAmounts;
 }
+
+/** How much of each part of the music there is, 0 (none) to 1. */
+export interface MusicAmounts {
+  ambience: number;
+  between: number;
+  song: number;
+}
+
+export const DEFAULT_AMOUNTS: MusicAmounts = { ambience: 0.6, between: 0.6, song: 0.5 };
 
 /** Intensity per second the music may move towards its cue. */
 const EASE = 0.028;
 const EASE_URGENT = 0.14;
 /** How far ahead phrases are written. */
 const LOOKAHEAD = 1.6;
-/** While a line is said: the drone's level, and how often it is looked at again (seconds). */
-const SPEECH_DRONE = 0.3;
-const BED = 0.6;
-/** The breath after a line before its motif comes in, and the longest a motif runs. */
-const GAP_BREATH = 0.7;
+/** How often, in seconds, the drone takes a new direction, at most and at least movement. */
+const DRIFT_SLOW = 26;
+const DRIFT_FAST = 11;
+/** The longest a motif runs, seconds. */
 const MOTIF_MAX = 5;
-/** After this long without a line, the band plays on by itself. */
-const FREE_AFTER = 14;
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/** How long the band's answer to a passage of the teller runs, seconds, for an in-between amount. */
+export const answerSeconds = (between: number) => (between > 0 ? lerp(5, 13, between) : 0);
 
 export class MusicPlayer {
   readonly ctx: AudioContext;
@@ -64,7 +81,7 @@ export class MusicPlayer {
   private tone: BandTone;
   private room = -1;
   private roomTimer: ReturnType<typeof setTimeout> | null = null;
-  private density: number;
+  private amounts: MusicAmounts;
   private phraseListeners = new Set<(plan: PhrasePlan, at: number) => void>();
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
   /** Instruments muted by hand (for auditioning). */
@@ -73,21 +90,29 @@ export class MusicPlayer {
   /** What the band is doing now, in a few words. */
   activity = '';
   private speaking = false;
-  /** When the last line ended (-Infinity: no line yet, so the band plays by itself). */
-  private silentSince = -Infinity;
-  private motifPlayed = true;
+  /** When the last line ended, or the band started: quiet is measured from here. */
+  private silentSince = 0;
+  /** Whether any line has been said since the band started (motifs answer lines). */
+  private heardLine = false;
+  private nextMotifAt = Infinity;
+  private motifMax = MOTIF_MAX;
+  /** The part being played, when the song began, and until when the next song waits. */
+  part: 'ambience' | 'between' | 'song' = 'ambience';
+  private songStartedAt = 0;
+  private songRestUntil = 0;
+  private nextDriftAt = 0;
 
   constructor(opts: MusicPlayerOptions) {
     this.ctx = opts.ctx;
     this.output = opts.output ?? opts.ctx.destination;
     this.composer = new Composer(opts.seed ?? 1);
     this.tone = opts.tone ?? DEFAULT_TONE;
-    this.density = opts.density ?? 0.7;
+    this.amounts = opts.amounts ?? DEFAULT_AMOUNTS;
   }
 
-  /** How much music, 0 (sparse) to 1 (continuous). */
-  setDensity(density: number) {
-    this.density = clamp01(density);
+  /** How much ambience, in-between and song there is (each 0 to 1). */
+  setAmounts(amounts: MusicAmounts) {
+    this.amounts = { ambience: clamp01(amounts.ambience), between: clamp01(amounts.between), song: clamp01(amounts.song) };
   }
 
   /** The band's sound: each instrument's tone and the room (see `tone.ts`). */
@@ -153,6 +178,9 @@ export class MusicPlayer {
     m.setValueAtTime(m.value, now);
     m.linearRampToValueAtTime(1, now + fade);
     this.nextAt = Math.max(this.nextAt, now + 0.1);
+    this.silentSince = now;
+    this.nextDriftAt = now;
+    this.songRestUntil = 0;
     this.timer = setInterval(() => this.tick(), 120);
     this.tick();
   }
@@ -252,85 +280,96 @@ export class MusicPlayer {
   }
 
   /**
-   * Someone has begun or stopped speaking (a character or the Scribe). While a line is said
-   * the band holds back to a low drone and the odd soft stroke of the tapan; once it ends,
-   * after a breath, a motif fills the gap and fades; if no one speaks again for a while, the
-   * band plays on by itself.
+   * Someone has begun or stopped saying a line (a character, the Scribe or the guide). A song
+   * gives way at once; a motif lingers under the new line for a moment and fades; the ambience
+   * carries on, slower and sparser. When the line ends, the in-between motifs may answer it.
    */
-  setSpeaking(speaking: boolean) {
+  setSpeaking(speaking: boolean, opts: { answer?: boolean } = {}) {
     if (speaking === this.speaking) return;
     this.speaking = speaking;
     const graph = this.graph;
     const now = this.ctx.currentTime;
     if (speaking) {
       if (!graph) return;
-      // Whatever was to be played gives way to the voice.
-      graph.kaval.fadeOut(now, 0.45);
-      graph.gaida.fadeChanter(now, 0.35);
+      const linger = this.part === 'song' ? 0.5 : lerp(0.4, 1.6, this.amounts.between);
+      graph.kaval.fadeOut(now, linger);
+      graph.gaida.fadeChanter(now, Math.min(linger, 0.6));
+      // What was written for the gap or the song is called off; the ambience starts again, sparser.
       graph.tapan.cancelFrom(now + 0.05);
-      graph.gaida.setDrone(now, this.muted.drone ? 0 : SPEECH_DRONE);
-      // Now and then a soft stroke under the start of the line, for emphasis.
-      const drums = MOODS[this.cue.mood].drums;
-      if (!this.muted.tapan && Math.random() < 0.15 + 0.4 * drums * this.eased) {
-        graph.tapan.hit({ t: 0, kind: 'dum', vel: 0.18 + 0.35 * this.eased }, now + 0.08);
-      }
-      this.nextAt = now + BED;
+      this.part = 'ambience';
+      this.nextAt = now + 0.05;
+      this.nextMotifAt = Infinity;
     } else {
       this.silentSince = now;
-      this.motifPlayed = false;
-      this.nextAt = Math.min(this.nextAt, now + GAP_BREATH);
+      this.heardLine = true;
+      // The busier the in-between, the sooner a motif answers the line. After a passage of the
+      // teller (`answer`) the band always answers, at length: a musical translation of it.
+      const between = this.amounts.between;
+      if (between > 0 && opts.answer) {
+        this.nextMotifAt = now + 0.4;
+        this.motifMax = answerSeconds(between);
+      } else {
+        this.nextMotifAt = between > 0 && Math.random() < 0.35 + between ? now + lerp(1.6, 0.3, between) : Infinity;
+        this.motifMax = MOTIF_MAX;
+      }
+      this.nextAt = Math.min(this.nextAt, now + 0.25);
     }
   }
 
   private schedule() {
     const graph = this.graph!;
     const rate = this.cue.urgent ? EASE_URGENT : EASE;
-    // A long free phrase must not let the music leap a whole stage in one go.
+    // A long phrase must not let the music leap a whole stage in one go.
     const step = Math.min(rate * this.lastLength, this.cue.urgent ? 0.35 : 0.12);
     this.eased += Math.max(-step, Math.min(step, this.cue.intensity - this.eased));
     const at = this.nextAt;
+    const { ambience, between, song } = this.amounts;
 
-    // While a line is being said: only the low drone.
-    if (this.speaking) {
-      this.activity = 'holding a low drone under the line';
-      graph.gaida.setDrone(at, this.muted.drone ? 0 : SPEECH_DRONE, this.eased * 0.6);
-      this.lastLength = BED;
-      this.nextAt = at + BED;
-      return;
+    // The drone's long life, whatever else is happening.
+    if (at >= this.nextDriftAt) {
+      const span = lerp(DRIFT_SLOW, DRIFT_FAST, this.tone.drone.movement) * (0.75 + Math.random() * 0.5);
+      graph.gaida.drift(at, span);
+      this.nextDriftAt = at + span;
     }
+
     const quiet = at - this.silentSince;
-    const telling = Number.isFinite(this.silentSince) && quiet < FREE_AFTER;
-    if (telling && this.motifPlayed) {
-      // The gap has had its motif: the drone holds until the next line or until the band plays on.
-      this.activity = 'the drone, waiting for the next line';
-      graph.gaida.setDrone(at, this.muted.drone ? 0 : SPEECH_DRONE * 1.3, this.eased * 0.7);
-      this.lastLength = BED;
-      this.nextAt = at + BED;
-      return;
-    }
     let plan: PhrasePlan;
-    if (telling) {
-      // The gap after a line: one motif, swelling in and fading away.
-      const start = Math.max(at, this.silentSince + GAP_BREATH);
-      plan = this.composer.motif(this.cue, this.eased, MOTIF_MAX);
-      this.motifPlayed = true;
-      this.play(plan, start);
-      this.nextAt = start + plan.length;
+    if (this.speaking) {
+      plan = this.composer.ambience(this.cue, this.eased, { underSpeech: true, amount: ambience });
+      this.part = 'ambience';
     } else {
-      plan = this.composer.next(this.cue, this.eased);
-      this.play(plan, at);
-      this.nextAt = at + plan.length;
-      // Below full density a calm phrase may be followed by a rest; when sparse the drone rests too.
-      const sparse = 1 - this.density;
-      if (plan.texture !== 'dance' && sparse > 0 && Math.random() < sparse * 0.9) {
-        const rest = sparse * (2 + Math.random() * 12);
-        if (this.density < 0.4 && !this.muted.drone) graph.gaida.setDrone(this.nextAt, 0);
-        this.nextAt += rest;
+      // A song: once the story has been quiet a while, for a while, then a rest.
+      if (this.part === 'song' && at - this.songStartedAt > lerp(25, 150, song)) {
+        this.part = 'ambience';
+        this.songRestUntil = at + lerp(90, 12, song);
+      }
+      const songDue = song > 0 && this.part !== 'song' && quiet >= lerp(70, 5, song) && at >= this.songRestUntil;
+      if (songDue) {
+        this.part = 'song';
+        this.songStartedAt = at;
+      }
+      if (this.part === 'song') {
+        plan = this.composer.next(this.cue, this.eased);
+        plan = { ...plan, drone: Math.max(plan.drone, ambience * 0.7) };
+      } else if (between > 0 && this.heardLine && at >= this.nextMotifAt && quiet < lerp(20, 60, between)) {
+        plan = this.composer.motif(this.cue, this.eased, this.motifMax);
+        this.motifMax = MOTIF_MAX;
+        plan = { ...plan, drone: ambience * 0.7 };
+        this.part = 'between';
+        // In a longer gap, the motif may come back.
+        this.nextMotifAt = at + plan.length + lerp(16, 2.5, between) * (0.7 + Math.random() * 0.6);
+      } else {
+        plan = this.composer.ambience(this.cue, this.eased, { underSpeech: false, amount: ambience });
+        this.part = 'ambience';
       }
     }
+    this.play(plan, at);
+    this.nextAt = at + plan.length;
+    // An ambience bar ends early when a motif is due within it.
+    if (plan.texture === 'ambience' && !this.speaking && this.nextMotifAt > at && this.nextMotifAt < this.nextAt) this.nextAt = this.nextMotifAt;
     this.lastLength = plan.length;
     this.current = plan;
-    this.activity = plan.label;
+    this.activity = this.speaking ? `${plan.label}` : plan.label;
     for (const fn of this.phraseListeners) fn(plan, at);
   }
 
@@ -338,7 +377,7 @@ export class MusicPlayer {
     const graph = this.graph!;
     graph.gaida.setDrone(at, this.muted.drone ? 0 : plan.drone, plan.intensity);
     graph.gaida.play(plan.gaidaOn && !this.muted.gaida, plan.gaida, at);
-    if (!this.muted.kaval) graph.kaval.play(plan.kaval, at);
+    if (!this.muted.kaval && plan.kaval.length) graph.kaval.play(plan.kaval, at);
     if (!this.muted.tapan) for (const h of plan.tapan) graph.tapan.hit(h, at + h.t);
   }
 }

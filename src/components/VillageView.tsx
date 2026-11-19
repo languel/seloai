@@ -616,13 +616,22 @@ export const VillageView: React.FC<VillageViewProps> = ({
           }
         }
       }
-      villageMusic.setSpeaking(speaking && !sim.paused);
+      // A line by the Scribe that just ended is a passage of the teller: the band answers it.
+      let newest: { at: number; kind?: string } | null = null;
+      for (const conv of sim.conversations) {
+        const m = conv.messages[conv.messages.length - 1];
+        if (m && m.kind !== 'thought' && (!newest || m.timestamp > newest.at)) newest = { at: m.timestamp, kind: m.kind };
+      }
+      villageMusic.setSpeaking(speaking && !sim.paused, { answer: newest?.kind === 'narration' });
     }, 150);
+    // After a passage of the Scribe the story pauses for the band's answer, as in a sung story.
+    sim.setMusicPause(() => villageMusic.answerPauseMs());
     return () => {
       window.removeEventListener('pointerdown', start);
       window.clearInterval(timer);
       window.clearInterval(speechTimer);
       villageMusic.setScorer(null);
+      sim.setMusicPause(null);
     };
   }, [sim]);
   /** Speech and thoughts embroidered onto the cloth, when the woven text style is on. */
