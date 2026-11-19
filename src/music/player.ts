@@ -2,6 +2,7 @@ import { Composer, type PhrasePlan } from './composer';
 import { clamp01, type MusicCue } from './cue';
 import { Gaida, Kaval, Tapan, makeImpulse, makeNoiseBuffer } from './instruments';
 import { DEFAULT_TONE, type BandTone } from './tone';
+import { TONIC_MIDI, degreeToMidi } from './theory';
 
 /**
  * Plays the composer's music on the instruments, a little ahead of time. A new cue lands at
@@ -53,8 +54,18 @@ const MOTIF_MAX = 5;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+/** The drone's root for a phrase, in semitones from the tonic, kept low (a fourth below to a fifth above). */
+export function droneSemitones(plan: Pick<PhrasePlan, 'droneDegree' | 'mode'>): number {
+  let s = degreeToMidi(plan.droneDegree ?? 0, plan.mode) - TONIC_MIDI;
+  while (s > 7) s -= 12;
+  while (s < -5) s += 12;
+  return s;
+}
+
 /** How long the band's answer to a passage of the teller runs, seconds, for an in-between amount. */
 export const answerSeconds = (between: number) => (between > 0 ? lerp(5, 13, between) : 0);
+/** The room left after an ordinary line for the band to answer it, seconds. */
+export const lineAnswerSeconds = (between: number) => (between > 0 ? lerp(1.5, 5, between) : 0);
 
 export class MusicPlayer {
   readonly ctx: AudioContext;
@@ -309,8 +320,9 @@ export class MusicPlayer {
         this.nextMotifAt = now + 0.4;
         this.motifMax = answerSeconds(between);
       } else {
-        this.nextMotifAt = between > 0 && Math.random() < 0.35 + between ? now + lerp(1.6, 0.3, between) : Infinity;
-        this.motifMax = MOTIF_MAX;
+        // After an ordinary line: from 0.3 up the band answers every line, in the room the story leaves.
+        this.nextMotifAt = between > 0 && Math.random() < between / 0.3 ? now + lerp(0.6, 0.25, between) : Infinity;
+        this.motifMax = lineAnswerSeconds(between) + 0.6;
       }
       this.nextAt = Math.min(this.nextAt, now + 0.25);
     }
@@ -375,7 +387,7 @@ export class MusicPlayer {
 
   private play(plan: PhrasePlan, at: number) {
     const graph = this.graph!;
-    graph.gaida.setDrone(at, this.muted.drone ? 0 : plan.drone, plan.intensity);
+    graph.gaida.setDrone(at, this.muted.drone ? 0 : plan.drone, plan.intensity, droneSemitones(plan));
     graph.gaida.play(plan.gaidaOn && !this.muted.gaida, plan.gaida, at);
     if (!this.muted.kaval && plan.kaval.length) graph.kaval.play(plan.kaval, at);
     if (!this.muted.tapan) for (const h of plan.tapan) graph.tapan.hit(h, at + h.t);

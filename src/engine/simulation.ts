@@ -1,4 +1,5 @@
 import type { Rng } from '../core/rng';
+import { placeKey, placeRef } from './placeNames';
 import { isTextTooSimilar, parseDialogueAndNarration } from './dialogueText';
 import type { SimMind, SimPorts } from './ports';
 import { computeSpatialMix, type SpatialMix } from './spatialMix';
@@ -186,6 +187,13 @@ const MAX_VILLAGER_MEMORIES = 64;
 const MAX_MESSAGES_PER_CONV = 160;
 const MAX_CONVERSATIONS = 40;
 const DEFAULT_MAX_TIMELINE_FRAMES = 450;
+/** World time a character rests after a conversation before starting another (usual talk density). */
+const REST_AFTER_TALK_MS = 75000;
+/** A breath between two lines of a conversation (usual talk density), world ms. */
+const LINE_BEAT_MS = 1300;
+/** Two people talk only side by side; from up to this far apart one walks over first. */
+const TALK_REACH = 1.8;
+const APPROACH_FROM = 6;
 
 /**
  * Whether a line of the story plainly says the well's water came back or ran dry. Only
@@ -339,18 +347,31 @@ export class VillageSimulation {
    * How long to leave after a passage of the Scribe before the story goes on, so music can
    * answer it (milliseconds; the app's band supplies this). Nothing by default.
    */
-  private musicPause: (() => number) | null = null;
-  setMusicPause(fn: (() => number) | null) {
+  private musicPause: ((after: 'line' | 'passage') => number) | null = null;
+  setMusicPause(fn: ((after: 'line' | 'passage') => number) | null) {
     this.musicPause = fn;
+  }
+
+  /** Waits in world time, like the pacing of lines: only on the world clock (what the app uses). */
+  private async waitWorld(ms: number): Promise<void> {
+    if (ms <= 0 || this.timerMode !== 'sim') return;
+    await this.whenRunning();
+    await this.waitSimTime(ms);
   }
 
   /** After a passage of the Scribe: leave the band its turn, as a sung story does. */
   private async leaveRoomForMusic(): Promise<void> {
-    const ms = this.musicPause?.() ?? 0;
-    if (ms <= 0) return;
-    await this.whenRunning();
-    if (this.timerMode === 'sim') await this.waitSimTime(ms);
-    else await new Promise<void>((resolve) => setTimeout(resolve, ms / Math.max(0.25, Math.abs(this.speedMultiplier) || 1)));
+    await this.waitWorld(this.musicPause?.('passage') ?? 0);
+  }
+
+  /**
+   * Between two lines of a conversation: a breath (longer when the village is quiet), and any
+   * room the music asks for to answer the line.
+   */
+  private async breatheAfterLine(): Promise<void> {
+    const d = this.density('talk');
+    const beat = LINE_BEAT_MS * (d < 0.5 ? 2 - d * 2 : 1 - 0.4 * (d - 0.5) * 2) * this.paceStretch();
+    await this.waitWorld(Math.max(beat, this.musicPause?.('line') ?? 0));
   }
 
   /** Resolves at once when running, or when the world is next resumed. */
@@ -1472,8 +1493,8 @@ export class VillageSimulation {
         !otherRt.activeConversationId &&
         otherRt.state !== 'thinking' &&
         otherRt.state !== 'speaking' &&
-        now - rt.lastThinkAt >= 6000 * this.talkGap() &&
-        now - otherRt.lastThinkAt >= 6000 * this.talkGap()
+        this.simTimeMs - (this.lastThinkSimMs.get(rt.id) ?? -Infinity) >= REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch() &&
+        this.simTimeMs - (this.lastThinkSimMs.get(otherRt.id) ?? -Infinity) >= REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch()
       ) {
         rt.path = [];
         otherRt.path = [];
@@ -1530,17 +1551,28 @@ export class VillageSimulation {
     return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
   }
 
+  /** How much longer than usual the story's waits are, from its pace: 2.2x when slow, 0.55x when brisk. */
+  private paceStretch(): number {
+    const v = this.modelSettings.storyPace;
+    const p = typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
+    return p < 0.5 ? 2.2 - 1.2 * p * 2 : 1 - 0.45 * (p - 0.5) * 2;
+  }
+
   /** How much longer than usual characters wait before talking again: 5x when sparse, 0.45x when dense. */
   private talkGap(): number {
     const d = this.density('talk');
     return d >= 0.5 ? 1 - 0.55 * (d - 0.5) * 2 : 5 - 4 * d * 2;
   }
 
-  /** Whether the Scribe frames this scene with a beat. Always at the usual density and above. */
-  private scribeFrames(): boolean {
+  /**
+   * Whether the Scribe frames this scene with a beat: most scenes open with one at the usual
+   * density, fewer close with one; every scene from about 0.65 (openings) and 0.85 (closings).
+   */
+  private scribeFrames(phase: 'opening' | 'closing' = 'opening'): boolean {
     const d = this.density('scribe');
-    if (d >= 0.5) return true;
-    return d > 0 && this.rng() < d * 2;
+    const p = phase === 'opening' ? d * 1.6 : d * 1.2;
+    if (p >= 1) return true;
+    return d > 0 && this.rng() < p;
   }
 
   /**
@@ -1552,7 +1584,7 @@ export class VillageSimulation {
     const d = this.density('scribe');
     if (d <= 0.5 || !this.modelSettings.narratorEnabled || !this.storySet || this.holdStory || this.paused) return;
     if (this.villageLifeRunning || this.prologueRunning) return;
-    const every = (240 - 190 * (d - 0.5) * 2) * 1000;
+    const every = (240 - 190 * (d - 0.5) * 2) * 1000 * this.paceStretch();
     if (this.simTimeMs - this.lastNarrationSimMs < every) return;
     if ([...this.runtimes.values()].some((rt) => rt.activeConversationId)) return;
     this.villageLifeRunning = true;
@@ -1585,7 +1617,8 @@ export class VillageSimulation {
     this.maybeTellPrologue();
     this.maybeTellVillageLife();
     const talk = this.density('talk');
-    const gap = 10500 * this.talkGap();
+    // Rest after a conversation, counted from its end.
+    const gap = REST_AFTER_TALK_MS * this.talkGap() * this.paceStretch();
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
     if (this.modelSettings.autoConverse && !this.holdStory && talk > 0) {
@@ -1620,12 +1653,22 @@ export class VillageSimulation {
           if (this.simTimeMs - bThinkSim < gap || now - b.lastThinkAt < 3500) continue;
 
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
-          if (dist <= 3.8 && this.rng() < 0.65 * Math.min(1, talk * 2)) {
-            this.lastThinkSimMs.set(a.id, this.simTimeMs);
-            this.lastThinkSimMs.set(b.id, this.simTimeMs);
+          if (dist > APPROACH_FROM || this.rng() >= 0.22 * Math.min(1, talk * 2)) continue;
+          this.lastThinkSimMs.set(a.id, this.simTimeMs);
+          this.lastThinkSimMs.set(b.id, this.simTimeMs);
+          if (dist <= TALK_REACH) {
             this.startAutonomousConversation(a.id, b.id);
-            break;
+          } else {
+            // Not close enough to talk: one walks over to the other, who waits a moment.
+            const goal = this.findAdjacentStandTile(b.x, b.y, a.id);
+            const path = findPath(this.map, { x: a.x, y: a.y }, goal, this.getOccupiedTileSet(a.id));
+            if (path.length === 0) continue;
+            a.errand = { targetId: b.id, tries: 0 };
+            a.path = path;
+            b.path = [];
+            this.lastMoveSimMs.set(b.id, this.simTimeMs + 6000);
           }
+          break;
         }
       }
     }
@@ -1681,7 +1724,8 @@ export class VillageSimulation {
   private async planNextVillagerAction(cfg: VillagerConfig, rt: VillagerRuntime) {
     const now = this.now();
     const others = [...this.configs.values()].filter((v) => v.id !== cfg.id);
-    const landmarks = this.getLandmarks().map((l) => l.label);
+    // As they are said ("the Well"), so the planner and the model use the article.
+    const landmarks = this.getLandmarks().map((l) => placeRef(l.label));
 
     const decision = await this.mind.decideVillagerNextAction({
         world: this.world,
@@ -1707,12 +1751,12 @@ export class VillageSimulation {
         safeGoal = this.findAdjacentStandTile(targetRt.x, targetRt.y, rt.id);
       }
     } else if (decision.action === 'visit' && decision.targetName) {
-      const targetNorm = decision.targetName.trim().replace(/^#/, '').toLowerCase();
+      const targetNorm = placeKey(decision.targetName);
       const lm = this.getLandmarks().find(
         (l) =>
           (l.tag && l.tag.toLowerCase() === targetNorm) ||
-          l.label.toLowerCase() === targetNorm ||
-          l.label.toLowerCase().includes(targetNorm),
+          placeKey(l.label) === targetNorm ||
+          placeKey(l.label).includes(targetNorm),
       );
       const place = lm ?? this.findPlaceForText(`#${decision.targetName.trim().replace(/^#/, '')} ${decision.targetName}`);
       if (place) {
@@ -1833,7 +1877,7 @@ export class VillageSimulation {
         rt.path = path;
         rt.state = 'walking';
         rt.lastMoveAt = now;
-        rt.currentIntention = sp ? `Heading out near ${sp.label}` : `Exploring ${placeName(this.world)}`;
+        rt.currentIntention = sp ? `Heading out near ${placeRef(sp.label)}` : `Exploring ${placeName(this.world)}`;
         rt.activityLabel = rt.currentIntention;
       }
     }
@@ -1923,7 +1967,7 @@ export class VillageSimulation {
         best = lm;
       }
     }
-    return best.label;
+    return placeRef(best.label);
   }
 
   private async emitNarrationTurn(
@@ -2085,6 +2129,7 @@ export class VillageSimulation {
         const spokenLine =
           [...conv.messages].reverse().find((m) => m.senderId === speakerCfg.id && m.kind !== 'thought')?.text ?? '';
         await this.paceLine(spokenLine, turnStartedSimMs);
+        await this.breatheAfterLine();
 
         await this.sleep(400);
       }
@@ -2119,7 +2164,7 @@ export class VillageSimulation {
       });
       this.appendWorldEvent(rtB, bSummary);
 
-      if (!calledAway && this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet && this.scribeFrames()) {
+      if (!calledAway && this.modelSettings.narratorEnabled && this.modelSettings.narrateEvents && this.storySet && this.scribeFrames('closing')) {
         const closing = await this.mind.generateSceneBeat({
         world: this.world,
         cast: this.castPronouns(),
@@ -2159,6 +2204,7 @@ export class VillageSimulation {
           rt.activityLabel = rt.currentIntention || cfg.plan;
           rt.lastThinkAt = this.now();
           rt.lastMoveAt = this.now();
+          this.lastThinkSimMs.set(rt.id, this.simTimeMs);
         }
       }
       this.notify(true);
@@ -2290,12 +2336,12 @@ export class VillageSimulation {
         return;
       }
     }
+    const directed = Boolean(errand.directed);
     rt.errand = undefined;
     rt.facing = computeFacing(rt, target, rt.facing);
-    if (dist > 2.2) return;
+    if (dist > TALK_REACH + 0.3) return;
     if (
-      this.modelSettings.autoConverse &&
-      this.density('talk') > 0 &&
+      (directed || (this.modelSettings.autoConverse && this.density('talk') > 0)) &&
       !rt.activeConversationId &&
       !target.activeConversationId &&
       rt.state !== 'thinking' &&
@@ -2359,7 +2405,7 @@ export class VillageSimulation {
         const path = findBestPath(goal);
         rt.currentIntention = `Heading to speak with ${otherTarget.name}`;
         rt.activityLabel = rt.currentIntention;
-        rt.errand = { targetId: otherTarget.id, tries: 0 };
+        rt.errand = { targetId: otherTarget.id, tries: 0, directed: true };
         if (path.length > 0) {
           rt.path = path;
           rt.walkAndTalk = true;
@@ -2412,7 +2458,7 @@ export class VillageSimulation {
       const goal = findNearestWalkableTile(this.map, landmark.x + off.dx, landmark.y + off.dy);
       const path = findBestPath(goal);
       this.callAway(rt);
-      rt.currentIntention = `Headed to ${landmark.label}`;
+      rt.currentIntention = `Headed to ${placeRef(landmark.label)}`;
       rt.activityLabel = rt.currentIntention;
       if (path.length > 0) {
         rt.path = path;

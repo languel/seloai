@@ -613,7 +613,7 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
       if (args.mode !== undefined) {
         const m = findSoundMode(String(args.mode));
         if (!m) throw new Error(`"${args.mode}" is not a mode: use ${SOUND_MODES.map((x) => x.id).join(', ')}.`);
-        applySoundMode(m, (patch) => void host.call('change_settings', { changes: { talk_density: patch.talkDensity, scribe_density: patch.scribeDensity } }));
+        applySoundMode(m, (patch) => void host.call('change_settings', { changes: { talk_density: patch.talkDensity, scribe_density: patch.scribeDensity, story_pace: patch.storyPace } }));
         changed.push(`mode → ${m.label}: ${m.about}`);
       }
       for (const ch of ['voices', 'narrator', 'guide', 'music', 'master'] as MixerChannel[]) {

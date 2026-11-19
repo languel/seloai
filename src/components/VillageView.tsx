@@ -625,7 +625,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
       villageMusic.setSpeaking(speaking && !sim.paused, { answer: newest?.kind === 'narration' });
     }, 150);
     // After a passage of the Scribe the story pauses for the band's answer, as in a sung story.
-    sim.setMusicPause(() => villageMusic.answerPauseMs());
+    sim.setMusicPause((after) => villageMusic.answerPauseMs(after));
     return () => {
       window.removeEventListener('pointerdown', start);
       window.clearInterval(timer);

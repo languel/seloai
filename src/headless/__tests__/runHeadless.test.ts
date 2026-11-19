@@ -8,7 +8,7 @@ describe('Headless reproducible runs', () => {
   const run = (seed: number) =>
     runHeadless({
       seed,
-      simSeconds: 90,
+      simSeconds: 240,
       map: pack.map,
       villagers: pack.cast!,
       world: pack.context,

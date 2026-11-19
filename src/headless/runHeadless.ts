@@ -80,7 +80,7 @@ export async function runHeadless(options: HeadlessRunOptions): Promise<Headless
       timers: 'sim',
     },
   );
-  if (options.musicPauseMs) sim.setMusicPause(() => options.musicPauseMs!);
+  if (options.musicPauseMs) sim.setMusicPause((after) => (after === 'passage' ? options.musicPauseMs! : 0));
   brainRouter.configureStoryRuntime({
     random: createSeededRng(options.seed ^ 0x9e3779b9),
     now: () => HEADLESS_EPOCH_MS + Math.round(sim.simTimeMs),

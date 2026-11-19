@@ -297,6 +297,7 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   ambientAudioEnabled: false,
   autoConverse: true,
   talkDensity: 0.5,
+  storyPace: 0.5,
   scribeDensity: 0.5,
   narratorEnabled: true,
   narratorName: 'The Scribe',

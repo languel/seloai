@@ -2,7 +2,7 @@ import { getAudioContext } from '../ai/audioPipeline';
 import { busInput } from '../ai/mixer';
 import { clamp01, type MusicCue } from './cue';
 import { MusicListener, type SceneReading } from './listener';
-import { DEFAULT_AMOUNTS, MusicPlayer, answerSeconds, type MusicAmounts } from './player';
+import { DEFAULT_AMOUNTS, MusicPlayer, answerSeconds, lineAnswerSeconds, type MusicAmounts } from './player';
 import { ScribeEar, type ScribeScore } from './scribeScore';
 import { normalizeTone, type BandTone } from './tone';
 
@@ -51,6 +51,16 @@ export interface MusicStatus {
 }
 
 /** Asks a model what the latest lines feel like (the app wires in the Scribe's). */
+/** One stretch of what the band played, on the story's clock (ms), for the Loom. */
+export interface MusicSpan {
+  t0: number;
+  t1: number;
+  part: 'ambience' | 'between' | 'song';
+  label: string;
+}
+
+const TIMELINE_MAX = 3000;
+
 export type MusicScorer = (lines: SceneReading['lines']) => Promise<ScribeScore | null>;
 
 class VillageMusic {
@@ -115,7 +125,13 @@ class VillageMusic {
       });
       this.player.setCue(this.cue());
       this.player.setSpeaking(this.speakingNow);
-      this.player.onPhrase(() => this.changed());
+      const player = this.player;
+      player.onPhrase((plan, at) => {
+        // On the story's clock, so the Loom can lay it beside what was said.
+        const t0 = Date.now() + (at - player.ctx.currentTime) * 1000;
+        this.record({ t0, t1: t0 + plan.length * 1000, part: player.part, label: plan.label });
+        this.changed();
+      });
     }
     return this.player;
   }
@@ -226,18 +242,50 @@ class VillageMusic {
    * gap after it (see `MusicPlayer.setSpeaking`). The village view calls this as it happens.
    */
   setSpeaking(speaking: boolean, opts: { answer?: boolean } = {}) {
+    if (speaking !== this.speakingNow) {
+      const now = Date.now();
+      if (speaking) {
+        this.speech.push({ t0: now, t1: now });
+        // Whatever the band was playing gives way here.
+        const last = this.spans[this.spans.length - 1];
+        if (last && last.part !== 'ambience' && last.t1 > now) last.t1 = now;
+      } else {
+        const open = this.speech[this.speech.length - 1];
+        if (open) open.t1 = now;
+      }
+      if (this.speech.length > TIMELINE_MAX) this.speech.splice(0, this.speech.length - TIMELINE_MAX);
+    }
     this.speakingNow = speaking;
     this.player?.setSpeaking(speaking, opts);
   }
 
+  private spans: MusicSpan[] = [];
+  private speech: Array<{ t0: number; t1: number }> = [];
+
+  private record(span: MusicSpan) {
+    const last = this.spans[this.spans.length - 1];
+    // Bars of the same part run together into one stretch.
+    if (last && last.part === span.part && span.t0 <= last.t1 + 400) last.t1 = Math.max(last.t1, span.t1);
+    else this.spans.push(span);
+    if (this.spans.length > TIMELINE_MAX) this.spans.splice(0, this.spans.length - TIMELINE_MAX);
+  }
+
+  /** What the band played and when lines were being said, on the story's clock, for the Loom. */
+  timeline(): { spans: readonly MusicSpan[]; speech: ReadonlyArray<{ t0: number; t1: number }>; now: number } {
+    const now = Date.now();
+    const speech = this.speech.map((s, i) => (i === this.speech.length - 1 && this.speakingNow ? { t0: s.t0, t1: now } : s));
+    return { spans: this.spans, speech, now };
+  }
+
   /**
    * How long, in milliseconds, the story should pause after a passage of the teller (the
-   * Scribe) so the band can answer it: the pause of a sung story before the instruments' turn.
-   * Nothing when the music is off or there is no in-between.
+   * Scribe) or an ordinary line so the band can answer it: the pause of a sung story before
+   * the instruments' turn. Nothing when the music is off or there is no in-between.
    */
-  answerPauseMs(): number {
+  answerPauseMs(after: 'line' | 'passage' = 'passage'): number {
     if (!this.on || !this.player?.playing) return 0;
-    return Math.round(answerSeconds(this.amountsNow.between) * 1000 * 0.85);
+    const between = this.amountsNow.between;
+    return Math.round((after === 'passage' ? answerSeconds(between) * 0.85 : lineAnswerSeconds(between)) * 1000);
   }
   private speakingNow = false;
 

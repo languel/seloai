@@ -405,30 +405,36 @@ export class Gaida {
    * Brings the drone to a level (0 to 1); from silence it swells up to pitch as the bag fills.
    * Its tone brightens with the music's intensity.
    */
-  setDrone(at: number, level: number, intensity = 0.5) {
+  setDrone(at: number, level: number, intensity = 0.5, rootSemitones = 0) {
     const target = level * DRONE_PEAK;
     const g = this.droneGain.gain;
+    const root = Math.pow(2, rootSemitones / 12);
     if (this.droneLevel === 0 && level > 0) {
       for (const d of this.drones) {
-        d.osc.frequency.setValueAtTime(this.droneHz * d.ratio * 0.94, at);
-        d.osc.frequency.exponentialRampToValueAtTime(this.droneHz * d.ratio, at + 0.7);
+        d.osc.frequency.cancelScheduledValues(at);
+        d.osc.frequency.setValueAtTime(this.droneHz * root * d.ratio * 0.94, at);
+        d.osc.frequency.exponentialRampToValueAtTime(this.droneHz * root * d.ratio, at + 0.7);
       }
       g.setValueAtTime(0, at);
       g.linearRampToValueAtTime(target, at + 0.9);
     } else if (level === 0 && this.droneLevel > 0) {
       for (const d of this.drones) {
-        d.osc.frequency.setValueAtTime(this.droneHz * d.ratio, at);
-        d.osc.frequency.exponentialRampToValueAtTime(this.droneHz * d.ratio * 0.93, at + 0.6);
+        d.osc.frequency.setValueAtTime(this.droneHz * this.root * d.ratio, at);
+        d.osc.frequency.exponentialRampToValueAtTime(this.droneHz * this.root * d.ratio * 0.93, at + 0.6);
       }
       g.setTargetAtTime(0, at, 0.25);
     } else {
       g.setTargetAtTime(target, at, 0.8);
+      // The drone moves with the tune: a slow glide to its new root, never a jump.
+      if (Math.abs(root - this.root) > 0.001) for (const d of this.drones) d.osc.frequency.setTargetAtTime(this.droneHz * root * d.ratio, at, 0.9);
     }
+    this.root = root;
     this.intensity = intensity;
     this.droneLevel = level;
   }
 
   private intensity = 0.3;
+  private root = 1;
 
   /**
    * The drone's long life: over the next `span` seconds (a few bars) its brightness, breath,
@@ -438,7 +444,10 @@ export class Gaida {
    */
   drift(at: number, span: number, rng: () => number = Math.random) {
     const t = this.droneTone;
-    const m = t.movement;
+    // Movement and beating themselves rise and fall over minutes, out of step with each other.
+    const slow = (period: number, phase: number) => 0.5 + 0.5 * Math.sin((2 * Math.PI * at) / period + phase);
+    const m = t.movement * (0.3 + 0.9 * slow(97, 0.4));
+    const beating = t.beating * (0.25 + 1.05 * slow(143, 2.1));
     const tau = span / 3;
     const r = () => rng();
     const bright = this.droneBase * lin(0.75, 1.35, this.intensity) * (1 + m * (r() * 1.3 - 0.55));
@@ -449,7 +458,8 @@ export class Gaida {
     this.dGrit.gain.setTargetAtTime(grit, at, tau);
     this.dSwell.gain.setTargetAtTime(1 + m * (r() * 0.5 - 0.2), at, tau);
     const [, second, fifth, octave] = this.drones;
-    second.osc.detune.setTargetAtTime(1 + t.beating * 16 * (0.4 + r() * 1.2), at, tau);
+    second.osc.detune.setTargetAtTime(1 + beating * 16 * (0.4 + r() * 1.2), at, tau);
+    second.gain.gain.setTargetAtTime(0.15 + 0.35 * Math.min(1, beating), at, tau);
     const hasFifth = t.voicing === 'fifth' || t.voicing === 'open';
     const hasOctave = t.voicing === 'octave' || t.voicing === 'open';
     fifth.gain.gain.setTargetAtTime(hasFifth ? 0.45 * (0.6 + 0.5 * r()) : r() < 0.3 * m ? 0.22 * m : 0, at, tau);

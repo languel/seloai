@@ -36,7 +36,7 @@ describe('room for the music', () => {
   it('the story pauses after a passage of the Scribe when the band asks for it', async () => {
     const pack = findWorldPack('balkan-myth')!.build();
     const run = (musicPauseMs: number) =>
-      runHeadless({ seed: 5, simSeconds: 150, map: pack.map, villagers: pack.cast!, world: pack.context, musicPauseMs });
+      runHeadless({ seed: 5, simSeconds: 300, map: pack.map, villagers: pack.cast!, world: pack.context, musicPauseMs, settings: { talkDensity: 0.8, scribeDensity: 0.8 } });
     const plain = await run(0);
     const paused = await run(8000);
     expect(paused.trace.length).toBeLessThan(plain.trace.length);

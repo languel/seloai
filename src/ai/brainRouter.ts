@@ -1,4 +1,5 @@
 import { buildNarratorConfig, getEffectiveVoice } from '../data/defaultData';
+import { placeKey } from '../engine/placeNames';
 import type { StoryLine } from '../music/listener';
 import { parseScore, scorePrompt, type ScribeScore } from '../music/scribeScore';
 import { shortName } from '../engine/names';
@@ -1289,9 +1290,7 @@ class BrainRouter {
             }
           }
           if (visitMatch?.[1]) {
-            const lm = landmarkNames.find((l) =>
-              visitMatch[1].toLowerCase().includes(l.toLowerCase()),
-            );
+            const lm = landmarkNames.find((l) => visitMatch[1].toLowerCase().includes(placeKey(l)));
             if (lm && motiveIsFresh) {
               runtime.recentMotives = pushRing(runtime.recentMotives, candidateMotive);
               return { action: 'visit', targetName: lm, motive: candidateMotive };

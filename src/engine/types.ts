@@ -281,7 +281,8 @@ export interface VillagerRuntime {
   avoidTargetId?: string;
   lastRerouteAt?: number;
   /** Someone the player sent them to: they keep after them until they are side by side. */
-  errand?: { targetId: string; tries: number };
+  /** Walking to someone to talk; `directed` when the player sent them (talks even if the village is quiet). */
+  errand?: { targetId: string; tries: number; directed?: boolean };
   /** Sent somewhere by the player: they keep walking while they answer. */
   walkAndTalk?: boolean;
   lastThinkAt: number;
@@ -411,6 +412,12 @@ export interface ModelSettings {
    * up a conversation again, how readily, and how long it runs. 0: they go about their business.
    */
   talkDensity?: number;
+  /**
+   * The story's tempo, 0 (slow, lingering) to 1 (brisk); 0.5 is usual. Stretches or shortens
+   * the breath between lines, the rest between conversations and the Scribe's quiet moments,
+   * without changing how much anyone talks.
+   */
+  storyPace?: number;
   /**
    * How much the Scribe tells, 0 to 1 (0.5 is usual): below the middle fewer scenes are framed
    * with an opening and a closing beat; above it the Scribe also tells quiet moments of village

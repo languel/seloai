@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { villageMusic } from '../music/villageMusic';
 import { PALETTES, paintLinen, type PaletteName } from '../art/looks';
 import type { Ink } from '../art/shapes';
 import type { VillageSimulation } from '../engine/simulation';
@@ -15,7 +16,9 @@ interface LoomViewProps {
 const THREAD_INKS: Ink[] = ['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark'];
 const LABEL_W = 132;
 const TOP = 26;
-const BOTTOM = 10;
+const BOTTOM_PLAIN = 10;
+/** Room along the bottom for the music strip, when it is shown. */
+const MUSIC_LANE = 40;
 
 function ago(ms: number) {
   const s = Math.round(ms / 1000);
@@ -38,6 +41,24 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
   const [pulled, setPulled] = useState<string | null>(null);
   const [opened, setOpened] = useState<LoomStitch | null>(null);
   const [followNow, setFollowNow] = useState(true);
+  // The music strip: what the band played, under what was said. Remembered on this device.
+  const [showMusic, setShowMusic] = useState(() => {
+    try {
+      return localStorage.getItem('seloai.loom.music') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const toggleMusic = () =>
+    setShowMusic((on) => {
+      try {
+        localStorage.setItem('seloai.loom.music', on ? 'off' : 'on');
+      } catch {
+        // no storage
+      }
+      return !on;
+    });
+  const BOTTOM = showMusic ? BOTTOM_PLAIN + MUSIC_LANE : BOTTOM_PLAIN;
   const [tick, setTick] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -339,7 +360,53 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       ctx.globalAlpha = 1;
     }
     ctx.restore();
-  }, [frame, layout, look, pulled, q]);
+
+    // The music strip: ambience faint, the in-between stronger, song strongest; above it, when lines were said.
+    if (showMusic) {
+      const { spans, speech } = villageMusic.timeline();
+      const top = H - MUSIC_LANE + 4;
+      const laneH = MUSIC_LANE - 14;
+      ctx.save();
+      ctx.fillStyle = palette.inks.dark;
+      ctx.globalAlpha = 0.85;
+      ctx.font = '11px Georgia, serif';
+      ctx.fillText('Music', 8, top + laneH / 2 + 6);
+      ctx.globalAlpha = 0.6;
+      ctx.font = '9px Georgia, serif';
+      ctx.fillText('speech above', 8, top + laneH / 2 + 17);
+      ctx.beginPath();
+      ctx.rect(LABEL_W, top - 4, W - LABEL_W, MUSIC_LANE);
+      ctx.clip();
+      ctx.globalAlpha = 1;
+      const music = lineLook ? palette.inks.dark : palette.inks.primary;
+      const strength = { ambience: 0.16, between: 0.55, song: 0.9 } as const;
+      for (const sp of spans) {
+        if (sp.t1 < t0 || sp.t0 > t1) continue;
+        const x0 = Math.max(LABEL_W, x(sp.t0));
+        const x1 = Math.min(W, x(sp.t1));
+        if (x1 - x0 < 0.5) continue;
+        ctx.globalAlpha = strength[sp.part];
+        ctx.fillStyle = sp.part === 'song' && !lineLook ? palette.inks.gold : music;
+        const inset = sp.part === 'ambience' ? laneH * 0.3 : 0;
+        ctx.fillRect(x0, top + 6 + inset, x1 - x0, laneH - 6 - inset * 2);
+        if (x1 - x0 > 70 && sp.part !== 'ambience') {
+          ctx.globalAlpha = 0.95;
+          ctx.fillStyle = sp.part === 'song' || lineLook ? palette.inks.dark : palette.ground;
+          ctx.font = '9px Georgia, serif';
+          ctx.fillText(sp.label.split(' · ').slice(0, 2).join(' · '), x0 + 3, top + 6 + laneH / 2);
+        }
+      }
+      // When lines were being said.
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = palette.inks.dark;
+      for (const sp of speech) {
+        if (sp.t1 < t0 || sp.t0 > t1) continue;
+        const x0 = Math.max(LABEL_W, x(sp.t0));
+        ctx.fillRect(x0, top, Math.max(1, x(sp.t1) - x0), 3);
+      }
+      ctx.restore();
+    }
+  }, [frame, layout, look, pulled, q, showMusic]);
 
   const onWheel = (e: React.WheelEvent) => {
     const { tOf } = geom();
@@ -458,6 +525,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
               Let go of {names.get(pulled)}
             </button>
           )}
+          <GlyphButton glyph="music" label="Show the music: ambience, in-between and song, under what was said" pressed={showMusic} dimOff onClick={toggleMusic} />
           <GlyphButton glyph="wholeMap" label="The whole cloth" onClick={fitAll} />
           <GlyphButton glyph="follow" label="Keep now in view" pressed={followNow} dimOff onClick={() => setFollowNow((f) => !f)} tipSide="below-left" />
         </StitchPanel>
@@ -476,7 +544,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
           />
         </div>
         <div className="stitch-muted px-1 text-[10px]">
-          Scroll to zoom through time, drag to move along it. Click a thread to pull it out, a stitch to open the moment. ✕ a plain line, ○ a question, ✳ an exclamation, a barred ✕ a long speech; dashed gold is the Scribe; long loose stitches ahead of now are where someone is heading.
+          Scroll to zoom through time, drag to move along it. Click a thread to pull it out, a stitch to open the moment. ✕ a plain line, ○ a question, ✳ an exclamation, a barred ✕ a long speech; dashed gold is the Scribe; long loose stitches ahead of now are where someone is heading. Along the bottom, the music: a thin band for ambience, a stronger one for the in-between, the strongest for song, and above it when lines were said.
         </div>
       </div>
       <StitchPanel className="flex w-72 shrink-0 flex-col gap-2 overflow-hidden p-3 text-xs">

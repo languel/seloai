@@ -62,7 +62,24 @@ export interface PhrasePlan {
   unit?: number;
   /** For logs and the lab: what is being played. */
   label: string;
+  /** The scale degree the drone sounds under this phrase (0, the tonic, when left out). */
+  droneDegree?: number;
 }
+
+/**
+ * Where the drone may move away from the tonic, by mood: degrees of the mood's mode (4 the
+ * fifth, 3 the fourth, -1 the note below, 1 the second, -2 the sixth below).
+ */
+const DRONE_MOVES: Record<Mood, readonly number[]> = {
+  pastoral: [4, 3, -1],
+  lament: [-1, -2, 3],
+  mystery: [1, -1, 4],
+  dread: [1, -2],
+  tension: [3, 1, 4],
+  joy: [4, 3],
+  festive: [4, 3, -1],
+  triumph: [4, 3],
+};
 
 interface TuneNote {
   /** Units from the start of the line. */
@@ -79,6 +96,8 @@ interface Tune {
   barUnits: number;
   /** Phrase A, then B. */
   lines: [TuneNote[], TuneNote[]];
+  /** Where the drone moves for the B phrase. */
+  bDrone: number;
 }
 
 /** The A A B B form, as indices into `Tune.lines`. */
@@ -101,6 +120,9 @@ export class Composer {
   private formsPlayed = 0;
   private gaidaOn = false;
   private freeCount = 0;
+  private ambienceDrone = 0;
+  private ambienceHold = 0;
+  private ambienceMood: Mood | null = null;
 
   constructor(seed = 1) {
     this.rng = createSeededRng(seed);
@@ -157,7 +179,14 @@ export class Composer {
         u += g;
       });
     }
+    // Every few bars the drone may move to another degree, or home again.
+    if (--this.ambienceHold <= 0 || this.ambienceMood !== mood) {
+      this.ambienceDrone = this.ambienceDrone !== 0 || rng() < 0.45 ? 0 : pick(rng, DRONE_MOVES[mood]);
+      this.ambienceHold = 2 + Math.floor(rng() * 4);
+      this.ambienceMood = mood;
+    }
     return {
+      droneDegree: this.ambienceDrone,
       length: bars * barUnits * unit,
       mood,
       mode: prof.mode,
@@ -334,6 +363,7 @@ export class Composer {
       kaval: gaidaLead ? [] : notes,
       tapan,
       drone: gaidaLead ? 1 : mood === 'lament' ? 0.4 : 0.55,
+      droneDegree: answer || rng() < 0.4 ? 0 : pick(rng, DRONE_MOVES[mood]),
       label: `free · ${mode} · ${gaidaLead ? 'gaida' : 'kaval'}${answer ? ' (answer)' : ''}`,
     };
   }
@@ -356,7 +386,7 @@ export class Composer {
     const a = this.makeLine(groups, bars, pick(rng, [0, 1, 2]) + register, pick(rng, [4, 5]) + register, pick(rng, [4, 1, 4]) + register);
     // B climbs higher, often as a sequence of A's opening, and comes home to the tonic.
     const b = this.makeLine(groups, bars, pick(rng, [4, 5]) + register, pick(rng, [6, 7, 8]) + register, 0 + register);
-    return { key: `${mood}:${dance}`, mood, dance, bars, barUnits, lines: [a, b] };
+    return { key: `${mood}:${dance}`, mood, dance, bars, barUnits, lines: [a, b], bDrone: rng() < 0.75 ? pick(rng, DRONE_MOVES[mood]) : 0 };
   }
 
   /** One line of a tune: rhythm cell per group, an arching stepwise contour, a held cadence. */
@@ -480,6 +510,7 @@ export class Composer {
       kaval,
       tapan,
       drone: this.gaidaOn ? 1 : 0.5,
+      droneDegree: lineIdx === 0 ? 0 : tune.bDrone,
       unit,
       label: `${DANCES[dance].label} · ${mode} · ${lead} · ${lineIdx === 0 ? 'A' : 'B'}${formEnd ? ' · fill' : ''}`,
     };

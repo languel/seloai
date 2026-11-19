@@ -104,6 +104,16 @@ export function SoundPanel({ settings, onUpdateSettings, fill = true }: SoundPan
           <div className="mt-1.5 text-[10px]" style={muted}>
             {mode ? mode.about : 'Your own mix.'}
           </div>
+          <div className="mt-2">
+            <Slider
+              label="Story pace"
+              hint="The story's tempo: the breath between lines, the rest between conversations, the Scribe's quiet moments. Slow lingers; brisk moves on"
+              left="slow"
+              right="brisk"
+              value={settings.storyPace ?? 0.5}
+              onChange={(v) => onUpdateSettings({ storyPace: v })}
+            />
+          </div>
         </Section>
 
         <Section title="Mixer">
