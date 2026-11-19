@@ -138,6 +138,14 @@ function withPackVoice(villager: VillagerConfig): VillagerConfig {
   return match ? { ...villager, voice: structuredClone(match.voice) } : villager;
 }
 
+/** A pack character saved before they kept to a place (the Lamia and her well) is given it. */
+function withPackStayNear(villager: VillagerConfig): VillagerConfig {
+  if (villager.stayNear) return villager;
+  packCast ??= WORLD_PACKS.flatMap((pack) => pack.build().cast ?? []);
+  const match = packCast.find((c) => c.id === villager.id && c.name === villager.name && c.stayNear);
+  return match ? { ...villager, stayNear: structuredClone(match.stayNear) } : villager;
+}
+
 function withPackFigure(villager: VillagerConfig): VillagerConfig {
   if (villager.figure) return villager;
   packFigures ??= WORLD_PACKS.flatMap((pack) => pack.build().cast ?? []).filter((c) => c.figure);
@@ -170,6 +178,7 @@ export async function loadPersistedState(): Promise<PersistedVillageState> {
         villagers: stored.villagers
           .map(ensureVillagerSprite)
           .map(withPackFigure)
+          .map(withPackStayNear)
           .map((v) => (oldVoices ? withPackVoice(v) : v)),
         modelSettings: {
           ...DEFAULT_MODEL_SETTINGS,

@@ -194,6 +194,8 @@ const FIRST_TALK_MS = 15000;
 /** While a character's plan is awaited, they stroll nearby after this long, and again this often (world ms). */
 const STROLL_AFTER_MS = 1500;
 const STROLL_EVERY_MS = 6000;
+/** How long someone keeping to a place pauses between steps around it (usual), world ms. */
+const CIRCLE_PAUSE_MS = 5000;
 /** A breath between two lines of a conversation (usual talk density), world ms. */
 const LINE_BEAT_MS = 1300;
 /** Two people talk only side by side; from up to this far apart one walks over first. */
@@ -272,6 +274,12 @@ export class VillageSimulation {
   private lastStrollSimMs = new Map<string, number>();
   /** Characters on a stroll, whose plan may still take over when it comes. */
   private strolling = new Set<string>();
+  /** Places characters were told to keep to ("stay near the well"), beyond their own `stayNear`. */
+  private directedAnchors = new Map<string, { place: string; radius?: number }>();
+  /** Characters the story has released from keeping to a place. */
+  private releasedAnchors = new Set<string>();
+  /** The way each anchored character circles (1 or -1). */
+  private circleDir = new Map<string, number>();
   private lastNotifyAt = 0;
   private lastMoveSimMs = new Map<string, number>();
   private lastThinkSimMs = new Map<string, number>();
@@ -357,8 +365,10 @@ export class VillageSimulation {
    * How long to leave after a passage of the Scribe before the story goes on, so music can
    * answer it (milliseconds; the app's band supplies this). Nothing by default.
    */
-  private musicPause: ((after: 'line' | 'passage') => number) | null = null;
-  setMusicPause(fn: ((after: 'line' | 'passage') => number) | null) {
+  private musicPause: ((after: 'line' | 'passage' | 'overture') => number) | null = null;
+  /** Until when (world ms) the opening music plays and no conversation begins. */
+  private overtureUntilSim = 0;
+  setMusicPause(fn: ((after: 'line' | 'passage' | 'overture') => number) | null) {
     this.musicPause = fn;
   }
 
@@ -709,6 +719,9 @@ export class VillageSimulation {
    */
   resetStory() {
     this.hasTalked.clear();
+    this.overtureUntilSim = 0;
+    this.releasedAnchors.clear();
+    this.directedAnchors.clear();
     this.mind.flushAudioQueue();
     this.mind.resetStoryMemory?.();
     this.clearDatabase();
@@ -768,6 +781,10 @@ export class VillageSimulation {
         if (text) {
           await this.emitNarrationTurn(conv, text, true, undefined, res.source);
           for (const rt of this.runtimes.values()) this.appendWorldEvent(rt, `The story begins: ${text.slice(0, 160)}`);
+          // The scene is set; the band plays while everyone finds their purpose, and no one
+          // starts a conversation until it has.
+          const overture = this.musicPause?.('overture') ?? 0;
+          if (overture > 0) this.overtureUntilSim = this.simTimeMs + overture;
         }
       } catch {
         // A prologue that cannot be told does not hold the story back.
@@ -799,6 +816,10 @@ export class VillageSimulation {
     if (state) {
       const news = state === 'flowing' ? 'The well flows again: the water has come back.' : 'The well has run dry.';
       for (const rt of this.runtimes.values()) this.appendWorldEvent(rt, news);
+    }
+    // The water's return frees whoever kept to the well until then (the Lamia).
+    if (state === 'flowing') {
+      for (const cfg of this.configs.values()) if (cfg.stayNear?.until === 'well-flows') this.releasedAnchors.add(cfg.id);
     }
     this.notify(true);
   }
@@ -1493,6 +1514,7 @@ export class VillageSimulation {
       res.blockerId !== this.player.id &&
       this.modelSettings.autoConverse &&
       this.density('talk') > 0 &&
+      this.simTimeMs >= this.overtureUntilSim &&
       !this.holdStory &&
       !rt.activeConversationId &&
       !rt.walkAndTalk &&
@@ -1643,7 +1665,7 @@ export class VillageSimulation {
     const gapFor = (id: string) => this.restMs(id);
 
     // 1. Pair nearby villagers (idle OR walking) so passersby stop and interact visibly
-    if (this.modelSettings.autoConverse && !this.holdStory && talk > 0) {
+    if (this.modelSettings.autoConverse && !this.holdStory && talk > 0 && this.simTimeMs >= this.overtureUntilSim) {
       for (let i = 0; i < runtimesList.length; i++) {
         const a = runtimesList[i];
         if (
@@ -1681,14 +1703,19 @@ export class VillageSimulation {
           if (dist <= TALK_REACH) {
             this.startAutonomousConversation(a.id, b.id);
           } else {
-            // Not close enough to talk: one walks over to the other, who waits a moment.
-            const goal = this.findAdjacentStandTile(b.x, b.y, a.id);
-            const path = findPath(this.map, { x: a.x, y: a.y }, goal, this.getOccupiedTileSet(a.id));
+            // Not close enough to talk: one walks over to the other, who waits a moment. Someone
+            // keeping to a place stays there; the other comes to them.
+            const aKeeps = Boolean(this.anchorOf(a.id));
+            const bKeeps = Boolean(this.anchorOf(b.id));
+            if (aKeeps && bKeeps) continue;
+            const [walker, waiter] = aKeeps ? [b, a] : [a, b];
+            const goal = this.findAdjacentStandTile(waiter.x, waiter.y, walker.id);
+            const path = findPath(this.map, { x: walker.x, y: walker.y }, goal, this.getOccupiedTileSet(walker.id));
             if (path.length === 0) continue;
-            a.errand = { targetId: b.id, tries: 0 };
-            a.path = path;
-            b.path = [];
-            this.lastMoveSimMs.set(b.id, this.simTimeMs + 6000);
+            walker.errand = { targetId: waiter.id, tries: 0 };
+            walker.path = path;
+            waiter.path = [];
+            this.lastMoveSimMs.set(waiter.id, this.simTimeMs + 6000);
           }
           break;
         }
@@ -1698,6 +1725,15 @@ export class VillageSimulation {
     // 2. Westworld-style ongoing world-session motivation -> physical pathing
     for (const rt of runtimesList) {
       if (rt.state !== 'idle' || rt.activeConversationId || rt.path.length > 0 || rt.errand) continue;
+      // Someone keeping to a place circles it, pausing now and then, and asks the mind for no plan.
+      const anchor = this.anchorOf(rt.id);
+      if (anchor) {
+        const lastMoveSim = this.lastMoveSimMs.get(rt.id) ?? -9999;
+        if (this.simTimeMs - lastMoveSim < CIRCLE_PAUSE_MS * (0.6 + this.rng() * 1.4)) continue;
+        this.lastMoveSimMs.set(rt.id, this.simTimeMs);
+        this.circleStep(rt, anchor);
+        continue;
+      }
       if (this.planningVillagers.has(rt.id)) {
         // The mind is busy with the story's own lines and voices: go about the day meanwhile,
         // so the village is alive from the first moment rather than waiting to be told.
@@ -1721,9 +1757,49 @@ export class VillageSimulation {
     }
   }
 
+  /**
+   * The place a character keeps to, if any and not yet released: where it is and how far they
+   * may go from it. A direction ("stay near the well") wins over their own `stayNear`.
+   */
+  private anchorOf(id: string): { x: number; y: number; radius: number; label: string } | null {
+    if (this.releasedAnchors.has(id)) return null;
+    const own = this.configs.get(id)?.stayNear;
+    const want = this.directedAnchors.get(id) ?? (own?.until === 'well-flows' && this.wellWater === 'flowing' ? undefined : own);
+    if (!want) return null;
+    const key = placeKey(want.place);
+    const place =
+      this.getLandmarks().find((l) => (l.tag && l.tag.toLowerCase() === key) || placeKey(l.label) === key || placeKey(l.label).includes(key)) ??
+      this.findPlaceForText(`#${want.place} ${want.place}`);
+    if (!place) return null;
+    return { x: place.x, y: place.y, radius: Math.max(1.5, want.radius ?? 2.5), label: place.label };
+  }
+
+  /** The next step around the place a character keeps to: a little way along the circle. */
+  private circleStep(rt: VillagerRuntime, anchor: { x: number; y: number; radius: number }) {
+    let dir = this.circleDir.get(rt.id);
+    if (!dir) {
+      dir = this.rng() < 0.5 ? 1 : -1;
+      this.circleDir.set(rt.id, dir);
+    }
+    const dist = Math.hypot(rt.x - anchor.x, rt.y - anchor.y);
+    const angle = dist > 0.5 ? Math.atan2(rt.y - anchor.y, rt.x - anchor.x) : this.rng() * Math.PI * 2;
+    // Far off (after a reset, or released and held again): go back to the circle first.
+    const step = dist > anchor.radius + 1.5 ? 0 : dir * (Math.PI / 4 + this.rng() * (Math.PI / 4));
+    const r = anchor.radius * (0.8 + this.rng() * 0.4);
+    const goal = findNearestWalkableTile(this.map, Math.round(anchor.x + Math.cos(angle + step) * r), Math.round(anchor.y + Math.sin(angle + step) * r));
+    if (goal.x === Math.round(rt.x) && goal.y === Math.round(rt.y)) return;
+    const path = findPath(this.map, { x: rt.x, y: rt.y }, goal, this.getOccupiedTileSet(rt.id));
+    if (path.length === 0) return;
+    rt.path = path;
+    rt.state = 'walking';
+    rt.lastMoveAt = this.now();
+  }
+
   /** A short walk to open ground nearby, keeping what they mean to do: life going on. */
   private strollNearby(rt: VillagerRuntime) {
     this.lastStrollSimMs.set(rt.id, this.simTimeMs);
+    const anchor = this.anchorOf(rt.id);
+    if (anchor) return this.circleStep(rt, anchor);
     const tx = Math.round(rt.x + (this.rng() > 0.5 ? 1 : -1) * (2 + this.rng() * 5));
     const ty = Math.round(rt.y + (this.rng() > 0.5 ? 1 : -1) * (1 + this.rng() * 4));
     const goal = findNearestWalkableTile(this.map, tx, ty);
@@ -2418,6 +2494,27 @@ export class VillageSimulation {
     // Who the order is addressed to is not where to go: "@Lamia, go to the river" is not the Lamia's well.
     userText = withoutAddress(userText, _cfg);
     const lower = userText.toLowerCase();
+
+    // "Stay near the well", "keep to the forge", "circle the spring": keep to a place.
+    const keep = /\b(?:stay|remain|keep|wait|linger|circle|guard)\b(?:\s+(?:near|by|at|around|close to|to|beside))?\s+(.+)$/i.exec(userText);
+    if (keep) {
+      const where = keep[1].replace(/[.!?]+$/, '').trim();
+      const place = this.findPlaceForText(`${where.startsWith('#') ? where : `#${where.replace(/^the\s+/i, '')}`} ${where}`);
+      if (place) {
+        this.directedAnchors.set(rt.id, { place: place.tag ?? place.label });
+        this.releasedAnchors.delete(rt.id);
+        rt.currentIntention = `Keeping near ${placeRef(place.label)}`;
+        rt.activityLabel = rt.currentIntention;
+        rt.path = [];
+        rt.errand = undefined;
+        return;
+      }
+    }
+    // Sent elsewhere: the story has called them away from the place they kept to.
+    if (this.anchorOf(rt.id) && /\b(go|head|walk|meet|find|visit|move|wander|roam|explore|come|leave|follow)\b/i.test(userText)) {
+      this.releasedAnchors.add(rt.id);
+      this.directedAnchors.delete(rt.id);
+    }
 
     // Let natural language "@Character / @all go talk to Bram / visit #Plaza / scatter" steer motivation + movement
     const directedMotion = /\b(go|head|walk|meet|find|talk|visit|check|gather|move|wander|scatter|roam|explore|disperse|come|patrol|spread)\b|#[a-z0-9_-]+/i.test(

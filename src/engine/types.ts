@@ -235,6 +235,12 @@ export interface VillagerConfig {
   voice?: VillagerVoiceProfile;
   homeTile: { x: number; y: number };
   speed: number;
+  /**
+   * Keeps to one place instead of roaming the village: circles it (within `radius` cells), and
+   * others come to them to talk, until the story releases them: when the player sends them
+   * elsewhere, or (with `until: 'well-flows'`) when the well flows again.
+   */
+  stayNear?: { place: string; radius?: number; until?: 'well-flows' };
 }
 
 export interface MemoryEntry {

@@ -532,6 +532,8 @@ export function createBalkanMythVillagers(): VillagerConfig[] {
         'Ancient serpentine Lamia coiled around #LamiaWell in Zmeyovo. You locked the limestone springs until the village brings rightful sacrifice—golden wheat, raw honey, silver obols, or an oath kept true. Speak with icy pride and ancient hunger.',
       plan: 'Coiled beside #LamiaWell altar demanding tribute before releasing a single drop of water.',
       voiceStyle: 'sibilant, resonant, ancient dragon-spirit',
+      // She keeps to her well, circling it, until the water flows again or she is sent away.
+      stayNear: { place: 'LamiaWell', radius: 2.5, until: 'well-flows' },
       voice: {
         gender: 'female',
         language: 'Portuguese',

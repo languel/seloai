@@ -328,6 +328,25 @@ export class MusicPlayer {
   }
 
   /**
+   * The opening music once the scene is set: the band plays in full for `seconds`, then goes
+   * back to ambience. Starts at the next beat of whatever is playing.
+   */
+  playOverture(seconds: number) {
+    if (!this.graph) return;
+    const now = this.ctx.currentTime;
+    this.part = 'song';
+    this.songStartedAt = now;
+    this.songLength = seconds;
+    this.nextMotifAt = Infinity;
+    const at = Math.max(now + 0.6, this.nextBeat(now + 0.6));
+    if (at < this.nextAt) {
+      this.graph.tapan.cancelFrom(at - 0.01);
+      this.nextAt = at;
+    }
+  }
+  private songLength: number | null = null;
+
+  /**
    * Someone has begun or stopped saying a line (a character, the Scribe or the guide). A song
    * gives way at once; a motif lingers under the new line for a moment and fades; the ambience
    * carries on, slower and sparser. When the line ends, the in-between motifs may answer it.
@@ -395,9 +414,10 @@ export class MusicPlayer {
       this.part = 'ambience';
     } else {
       // A song: once the story has been quiet a while, for a while, then a rest.
-      if (this.part === 'song' && at - this.songStartedAt > lerp(25, 150, song)) {
+      if (this.part === 'song' && at - this.songStartedAt > (this.songLength ?? lerp(25, 150, song))) {
         this.part = 'ambience';
         this.songRestUntil = at + lerp(90, 12, song);
+        this.songLength = null;
       }
       const songDue = song > 0 && this.part !== 'song' && quiet >= lerp(70, 5, song) && at >= this.songRestUntil;
       if (songDue) {

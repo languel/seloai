@@ -282,8 +282,16 @@ class VillageMusic {
    * Scribe) or an ordinary line so the band can answer it: the pause of a sung story before
    * the instruments' turn. Nothing when the music is off or there is no in-between.
    */
-  answerPauseMs(after: 'line' | 'passage' = 'passage'): number {
+  answerPauseMs(after: 'line' | 'passage' | 'overture' = 'passage'): number {
     if (!this.on || !this.player?.playing) return 0;
+    if (after === 'overture') {
+      // The opening: a song while everyone finds their purpose (none if there are no songs).
+      const song = this.amountsNow.song;
+      if (song <= 0) return 0;
+      const seconds = 12 + 10 * song;
+      this.player.playOverture(seconds);
+      return Math.round(seconds * 1000);
+    }
     const between = this.amountsNow.between;
     return Math.round((after === 'passage' ? answerSeconds(between) * 0.85 : lineAnswerSeconds(between)) * 1000);
   }
