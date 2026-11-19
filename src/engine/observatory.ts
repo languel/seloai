@@ -1,5 +1,5 @@
 import type { VillageSimulation } from './simulation';
-import type { VillagerConfig, VillagerRuntime } from './types';
+import type { VillagerConfig } from './types';
 
 export type WorldRecordKind =
   | 'speech'
@@ -23,38 +23,6 @@ export interface WorldInteractionRecord {
   text: string;
   importance?: number;
   conversationId?: string;
-}
-
-export interface PsychophysicalNode {
-  id: string;
-  type: 'character' | 'poi';
-  label: string;
-  subtitle: string;
-  color: string;
-  x: number;
-  y: number;
-  state?: VillagerRuntime['state'];
-  motive?: string;
-  nearestLandmark?: string;
-  arousal: number;
-  memoryCount: number;
-  interactionCount: number;
-}
-
-export interface PsychophysicalEdge {
-  id: string;
-  source: string;
-  target: string;
-  kind: 'interaction' | 'poi';
-  weight: number;
-  sentiment: 'warm' | 'tense' | 'curious' | 'neutral';
-  lastTimestamp: number;
-  sampleQuote?: string;
-}
-
-export interface PsychophysicalGraph {
-  nodes: PsychophysicalNode[];
-  edges: PsychophysicalEdge[];
 }
 
 export interface WorldQueryResult {
@@ -138,7 +106,8 @@ const STOPWORDS = new Set([
   'list',
 ]);
 
-function inferSentiment(texts: string[]): PsychophysicalEdge['sentiment'] {
+/** The tone of some lines: warm, tense, curious, or neither. */
+export function inferSentiment(texts: string[]): 'warm' | 'tense' | 'curious' | 'neutral' {
   const joined = texts.join(' ').toLowerCase();
   if (/\b(danger|worry|fear|steal|argument|angry|suspicio|lock|secret|missing|broke)\b/.test(joined)) {
     return 'tense';
@@ -230,135 +199,6 @@ export function buildWorldDatabase(sim: VillageSimulation): WorldInteractionReco
   }
 
   return records.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-export function buildPsychophysicalGraph(sim: VillageSimulation): PsychophysicalGraph {
-  const nodes: PsychophysicalNode[] = [];
-  const edgeMap = new Map<
-    string,
-    {
-      source: string;
-      target: string;
-      kind: 'interaction' | 'poi';
-      weight: number;
-      lastTimestamp: number;
-      texts: string[];
-    }
-  >();
-
-  const interactionCounts = new Map<string, number>();
-
-  for (const conv of sim.conversations) {
-    const charParticipants = conv.participantIds.filter((id) => sim.configs.has(id));
-    if (charParticipants.length >= 2) {
-      const sorted = [...charParticipants].sort();
-      for (let i = 0; i < sorted.length; i++) {
-        for (let j = i + 1; j < sorted.length; j++) {
-          const a = sorted[i];
-          const b = sorted[j];
-          const key = `int:${a}:${b}`;
-          const existing = edgeMap.get(key) ?? {
-            source: a,
-            target: b,
-            kind: 'interaction' as const,
-            weight: 0,
-            lastTimestamp: 0,
-            texts: [],
-          };
-          const turnCount = Math.max(1, conv.messages.filter((m) => m.kind !== 'narration').length);
-          existing.weight += turnCount;
-          existing.lastTimestamp = Math.max(existing.lastTimestamp, conv.updatedAt);
-          for (const m of conv.messages.slice(-4)) {
-            existing.texts.push(m.text);
-          }
-          edgeMap.set(key, existing);
-          interactionCounts.set(a, (interactionCounts.get(a) ?? 0) + turnCount);
-          interactionCounts.set(b, (interactionCounts.get(b) ?? 0) + turnCount);
-        }
-      }
-    }
-  }
-
-  for (const cfg of sim.configs.values()) {
-    const rt = sim.runtimes.get(cfg.id);
-    if (!rt) continue;
-    const arousal =
-      rt.state === 'speaking' || rt.state === 'conversing'
-        ? 0.9
-        : rt.state === 'thinking' || rt.state === 'listening'
-          ? 0.75
-          : rt.state === 'walking'
-            ? 0.55
-            : 0.3;
-    nodes.push({
-      id: cfg.id,
-      type: 'character',
-      label: cfg.name,
-      subtitle: cfg.role,
-      color: cfg.accentColor,
-      x: rt.x,
-      y: rt.y,
-      state: rt.state,
-      motive: rt.currentIntention || cfg.plan,
-      nearestLandmark: getLandmarkLabel(sim, rt.x, rt.y),
-      arousal,
-      memoryCount: rt.memories.length,
-      interactionCount: interactionCounts.get(cfg.id) ?? 0,
-    });
-
-    // Nearest POI link
-    const pois = sim.map.pointsOfInterest ?? [];
-    if (pois.length > 0) {
-      let nearest = pois[0];
-      let bestDist = Infinity;
-      for (const p of pois) {
-        const d = Math.hypot(p.x - rt.x, p.y - rt.y);
-        if (d < bestDist) {
-          bestDist = d;
-          nearest = p;
-        }
-      }
-      if (bestDist <= 14) {
-        const poiId = `poi-${nearest.id}`;
-        edgeMap.set(`poi:${cfg.id}:${poiId}`, {
-          source: cfg.id,
-          target: poiId,
-          kind: 'poi',
-          weight: Math.max(1, Math.round(15 - bestDist)),
-          lastTimestamp: Date.now(),
-          texts: [],
-        });
-      }
-    }
-  }
-
-  for (const poi of sim.map.pointsOfInterest ?? []) {
-    nodes.push({
-      id: `poi-${poi.id}`,
-      type: 'poi',
-      label: poi.label || poi.tag,
-      subtitle: poi.description ?? poi.tag,
-      color: '#d97706',
-      x: poi.x,
-      y: poi.y,
-      arousal: 0.4,
-      memoryCount: 0,
-      interactionCount: 0,
-    });
-  }
-
-  const edges: PsychophysicalEdge[] = [...edgeMap.entries()].map(([id, e]) => ({
-    id,
-    source: e.source,
-    target: e.target,
-    kind: e.kind,
-    weight: e.weight,
-    sentiment: inferSentiment(e.texts),
-    lastTimestamp: e.lastTimestamp,
-    sampleQuote: e.texts[e.texts.length - 1]?.slice(0, 110),
-  }));
-
-  return { nodes, edges };
 }
 
 export function queryWorldDatabase(

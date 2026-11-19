@@ -547,7 +547,7 @@
   },
   {
     "name": "query_world_db",
-    "description": "Inspect raw interaction records, run a natural-language World DB query (e.g. \"who has Mara talked to in the past day and what do they think about the artifact?\"), and return the Psychophysical Graph.",
+    "description": "Inspect raw interaction records, run a natural-language World DB query (e.g. \"who has Mara talked to in the past day and what do they think about the artifact?\"), and, with includeGraph, Psychohistory: the world as it stands now, people and places with the relations between them (talked, at, keeps to, heading, on their mind).",
     "inputSchema": {
       "type": "object",
       "properties": {

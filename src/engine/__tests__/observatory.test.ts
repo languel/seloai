@@ -1,7 +1,8 @@
 import { createBrowserSimulation } from '../../app/browserSimulation';
 import { describe, expect, it } from 'vitest';
 import { createDefaultMap, DEFAULT_MODEL_SETTINGS, DEFAULT_VILLAGERS } from '../../data/defaultData';
-import { buildPsychophysicalGraph, buildWorldDatabase, queryWorldDatabase } from '../observatory';
+import { buildWorldDatabase, queryWorldDatabase } from '../observatory';
+import { buildPsychohistory } from '../psychohistory';
 
 describe('Observatory', () => {
   it('supports worldline POV hopping, psychophysical graph building, and natural-language world DB queries', async () => {
@@ -63,10 +64,10 @@ describe('Observatory', () => {
       villagerId: mara.id,
     });
 
-    // 2. Psychophysical graph links Mara <-> Bram
-    const graph = buildPsychophysicalGraph(sim);
-    expect(graph.nodes.some((n) => n.id === mara.id && n.type === 'character')).toBe(true);
-    expect(graph.edges.some((e) => e.kind === 'interaction')).toBe(true);
+    // 2. Psychohistory ties Mara and Bram by their talk
+    const graph = buildPsychohistory(sim);
+    expect(graph.nodes.some((n) => n.id === mara.id && n.kind === 'character')).toBe(true);
+    expect(graph.links.some((l) => l.kind === 'talked' && [l.source, l.target].includes(mara.id) && [l.source, l.target].includes(bram.id))).toBe(true);
 
     // 3. Natural-language query finds Mara's partners & thoughts on the artifact in past day
     const allRows = buildWorldDatabase(sim);

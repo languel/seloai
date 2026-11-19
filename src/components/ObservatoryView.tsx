@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   BookOpen,
-  Compass,
   Database,
   Download,
   Eye,
@@ -10,20 +9,16 @@ import {
   Radio,
   Search,
   Sparkles,
-  Volume2,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react';
 import { brainRouter } from '../ai/brainRouter';
 import type { PaletteName } from '../art/looks';
 import LoomView from './LoomView';
+import PsychohistoryView from './PsychohistoryView';
 import { useAutoScrollToBottom } from '../hooks/useAutoScrollToBottom';
 import { buildNarratorConfig } from '../data/defaultData';
 import {
-  buildPsychophysicalGraph,
   buildWorldDatabase,
   queryWorldDatabase,
-  type PsychophysicalNode,
   type WorldRecordKind,
 } from '../engine/observatory';
 import type { VillageSimulation } from '../engine/simulation';
@@ -60,11 +55,6 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
   const [subTab, setSubTab] = useState<ObservatorySubTab>('weave');
   const [, setTick] = useState(0);
 
-  // Graph controls
-  const [selectedNodeId, setSelectedNodeId] = useState<string>(villagers[0]?.id ?? '');
-  const [showPoiNodes, setShowPoiNodes] = useState(true);
-  const [showInteractionEdges, setShowInteractionEdges] = useState(true);
-  const [graphZoom, setGraphZoom] = useState(1);
 
   // Database & Query controls
   const [queryText, setQueryText] = useState('');
@@ -86,54 +76,11 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
     return () => unsub();
   }, [sim]);
 
-  const graph = useMemo(() => buildPsychophysicalGraph(sim), [sim, sim.tickCount, sim.conversations.length]);
   const allRecords = useMemo(() => buildWorldDatabase(sim), [sim, sim.tickCount, sim.conversations.length]);
 
   const queryResult = useMemo(
     () => (activeQuery.trim() ? queryWorldDatabase(sim, activeQuery) : null),
     [sim, activeQuery, sim.conversations.length, sim.tickCount],
-  );
-
-  // Compute 2D layout positions for graph nodes
-  const positionedNodes = useMemo(() => {
-    const W = 820;
-    const H = 480;
-    const cx = W / 2;
-    const cy = H / 2;
-    const charNodes = graph.nodes.filter((n) => n.type === 'character');
-    const poiNodes = showPoiNodes ? graph.nodes.filter((n) => n.type === 'poi') : [];
-
-    const pos = new Map<string, { x: number; y: number; node: PsychophysicalNode }>();
-    charNodes.forEach((n, idx) => {
-      const angle = (idx / Math.max(1, charNodes.length)) * Math.PI * 2 - Math.PI / 2;
-      const rx = 185;
-      const ry = 135;
-      pos.set(n.id, {
-        x: cx + Math.cos(angle) * rx,
-        y: cy + Math.sin(angle) * ry,
-        node: n,
-      });
-    });
-
-    poiNodes.forEach((n, idx) => {
-      const angle = (idx / Math.max(1, poiNodes.length)) * Math.PI * 2 + Math.PI / 4;
-      const rx = 315;
-      const ry = 195;
-      pos.set(n.id, {
-        x: cx + Math.cos(angle) * rx,
-        y: cy + Math.sin(angle) * ry,
-        node: n,
-      });
-    });
-
-    return pos;
-  }, [graph.nodes, showPoiNodes]);
-
-  const selectedNode = graph.nodes.find((n) => n.id === selectedNodeId) ?? graph.nodes[0];
-  const selectedCfg = selectedNode?.type === 'character' ? sim.configs.get(selectedNode.id) : undefined;
-  const selectedRt = selectedNode?.type === 'character' ? sim.runtimes.get(selectedNode.id) : undefined;
-  const selectedEdges = graph.edges.filter(
-    (e) => e.source === selectedNode?.id || e.target === selectedNode?.id,
   );
 
   const filteredDbRecords = useMemo(() => {
@@ -303,7 +250,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
           {(
             [
               ['weave', Sparkles, 'The Loom'],
-              ['graph', Network, 'Psychophysical Graph'],
+              ['graph', Network, 'Psychohistory'],
               ['database', Database, 'World DB & Query'],
               ['loom', BookOpen, 'Scribe Loom'],
             ] as const
@@ -323,7 +270,7 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
         </div>
       </div>
 
-      {/* Mode 1: Psychophysical Graph */}
+      {/* The Loom */}
       {subTab === 'weave' && (
         <div className="min-h-0 flex-1">
           <LoomView sim={sim} look={look} onJumpToVillage={onJumpToVillage} />
@@ -331,282 +278,8 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
       )}
 
       {subTab === 'graph' && (
-        <div className="grid flex-1 grid-cols-1 lg:grid-cols-[1fr_360px] overflow-hidden">
-          <div className="relative flex flex-col overflow-hidden bg-stone-950">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borderFolk/40 bg-stone-900/90 px-3 py-1.5 text-xs text-stone-200">
-              <div className="flex items-center gap-3">
-                <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showInteractionEdges}
-                    onChange={(e) => setShowInteractionEdges(e.target.checked)}
-                  />
-                  <span>Interaction Links</span>
-                </label>
-                <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showPoiNodes}
-                    onChange={(e) => setShowPoiNodes(e.target.checked)}
-                  />
-                  <span>#POI Nodes</span>
-                </label>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setGraphZoom((z) => Math.max(0.6, Number((z - 0.15).toFixed(2))))}
-                  aria-label="Zoom out graph"
-                  className="rounded border border-stone-700 bg-stone-800 p-1 hover:bg-stone-700"
-                >
-                  <ZoomOut className="h-3.5 w-3.5" />
-                </button>
-                <span className="w-10 text-center font-mono text-[11px]">{graphZoom}×</span>
-                <button
-                  type="button"
-                  onClick={() => setGraphZoom((z) => Math.min(2, Number((z + 0.15).toFixed(2))))}
-                  aria-label="Zoom in graph"
-                  className="rounded border border-stone-700 bg-stone-800 p-1 hover:bg-stone-700"
-                >
-                  <ZoomIn className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto flex items-center justify-center p-2.5">
-              <svg
-                viewBox="0 0 820 480"
-                className="w-full h-full max-w-[960px] select-none"
-                style={{ transform: `scale(${graphZoom})`, transformOrigin: 'center center' }}
-              >
-                {/* Edges */}
-                {graph.edges.map((edge) => {
-                  if (edge.kind === 'interaction' && !showInteractionEdges) return null;
-                  if (edge.kind === 'poi' && !showPoiNodes) return null;
-                  const a = positionedNodes.get(edge.source);
-                  const b = positionedNodes.get(edge.target);
-                  if (!a || !b) return null;
-                  const isHighlighted =
-                    selectedNode?.id === edge.source || selectedNode?.id === edge.target;
-                  const strokeColor =
-                    edge.kind === 'poi'
-                      ? '#d97706'
-                      : edge.sentiment === 'tense'
-                        ? '#ef4444'
-                        : edge.sentiment === 'warm'
-                          ? '#22c55e'
-                          : edge.sentiment === 'curious'
-                            ? '#38bdf8'
-                            : '#94a3b8';
-                  return (
-                    <g key={edge.id}>
-                      <line
-                        x1={a.x}
-                        y1={a.y}
-                        x2={b.x}
-                        y2={b.y}
-                        stroke={strokeColor}
-                        strokeOpacity={isHighlighted ? 0.9 : 0.38}
-                        strokeWidth={
-                          edge.kind === 'poi'
-                            ? 1.5
-                            : Math.min(6, 1.5 + edge.weight * 0.6)
-                        }
-                        strokeDasharray={edge.kind === 'poi' ? '5 4' : undefined}
-                      />
-                      {edge.kind === 'interaction' && (
-                        <text
-                          x={(a.x + b.x) / 2}
-                          y={(a.y + b.y) / 2 - 4}
-                          textAnchor="middle"
-                          fill="#cbd5e1"
-                          fontSize="10"
-                          fontFamily="monospace"
-                        >
-                          {edge.weight}t · {edge.sentiment}
-                        </text>
-                      )}
-                    </g>
-                  );
-                })}
-
-                {/* Nodes */}
-                {[...positionedNodes.values()].map(({ x, y, node }) => {
-                  const isSelected = node.id === selectedNode?.id;
-                  const isFocalPov = sim.focalWorldlineId === node.id;
-                  const r = node.type === 'poi' ? 18 : 24 + node.arousal * 8;
-                  return (
-                    <g
-                      key={node.id}
-                      onClick={() => setSelectedNodeId(node.id)}
-                      className="cursor-pointer"
-                    >
-                      {node.type === 'character' && (
-                        <circle
-                          cx={x}
-                          cy={y}
-                          r={r + 6}
-                          fill="none"
-                          stroke={isFocalPov ? '#f59e0b' : node.color}
-                          strokeOpacity={isFocalPov ? 0.95 : 0.35}
-                          strokeWidth={isFocalPov ? 2.5 : 1.5}
-                          strokeDasharray={isFocalPov ? undefined : '3 3'}
-                        />
-                      )}
-                      <circle
-                        cx={x}
-                        cy={y}
-                        r={r}
-                        fill={node.type === 'poi' ? '#292524' : '#1c1917'}
-                        stroke={isSelected ? '#ffffff' : node.color}
-                        strokeWidth={isSelected ? 3 : 2}
-                      />
-                      <text
-                        x={x}
-                        y={y + 3}
-                        textAnchor="middle"
-                        fill="#fafaf9"
-                        fontSize={node.type === 'poi' ? '10' : '12'}
-                        fontWeight="700"
-                      >
-                        {node.label}
-                      </text>
-                      <text
-                        x={x}
-                        y={y + r + 14}
-                        textAnchor="middle"
-                        fill="#a8a29e"
-                        fontSize="10"
-                      >
-                        {node.type === 'character'
-                          ? `${node.state ?? 'idle'} · ${node.nearestLandmark ?? ''}`
-                          : node.subtitle}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          </div>
-
-          {/* Right Subject Diagnostics Panel */}
-          <aside className="flex flex-col border-l border-borderFolk bg-card overflow-y-auto p-3.5 space-y-3 thin-scroll">
-            {selectedNode ? (
-              <>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-base font-bold">{selectedNode.label}</h3>
-                    <p className="text-xs text-muted">{selectedNode.subtitle}</p>
-                  </div>
-                  {selectedNode.type === 'character' && (
-                    <span className="rounded-sm border border-borderFolk bg-surface px-2 py-0.5 font-mono text-[11px] capitalize">
-                      {selectedNode.state}
-                    </span>
-                  )}
-                </div>
-
-                {selectedNode.type === 'character' && selectedCfg && selectedRt ? (
-                  <>
-                    <div className="flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => sim.setFocalWorldline(selectedCfg.id)}
-                        className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium ${
-                          sim.focalWorldlineId === selectedCfg.id
-                            ? 'bg-crimson text-white'
-                            : 'border border-borderFolk bg-surface hover:border-crimson'
-                        }`}
-                      >
-                        <Volume2 className="h-3.5 w-3.5" />
-                        <span>
-                          {sim.focalWorldlineId === selectedCfg.id
-                            ? 'Active Worldline POV'
-                            : 'Hop Audio & Scribe POV'}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onJumpToVillage(selectedCfg.id)}
-                        className="inline-flex items-center gap-1 rounded border border-borderFolk bg-surface px-2.5 py-1 text-xs hover:border-indigoFolk"
-                      >
-                        <Compass className="h-3.5 w-3.5" />
-                        <span>Open in Village</span>
-                      </button>
-                    </div>
-
-                    <div className="rounded border border-borderFolk bg-surface p-2.5 text-xs space-y-1">
-                      <div>
-                        <span className="font-semibold text-ochre">Drive / Motive:</span>{' '}
-                        {selectedRt.currentIntention || selectedCfg.plan}
-                      </div>
-                      <div className="font-mono text-[11px] text-muted">
-                        Coords: ({Math.round(selectedRt.x)}, {Math.round(selectedRt.y)}) · Near{' '}
-                        {selectedNode.nearestLandmark}
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">
-                        Psychophysical Links ({selectedEdges.length})
-                      </h4>
-                      <ul className="space-y-1 text-xs">
-                        {selectedEdges.map((e) => {
-                          const otherId = e.source === selectedNode.id ? e.target : e.source;
-                          const other = graph.nodes.find((n) => n.id === otherId);
-                          return (
-                            <li
-                              key={e.id}
-                              className="rounded border border-borderFolk bg-surface px-2 py-1"
-                            >
-                              <div className="flex items-center justify-between font-medium">
-                                <span>{other?.label ?? otherId}</span>
-                                <span className="font-mono text-[10px] text-muted">
-                                  {e.kind === 'poi' ? 'nearby' : `${e.weight}t · ${e.sentiment}`}
-                                </span>
-                              </div>
-                              {e.sampleQuote && (
-                                <p className="text-[11px] text-muted truncate">{e.sampleQuote}</p>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-
-                    <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">
-                        Core Memories ({selectedRt.memories.length})
-                      </h4>
-                      <ul className="space-y-1 max-h-48 overflow-y-auto thin-scroll">
-                        {[...selectedRt.memories]
-                          .reverse()
-                          .slice(0, 10)
-                          .map((m) => (
-                            <li
-                              key={m.id}
-                              className="rounded border border-borderFolk bg-surface px-2 py-1.5 text-[11px]"
-                            >
-                              <div className="flex items-center justify-between text-[10px] text-muted mb-0.5">
-                                <span className="uppercase font-mono">{m.kind}</span>
-                                <span>imp {m.importance}/10</span>
-                              </div>
-                              <div>{m.summary}</div>
-                            </li>
-                          ))}
-                      </ul>
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-xs text-muted">
-                    Point of Interest at ({selectedNode.x}, {selectedNode.y}). Reference in chat with{' '}
-                    <code className="font-mono">{selectedNode.label}</code>.
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="text-xs text-muted">Select a node on the graph to inspect.</p>
-            )}
-          </aside>
+        <div className="min-h-0 flex-1">
+          <PsychohistoryView sim={sim} look={look} onJumpToVillage={onJumpToVillage} />
         </div>
       )}
 

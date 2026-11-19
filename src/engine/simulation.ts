@@ -276,8 +276,8 @@ export class VillageSimulation {
   private strolling = new Set<string>();
   /** Places characters were told to keep to ("stay near the well"), beyond their own `stayNear`. */
   private directedAnchors = new Map<string, { place: string; radius?: number }>();
-  /** Characters the story has released from keeping to a place. */
-  private releasedAnchors = new Set<string>();
+  /** Characters the story has released from keeping to a place, and why. */
+  private releasedAnchors = new Map<string, string>();
   /** The way each anchored character circles (1 or -1). */
   private circleDir = new Map<string, number>();
   private lastNotifyAt = 0;
@@ -819,14 +819,16 @@ export class VillageSimulation {
     }
     // The water's return frees whoever kept to the well until then (the Lamia).
     if (state === 'flowing') {
-      for (const cfg of this.configs.values()) if (cfg.stayNear?.until === 'well-flows') this.releasedAnchors.add(cfg.id);
+      for (const cfg of this.configs.values()) if (cfg.stayNear?.until === 'well-flows') this.releasedAnchors.set(cfg.id, `the water flowed again${this.lastWellLine ? `: "${this.lastWellLine.slice(0, 60)}"` : ''}`);
     }
     this.notify(true);
   }
 
   /** Reads a finished line of the story for the well's water coming back or running dry. */
+  private lastWellLine = '';
   private noticeWellWater(text: string) {
     const change = wellWaterIn(text);
+    if (change) this.lastWellLine = text;
     if (change) this.setWellWater(change);
   }
 
@@ -1757,6 +1759,19 @@ export class VillageSimulation {
     }
   }
 
+  /** The place a character keeps to now, if any (for views such as Psychohistory). */
+  keepsTo(id: string): { x: number; y: number; label: string } | null {
+    return this.anchorOf(id);
+  }
+
+  /** Why a character who kept to a place no longer does, if the story released them. */
+  releasedFrom(id: string): string | null {
+    if (this.anchorOf(id)) return null;
+    const own = this.configs.get(id)?.stayNear;
+    if (!own && !this.releasedAnchors.has(id)) return null;
+    return this.releasedAnchors.get(id) ?? (own?.until === 'well-flows' && this.wellWater === 'flowing' ? 'the water flows again' : null);
+  }
+
   /**
    * The place a character keeps to, if any and not yet released: where it is and how far they
    * may go from it. A direction ("stay near the well") wins over their own `stayNear`.
@@ -2512,7 +2527,7 @@ export class VillageSimulation {
     }
     // Sent elsewhere: the story has called them away from the place they kept to.
     if (this.anchorOf(rt.id) && /\b(go|head|walk|meet|find|visit|move|wander|roam|explore|come|leave|follow)\b/i.test(userText)) {
-      this.releasedAnchors.add(rt.id);
+      this.releasedAnchors.set(rt.id, `sent away: "${userText.slice(0, 60)}"`);
       this.directedAnchors.delete(rt.id);
     }
 

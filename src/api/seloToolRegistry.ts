@@ -11,7 +11,8 @@ import {
   createSeededRng,
   DEFAULT_APPEARANCE,
 } from '../engine/characterGenerator';
-import { buildPsychophysicalGraph, buildWorldDatabase, queryWorldDatabase } from '../engine/observatory';
+import { buildWorldDatabase, queryWorldDatabase } from '../engine/observatory';
+import { buildPsychohistory } from '../engine/psychohistory';
 import { findNearestWalkableTile, findPath } from '../engine/pathfinding';
 import type { VillageSimulation } from '../engine/simulation';
 import { ensureVillagerSprite } from '../engine/characterGenerator';
@@ -648,7 +649,7 @@ export class SeloToolHost {
           totalRecords: records.length,
           records: records.slice(0, limit),
           queryResult: nl,
-          graph: args.includeGraph ? buildPsychophysicalGraph(sim) : undefined,
+          graph: args.includeGraph ? buildPsychohistory(sim) : undefined,
         };
       }
 
