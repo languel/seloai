@@ -2,7 +2,7 @@ import { Composer, type PhrasePlan } from './composer';
 import { clamp01, type MusicCue } from './cue';
 import { Gaida, Kaval, Tapan, makeImpulse, makeNoiseBuffer } from './instruments';
 import { DEFAULT_TONE, type BandTone } from './tone';
-import { TONIC_MIDI, degreeToMidi } from './theory';
+import { DANCES, TONIC_MIDI, degreeToMidi } from './theory';
 
 /**
  * Plays the composer's music on the instruments, a little ahead of time. A new cue lands at
@@ -53,6 +53,34 @@ const DRIFT_FAST = 11;
 const MOTIF_MAX = 5;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/** How far ahead the players may run on to finish a bar or a motif when a line begins, seconds. */
+const FINISH_WITHIN = 3.5;
+
+/**
+ * The beats of a metered phrase starting at `at` (the start of each group of the meter, or of
+ * each bar with `bars`), up to and including its end; none in free time.
+ */
+export function beatsOf(plan: Pick<PhrasePlan, 'unit' | 'dance' | 'length'>, at: number, bars = false): number[] {
+  const groups = DANCES[plan.dance]?.groups ?? [];
+  if (!plan.unit || !groups.length) return [];
+  const out: number[] = [];
+  let u = 0;
+  const end = plan.length / plan.unit + 1e-6;
+  while (u <= end) {
+    if (bars) {
+      out.push(at + u * plan.unit);
+      u += groups.reduce((a, b) => a + b, 0);
+    } else {
+      for (const g of groups) {
+        if (u > end) break;
+        out.push(at + u * plan.unit);
+        u += g;
+      }
+    }
+  }
+  return out;
+}
 
 /** The drone's root for a phrase, in semitones from the tonic, kept low (a fourth below to a fifth above). */
 export function droneSemitones(plan: Pick<PhrasePlan, 'droneDegree' | 'mode'>): number {
@@ -311,13 +339,15 @@ export class MusicPlayer {
     const now = this.ctx.currentTime;
     if (speaking) {
       if (!graph) return;
-      const linger = this.part === 'song' ? 0.5 : lerp(0.4, 1.6, this.amounts.between);
-      graph.kaval.fadeOut(now, linger);
-      graph.gaida.fadeChanter(now, Math.min(linger, 0.6));
-      // What was written for the gap or the song is called off; the ambience starts again, sparser.
-      graph.tapan.cancelFrom(now + 0.05);
+      // The players finish the bar (or the motif, or the note) they are in, then give way: what
+      // was written past that point is called off, and the ambience goes on, slower and sparser.
+      const until = this.finishPoint(now);
+      const linger = this.part === 'song' ? 0.5 : lerp(0.4, 1.2, this.amounts.between);
+      graph.kaval.fadeOut(until, linger);
+      graph.gaida.fadeChanter(until, Math.min(linger, 0.6));
+      graph.tapan.cancelFrom(until + 0.02);
       this.part = 'ambience';
-      this.nextAt = now + 0.05;
+      this.nextAt = until + 0.02;
       this.nextMotifAt = Infinity;
     } else {
       this.silentSince = now;
@@ -333,7 +363,12 @@ export class MusicPlayer {
         this.nextMotifAt = between > 0 && Math.random() < between / 0.3 ? now + lerp(0.6, 0.25, between) : Infinity;
         this.motifMax = lineAnswerSeconds(between) + 0.6;
       }
-      this.nextAt = Math.min(this.nextAt, now + 0.25);
+      // The pulse under the line opens out again on its next beat, not in the middle of one.
+      const beat = this.nextBeat(now + 0.2);
+      if (beat < this.nextAt) {
+        this.graph?.tapan.cancelFrom(beat - 0.01);
+        this.nextAt = beat;
+      }
     }
   }
 
@@ -386,12 +421,56 @@ export class MusicPlayer {
     }
     this.play(plan, at);
     this.nextAt = at + plan.length;
-    // An ambience bar ends early when a motif is due within it.
-    if (plan.texture === 'ambience' && !this.speaking && this.nextMotifAt > at && this.nextMotifAt < this.nextAt) this.nextAt = this.nextMotifAt;
+    // A motif due within an ambience bar comes in on that bar's next beat; the pulse after it gives way.
+    if (plan.texture === 'ambience' && !this.speaking && this.nextMotifAt > at && this.nextMotifAt < this.nextAt) {
+      const beat = beatsOf(plan, at).find((b) => b >= this.nextMotifAt - 0.01) ?? this.nextMotifAt;
+      if (beat < this.nextAt) {
+        graph.tapan.cancelFrom(beat - 0.01);
+        this.nextAt = beat;
+      }
+    }
     this.lastLength = plan.length;
     this.current = plan;
+    this.recent.push({ plan, at });
+    if (this.recent.length > 4) this.recent.shift();
     this.activity = this.speaking ? `${plan.label}` : plan.label;
     for (const fn of this.phraseListeners) fn(plan, at);
+  }
+
+  /** The phrases most recently written, with when they start (the one sounding now is among them). */
+  private recent: Array<{ plan: PhrasePlan; at: number }> = [];
+
+  private sounding(t: number) {
+    for (let i = this.recent.length - 1; i >= 0; i--) {
+      const r = this.recent[i];
+      if (r.at <= t && t < r.at + r.plan.length) return r;
+    }
+    return null;
+  }
+
+  /**
+   * Where the players can stop gracefully from `now`: the end of a motif if it ends soon, else
+   * the end of the bar they are in, else the end of the note they hold; `now` if none is near.
+   */
+  private finishPoint(now: number): number {
+    const r = this.sounding(now);
+    if (!r) return now;
+    const { plan, at } = r;
+    const end = at + plan.length;
+    if (plan.texture === 'motif' && end - now <= FINISH_WITHIN) return Math.max(now, end - 0.35);
+    const bar = beatsOf(plan, at, true).find((b) => b >= now);
+    if (bar !== undefined && bar - now <= FINISH_WITHIN) return bar;
+    const rel = now - at;
+    const note = [...plan.kaval, ...plan.gaida].find((n) => n.t <= rel && rel < n.t + n.dur);
+    if (note && at + note.t + note.dur - now <= FINISH_WITHIN * 0.7) return at + note.t + note.dur;
+    return now;
+  }
+
+  /** The next beat (start of a group of the meter) at or after `t`, or `t` itself in free time. */
+  private nextBeat(t: number): number {
+    const r = this.sounding(t);
+    if (!r) return t;
+    return beatsOf(r.plan, r.at).find((b) => b >= t) ?? t;
   }
 
   private play(plan: PhrasePlan, at: number) {

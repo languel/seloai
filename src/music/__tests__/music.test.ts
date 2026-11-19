@@ -229,3 +229,29 @@ describe('ambience, in-between and song', () => {
     expect(end(long)).toBeGreaterThan(end(short));
   });
 });
+
+describe('finishing bars', () => {
+  it('knows the beats and bars of a metered phrase, and none in free time', async () => {
+    const { beatsOf } = await import('../player');
+    const plan = { unit: 0.1, dance: 'rachenitsa' as const, length: 1.4 };
+    expect(beatsOf(plan, 10).map((b) => Math.round((b - 10) * 10))).toEqual([0, 2, 4, 7, 9, 11, 14]);
+    expect(beatsOf(plan, 10, true).map((b) => Math.round((b - 10) * 10))).toEqual([0, 7, 14]);
+    expect(beatsOf({ unit: undefined, dance: 'free', length: 5 }, 0)).toEqual([]);
+  });
+
+  it('shifts tempo only now and then, never two tunes running', () => {
+    const c = new Composer(21);
+    let shifted = 0;
+    let lastUnit = 0;
+    let run = 0;
+    for (let i = 0; i < 400; i++) {
+      const p = c.next({ mood: 'festive', intensity: 0.7, dance: 'pravo' });
+      if (lastUnit && Math.abs(p.unit! / lastUnit - 1) > 0.2) shifted++;
+      lastUnit = p.unit!;
+      run++;
+    }
+    expect(run).toBe(400);
+    expect(shifted).toBeGreaterThan(0);
+    expect(shifted).toBeLessThan(40);
+  });
+});

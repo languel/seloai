@@ -161,60 +161,83 @@ export class Tapan {
     return o;
   }
 
-  private dum(at: number, vel: number) {
+  /**
+   * The big beater on the bass head. Every stroke is a little different (the drummer's hand is
+   * not a machine): its pitch and ring vary, and some strokes are muted with the other hand,
+   * some land near the edge of the head, and a strong one may be flammed with a soft grace
+   * stroke just before.
+   */
+  private dum(at: number, vel: number, grace = false) {
     const ctx = this.ctx;
+    const r = Math.random();
+    const stroke = grace ? 'open' : r < 0.6 ? 'open' : r < 0.8 ? 'muted' : r < 0.92 ? 'edge' : vel > 0.5 ? 'flam' : 'open';
+    if (stroke === 'flam') this.dum(at - 0.028 - Math.random() * 0.012, vel * 0.4, true);
     const synth = synthiness(this.tone.character);
     const noiseMul = this.tone.breath * 2 * (1 - 0.75 * synth);
+    const pitch = (stroke === 'edge' ? 1.45 : stroke === 'muted' ? 1.06 : 1) * (0.94 + Math.random() * 0.12);
+    const ring = (stroke === 'muted' ? 0.35 : stroke === 'edge' ? 0.55 : 1) * (0.85 + Math.random() * 0.3);
+    const thudMul = stroke === 'muted' ? 1.6 : 1;
+    const slapMul = stroke === 'edge' ? 2.6 : stroke === 'muted' ? 0.6 : 1;
     // At the electronic end the drum is a long, deep sweep, like a drum machine's.
-    const decay = 0.45 + 0.35 * vel + synth * 0.6;
+    const decay = (0.45 + 0.35 * vel + synth * 0.6) * ring;
     const o = this.osc(at, at + decay + 0.05);
-    o.frequency.setValueAtTime(92 + 30 * vel + synth * 110, at);
-    o.frequency.exponentialRampToValueAtTime(54 - synth * 6, at + 0.09 + synth * 0.08);
-    o.frequency.exponentialRampToValueAtTime(49 - synth * 6, at + decay);
+    o.frequency.setValueAtTime((92 + 30 * vel + synth * 110) * pitch, at);
+    o.frequency.exponentialRampToValueAtTime((54 - synth * 6) * pitch, at + 0.09 + synth * 0.08);
+    o.frequency.exponentialRampToValueAtTime((49 - synth * 6) * pitch, at + decay);
     o.connect(this.env(at, 0.95 * vel, 0.003, decay));
     const o2 = this.osc(at, at + 0.3);
-    o2.frequency.setValueAtTime(150, at);
-    o2.frequency.exponentialRampToValueAtTime(88, at + 0.12);
-    o2.connect(this.env(at, 0.28 * vel * (1 - synth * 0.8), 0.002, 0.2));
+    o2.frequency.setValueAtTime(150 * pitch, at);
+    o2.frequency.exponentialRampToValueAtTime(88 * pitch, at + 0.12);
+    o2.connect(this.env(at, 0.28 * vel * (1 - synth * 0.8) * (stroke === 'edge' ? 1.8 : 1), 0.002, 0.2 * ring));
     if (noiseMul > 0.01) {
       const thud = this.noiseSource(at, 0.12);
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = 520;
-      thud.connect(lp).connect(this.env(at, 0.7 * vel * noiseMul, 0.002, 0.07));
+      lp.frequency.value = 520 * (0.9 + Math.random() * 0.25);
+      thud.connect(lp).connect(this.env(at, 0.7 * vel * noiseMul * thudMul, 0.002, 0.07));
       const slap = this.noiseSource(at, 0.06);
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.value = 1100;
+      bp.frequency.value = (stroke === 'edge' ? 1700 : 1100) * (0.9 + Math.random() * 0.2);
       bp.Q.value = 0.9;
-      slap.connect(bp).connect(this.env(at, 0.22 * vel * noiseMul, 0.001, 0.035));
+      slap.connect(bp).connect(this.env(at, 0.22 * vel * noiseMul * slapMul, 0.001, 0.035));
     }
   }
 
-  private tek(at: number, vel: number) {
+  /**
+   * The thin switch on the treble head: mostly its tip, sometimes on the rim (brighter and
+   * shorter), sometimes bouncing twice (a buzz), sometimes a soft, low brush.
+   */
+  private tek(at: number, vel: number, bounce = false) {
     const ctx = this.ctx;
+    const r = Math.random();
+    const stroke = bounce ? 'tip' : r < 0.55 ? 'tip' : r < 0.75 ? 'rim' : r < 0.9 ? 'buzz' : 'soft';
+    if (stroke === 'buzz') this.tek(at + 0.016 + Math.random() * 0.01, vel * 0.55, true);
     const synth = synthiness(this.tone.character);
     const noiseMul = this.tone.breath * 2;
+    const band = (stroke === 'rim' ? 5200 : stroke === 'soft' ? 2400 : 3600) + Math.random() * 600;
+    const gain = stroke === 'soft' ? 0.6 : stroke === 'rim' ? 0.9 : 1;
+    const len = stroke === 'rim' ? 0.7 : stroke === 'soft' ? 1.5 : 1;
     if (noiseMul > 0.01) {
-      const src = this.noiseSource(at, 0.12);
+      const src = this.noiseSource(at, 0.12 * len);
       const hp = ctx.createBiquadFilter();
       hp.type = 'highpass';
-      hp.frequency.value = 1900;
+      hp.frequency.value = stroke === 'soft' ? 900 : 1900;
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.value = 3600 + Math.random() * 600;
+      bp.frequency.value = band;
       bp.Q.value = 0.8 + synth * 6;
-      src.connect(hp).connect(bp).connect(this.env(at, 0.55 * vel * noiseMul, 0.001, 0.06 + 0.03 * vel));
+      src.connect(hp).connect(bp).connect(this.env(at, 0.55 * vel * noiseMul * gain, 0.001, (0.06 + 0.03 * vel) * len));
     }
-    // The rod's click; at the electronic end a bright blip.
+    // The rod's click (loud on the rim, barely there on a brush); at the electronic end a bright blip.
     const click = this.osc(at, at + 0.06);
     click.type = synth > 0.3 ? 'square' : 'triangle';
-    click.frequency.value = synth > 0.3 ? 2600 : 1750;
-    click.connect(this.env(at, (0.07 + synth * 0.12) * vel, 0.0008, 0.014 + synth * 0.03));
+    click.frequency.value = (synth > 0.3 ? 2600 : 1750) * (stroke === 'rim' ? 1.5 : 1);
+    click.connect(this.env(at, (0.07 + synth * 0.12) * vel * (stroke === 'rim' ? 2 : stroke === 'soft' ? 0.3 : 1), 0.0008, 0.014 + synth * 0.03));
     const shell = this.osc(at, at + 0.09);
-    shell.frequency.setValueAtTime(240, at);
+    shell.frequency.setValueAtTime(240 * (0.92 + Math.random() * 0.16), at);
     shell.frequency.exponentialRampToValueAtTime(190, at + 0.06);
-    shell.connect(this.env(at, 0.13 * vel, 0.001, 0.06));
+    shell.connect(this.env(at, 0.13 * vel * gain, 0.001, 0.06));
   }
 }
 

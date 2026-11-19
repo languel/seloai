@@ -98,6 +98,8 @@ interface Tune {
   lines: [TuneNote[], TuneNote[]];
   /** Where the drone moves for the B phrase. */
   bDrone: number;
+  /** A deliberate change of tempo for this tune (1: none), held for the whole tune. */
+  shift: number;
 }
 
 /** The A A B B form, as indices into `Tune.lines`. */
@@ -121,6 +123,7 @@ export class Composer {
   private gaidaOn = false;
   private freeCount = 0;
   private ambienceDrone = 0;
+  private lastShifted = false;
   private ambienceHold = 0;
   private ambienceMood: Mood | null = null;
 
@@ -386,7 +389,11 @@ export class Composer {
     const a = this.makeLine(groups, bars, pick(rng, [0, 1, 2]) + register, pick(rng, [4, 5]) + register, pick(rng, [4, 1, 4]) + register);
     // B climbs higher, often as a sequence of A's opening, and comes home to the tonic.
     const b = this.makeLine(groups, bars, pick(rng, [4, 5]) + register, pick(rng, [6, 7, 8]) + register, 0 + register);
-    return { key: `${mood}:${dance}`, mood, dance, bars, barUnits, lines: [a, b], bDrone: rng() < 0.5 ? pick(rng, DRONE_MOVES[mood]) : 0 };
+    // Now and then a new tune comes in at a different tempo: effective because it is rare, so
+    // never twice in a row.
+    const shift = !this.lastShifted && rng() < 0.2 ? pick(rng, [0.75, 1.33]) : 1;
+    this.lastShifted = shift !== 1;
+    return { key: `${mood}:${dance}`, mood, dance, bars, barUnits, lines: [a, b], bDrone: rng() < 0.5 ? pick(rng, DRONE_MOVES[mood]) : 0, shift };
   }
 
   /** One line of a tune: rhythm cell per group, an arching stepwise contour, a held cadence. */
@@ -446,7 +453,7 @@ export class Composer {
     const groups = DANCES[dance].groups;
     const d = DANCES[dance];
     const drive = clamp01((intensity - METERED_FROM) / (1 - METERED_FROM));
-    const unit = lerp(d.unit[0], d.unit[1], drive);
+    const unit = lerp(d.unit[0], d.unit[1], drive) / tune.shift;
     const length = tune.bars * tune.barUnits * unit;
     const line = tune.lines[lineIdx];
 
