@@ -1,9 +1,9 @@
-# SeloAI
+# seloai
 
-**An environment for social simulation and emergent storytelling. A village brain plays every
-character, an adaptive story engine paces and shapes what happens between them, and an adaptive
-music engine scores it live, all in your browser. You bring the world and the people; you watch,
-study and steer what emerges.**
+**Seloai is an environment for social simulation and emergent storytelling in a virtual village.
+A village brain plays every character, an adaptive story engine paces and shapes what happens
+between them, and an adaptive music engine scores it live, all in your browser. You bring the
+world and the people; you watch, study and steer what emerges.**
 
 ![The well in Zmeyovo: villagers talk, their words sewn onto the cloth around them, while the Scribe narrates along the bottom](docs/images/village.jpg)
 
@@ -12,9 +12,9 @@ with nothing to install. A recent Chrome or Edge works best.
 
 ## What it is
 
-*Selo* means "village" in Bulgarian. SeloAI is a place to stage small societies: a handful of
-characters, each with who they are, what they want right now and a secret they keep, put together
-in a shared place. Nobody writes their lines. Three parts work together to bring them to life.
+Here you stage small societies: a handful of characters, each with who they are, what they want
+right now and a secret they keep, put together in a shared place. Nobody writes their lines.
+Three parts work together to bring them to life.
 
 ### The village brain
 
@@ -72,7 +72,7 @@ What you do with it:
 
 ## Bring your own story
 
-SeloAI comes with a rich demo (below), but it is meant for your own worlds and people. Everything
+Seloai comes with a rich demo (below), but it is meant for your own worlds and people. Everything
 the demo has, you can make:
 
 - **A world.** Build a place in the World Editor: start from a generator (a valley of hamlets, a
@@ -84,14 +84,14 @@ the demo has, you can make:
   pressure on it, and where things stand when the story starts.
 - **With help.** Spinner, the assistant inside the app, can build or change any of this when you
   ask it to ("add a miller who owes everyone money", "move the well to the square"). Outside
-  agents can do the same through MCP (see [Driving SeloAI with an agent](docs/AGENTS.md)).
+  agents can do the same through MCP (see [Driving seloai with an agent](docs/AGENTS.md)).
 
 **Help & Guides → Make your own story** walks you through it, with templates and prompts to use
 with a chat assistant: a first story in about 30 minutes.
 
 ## The demo: Zmeyovo
 
-The default world is a reference point: a complete example of the kind of situation SeloAI is
+The default world is a reference point: a complete example of the kind of situation seloai is
 for, worked out in detail, and a foundation to copy, take apart and change.
 
 **Zmeyovo: Well of the Lamia** is a Bulgarian village in a drought. The Lamia, a serpent-woman
@@ -133,7 +133,7 @@ Bulgaria**, a map of regional embroidery motifs, and two worlds generated from a
 
 ## For teachers and students
 
-SeloAI was made with students in mind. A story here is a situation, not a script: you learn by
+Seloai was made with students in mind. A story here is a situation, not a script: you learn by
 setting up people who want different things and seeing what happens, then asking why.
 
 - **Make your own story** (in Help & Guides) is written for students: a first story in 30 minutes,
@@ -168,19 +168,19 @@ Then open the address it prints.
 
 ## Learn more
 
-- [For developers](docs/DEVELOPERS.md): how SeloAI is built, its data formats, tests and
+- [For developers](docs/DEVELOPERS.md): how seloai is built, its data formats, tests and
   deployment.
-- [Driving SeloAI with an agent](docs/AGENTS.md): MCP, WebMCP, Spinner, walkthroughs and
+- [Driving seloai with an agent](docs/AGENTS.md): MCP, WebMCP, Spinner, walkthroughs and
   performances.
 - [Art direction](docs/ART_DIRECTION.md): the needlework look and where it is going.
 - [Handoff notes](HANDOFF.md): the state of the work, for whoever picks it up next.
 
 ## Acknowledgements
 
-SeloAI's first proof of concept started from [AI Town](https://github.com/a16z-infra/ai-town), the
+Seloai's first proof of concept started from [AI Town](https://github.com/a16z-infra/ai-town), the
 open-source virtual town where AI characters live, chat and socialise, itself inspired by the
 research paper [*Generative Agents: Interactive Simulacra of Human
-Behavior*](https://arxiv.org/abs/2304.03442). We are grateful for both. SeloAI has since gone its
+Behavior*](https://arxiv.org/abs/2304.03442). We are grateful for both. Seloai has since gone its
 own way and serves a different purpose: it is an environment for designing, running and studying
 social simulations and stories of your own, running entirely in the browser, rather than a town
 to visit. It has been rebuilt around its own engine, worlds, art and tools, and none of AI Town's
