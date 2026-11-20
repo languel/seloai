@@ -5,7 +5,7 @@ import { momentSourcesFor, spinnerRecord } from '../app/momentSources';
 import { momentAt } from '../engine/moment';
 import { villageMusic, type MusicPhrase } from '../music/villageMusic';
 import { drawMusicLane, phraseAt } from './loom/drawMusic';
-import { PhrasePanel, ProbePanel } from './loom/LoomPanels';
+import { BandRulesList, PhrasePanel, ProbePanel } from './loom/LoomPanels';
 import { MUSIC_ROLL_MIN, buildTracks, clampScroll, clothY, placeTracks, scrollToTrack, trackAt, zoomRows } from './loom/tracks';
 import { PALETTES, paintLinen, type PaletteName } from '../art/looks';
 import type { Ink } from '../art/shapes';
@@ -1453,6 +1453,7 @@ export default function LoomView({ sim, look, onJumpToVillage, webBeside, onTogg
             ) : (
               <span className="stitch-muted leading-snug">Click a stitch to read what was said there, with the rest of that conversation.</span>
             )}
+            <BandRulesList />
           </>
         )}
         {side.mode !== 'cue' && side.mode !== 'probe' && side.mode !== 'phrase' && (pending.length > 0 || gone.length > 0) && (

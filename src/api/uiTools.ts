@@ -11,6 +11,7 @@ import { mixerLevels, setLevel, type MixerChannel } from '../ai/mixer';
 import { MOOD_IDS, isMood } from '../music/cue';
 import { DANCES, type DanceId } from '../music/theory';
 import { villageMusic, type MusicDirection } from '../music/villageMusic';
+import { describeRule, type RuleDraft } from '../music/bandRules';
 import { TONE_PRESETS } from '../music/tone';
 import { SOUND_MODES, applySoundMode, findSoundMode } from '../app/soundModes';
 import { addDrawings, clearDrawings, hidePointer, pointerDo, setCaption, type Anchor, type Drawing, type PointerAction } from '../app/overlay';
@@ -147,6 +148,26 @@ export const UI_TOOL_DEFINITIONS: SeloToolDefinition[] = [
         description:
           'The band\'s sound; give only what changes. gaida, kaval, tapan and drone each take level, breath (air and noise) and character (0 a clean electronic synth, 0.5 usual, 1 gritty), all 0 to 1; drone also takes voicing (tonic, fifth, octave, open), movement and beating; ambience takes reverb, room (0 a small house to 1 a gorge) and echo. Or preset: village, synthfolk, gritty or mountain.',
       },
+    }),
+  },
+  {
+    name: 'band_rules',
+    description:
+      "The band's standing rules, from listening: what to keep doing and what to leave out. Use it when the person points at the music (a phrase on the Loom, a moment) and says keep this, drop that, less of the drum, no trills, not that dance. keep_figure keeps the melodic figure of a phrase (by its phrase_id, phrase-<time>, given with the phrase) and plays it again in moments like it, moved into the mood's mode. add makes a rule of a kind: thin (an instrument plays less; amount 1, the default, leaves it out), no_ornaments (graces, glide, trill off the kaval or gaida), prefer_dance or avoid_dance. Every rule can be held to a mood and a part (ambience, between, song); left out, it holds everywhere. Rules last until removed and are remembered on this device. With no arguments, lists them.",
+    inputSchema: obj({
+      action: str('list (default), keep_figure, add, remove or clear.'),
+      phrase_id: str('keep_figure: the phrase, phrase-<time>.'),
+      kind: str('add: thin, no_ornaments, prefer_dance or avoid_dance.'),
+      instrument: str('kaval, gaida, tapan or drone (thin); kaval or gaida (no_ornaments, keep_figure).'),
+      amount: { type: 'number', description: 'thin: how much less, 0 to 1 (1 leaves it out).' },
+      ornaments: str('no_ornaments: graces, glide and/or trill (default all).'),
+      dance: str('prefer_dance / avoid_dance: bavno, pravo, paidushko, lesnoto, rachenitsa, daychovo or kopanitsa.'),
+      mood: str('Hold the rule to a mood: pastoral, lament, mystery, dread, tension, joy, festive, triumph, or any. keep_figure defaults to the phrase\'s mood.'),
+      part: str('Hold the rule to a part: ambience, between or song, or any. keep_figure defaults to the phrase\'s part.'),
+      weight: { type: 'number', description: 'keep_figure: how often it comes back where it fits, 0 to 1 (default 0.5).' },
+      name: str('keep_figure: a name for it, e.g. "the Lamia\'s call".'),
+      reason: str("Why, in the person's words."),
+      id: str('remove: the rule.'),
     }),
   },
   {
@@ -704,7 +725,64 @@ export async function runUiTool(name: string, args: Record<string, any>, host: U
         amounts: music.amounts,
         tone: music.tone,
         directed: st.direction ? (st.direction.until ? `for ${Math.max(0, Math.round((st.direction.until - Date.now()) / 1000))} more seconds` : 'until released') : false,
+        rules: music.rules.map((r) => ({ id: r.id, rule: describeRule(r) })),
       };
+    }
+
+    case 'band_rules': {
+      const music = villageMusic;
+      const action = String(args.action ?? 'list').toLowerCase();
+      const scope = () => {
+        const when: { mood?: any; part?: any } = {};
+        if (args.mood && String(args.mood) !== 'any') {
+          if (!isMood(String(args.mood))) throw new Error(`mood is one of ${MOOD_IDS.join(', ')}, or any.`);
+          when.mood = String(args.mood);
+        }
+        if (args.part && String(args.part) !== 'any') when.part = String(args.part) === 'in-between' ? 'between' : String(args.part);
+        return when;
+      };
+      const list = () => music.rules.map((r) => ({ id: r.id, rule: describeRule(r), ...(r.reason ? { why: r.reason } : {}) }));
+      if (action === 'list') return { ok: true, rules: list() };
+      if (action === 'remove') {
+        if (!args.id) throw new Error('id is the rule to drop (from list).');
+        if (!music.removeRule(String(args.id))) throw new Error(`No rule "${args.id}".`);
+        return { ok: true, rules: list() };
+      }
+      if (action === 'clear') {
+        music.clearRules();
+        return { ok: true, rules: [] };
+      }
+      if (action === 'keep_figure') {
+        if (!args.phrase_id) throw new Error('phrase_id is the phrase whose figure to keep (from the Loom: phrase-<time>).');
+        const inst = args.instrument ? String(args.instrument).toLowerCase() : undefined;
+        if (inst && inst !== 'kaval' && inst !== 'gaida') throw new Error('A figure is kept on the kaval or the gaida.');
+        const rule = music.keepFigure(String(args.phrase_id), {
+          instrument: inst as 'kaval' | 'gaida' | undefined,
+          name: args.name ? String(args.name) : undefined,
+          mood: args.mood ? (String(args.mood) === 'any' ? 'any' : (scope().mood as never)) : undefined,
+          part: args.part ? (String(args.part) === 'any' ? 'any' : (scope().part as never)) : undefined,
+          weight: args.weight !== undefined ? Number(args.weight) : undefined,
+          reason: args.reason ? String(args.reason) : undefined,
+        });
+        return { ok: true, added: { id: rule.id, rule: describeRule(rule) }, rules: list() };
+      }
+      if (action === 'add') {
+        const kind = String(args.kind ?? '');
+        const base = { when: scope(), reason: args.reason ? String(args.reason) : undefined };
+        let draft: RuleDraft;
+        if (kind === 'thin' || kind === 'omit') {
+          const amount = args.amount === undefined ? 1 : Number(args.amount);
+          draft = { ...base, kind: 'thin', instrument: String(args.instrument ?? '').toLowerCase() as never, amount: amount > 1 ? amount / 100 : amount };
+        } else if (kind === 'no_ornaments' || kind === 'no-ornaments') {
+          const orn = Array.isArray(args.ornaments) ? args.ornaments.map(String) : args.ornaments ? String(args.ornaments).split(/[,\s]+/) : [];
+          draft = { ...base, kind: 'no-ornaments', instrument: String(args.instrument ?? 'kaval').toLowerCase() as never, ornaments: orn as never };
+        } else if (kind === 'prefer_dance' || kind === 'avoid_dance' || kind === 'prefer-dance' || kind === 'avoid-dance') {
+          draft = { ...base, kind: kind.startsWith('prefer') ? 'prefer-dance' : 'avoid-dance', dance: String(args.dance ?? '').toLowerCase() as DanceId };
+        } else throw new Error('kind is thin (an instrument plays less, or not at all), no_ornaments, prefer_dance or avoid_dance; to keep a figure use action keep_figure.');
+        const rule = music.addRule(draft);
+        return { ok: true, added: { id: rule.id, rule: describeRule(rule) }, rules: list() };
+      }
+      throw new Error('action is list, add, keep_figure, remove or clear.');
     }
 
     case 'perform': {

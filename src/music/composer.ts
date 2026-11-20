@@ -64,6 +64,8 @@ export interface PhrasePlan {
   label: string;
   /** The scale degree the drone sounds under this phrase (0, the tonic, when left out). */
   droneDegree?: number;
+  /** The band rules that shaped it (ids; see `bandRules.ts`). */
+  rules?: string[];
 }
 
 /**

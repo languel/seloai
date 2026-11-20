@@ -3,6 +3,7 @@ import { clamp01, type MusicCue } from './cue';
 import { Gaida, Kaval, Tapan, makeImpulse, makeNoiseBuffer } from './instruments';
 import { DEFAULT_TONE, type BandTone } from './tone';
 import { DANCES, TONIC_MIDI, degreeToMidi } from './theory';
+import { applyRules, ruleCue, type BandRule } from './bandRules';
 
 /**
  * Plays the composer's music on the instruments, a little ahead of time. A new cue lands at
@@ -195,6 +196,12 @@ export class MusicPlayer {
   onPhrase(fn: (plan: PhrasePlan, at: number) => void) {
     this.phraseListeners.add(fn);
     return () => this.phraseListeners.delete(fn);
+  }
+
+  /** The band's standing rules (see `bandRules.ts`). */
+  private rules: readonly BandRule[] = [];
+  setRules(rules: readonly BandRule[]) {
+    this.rules = rules;
   }
 
   setCue(cue: MusicCue) {
@@ -408,9 +415,12 @@ export class MusicPlayer {
     }
 
     const quiet = at - this.silentSince;
+    // The dance rules shape what the band is asked for; the rest shape the phrase once written.
+    const ruled = ruleCue(this.cue, this.rules);
+    const cue = ruled.cue;
     let plan: PhrasePlan;
     if (this.speaking) {
-      plan = this.composer.ambience(this.cue, this.eased, { underSpeech: true, amount: ambience });
+      plan = this.composer.ambience(cue, this.eased, { underSpeech: true, amount: ambience });
       this.part = 'ambience';
     } else {
       // A song: once the story has been quiet a while, for a while, then a rest.
@@ -425,20 +435,24 @@ export class MusicPlayer {
         this.songStartedAt = at;
       }
       if (this.part === 'song') {
-        plan = this.composer.next(this.cue, this.eased);
+        plan = this.composer.next(cue, this.eased);
         plan = { ...plan, drone: Math.max(plan.drone, ambience * 0.7) };
       } else if (between > 0 && this.heardLine && at >= this.nextMotifAt && quiet < lerp(20, 60, between)) {
-        plan = this.composer.motif(this.cue, this.eased, this.motifMax);
+        plan = this.composer.motif(cue, this.eased, this.motifMax);
         this.motifMax = MOTIF_MAX;
         plan = { ...plan, drone: ambience * 0.7 };
         this.part = 'between';
         // In a longer gap, the motif may come back.
         this.nextMotifAt = at + plan.length + lerp(16, 2.5, between) * (0.7 + Math.random() * 0.6);
       } else {
-        plan = this.composer.ambience(this.cue, this.eased, { underSpeech: false, amount: ambience });
+        plan = this.composer.ambience(cue, this.eased, { underSpeech: false, amount: ambience });
         this.part = 'ambience';
       }
     }
+    const kept = applyRules(plan, this.part, this.rules, Math.random);
+    plan = kept.plan;
+    const used = [...ruled.applied, ...kept.applied];
+    if (used.length) plan = { ...plan, rules: used };
     this.play(plan, at);
     this.nextAt = at + plan.length;
     // A motif due within an ambience bar comes in on that bar's next beat; the pulse after it gives way.

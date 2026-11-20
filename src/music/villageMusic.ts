@@ -3,6 +3,7 @@ import { busInput } from '../ai/mixer';
 import { clamp01, type MusicCue } from './cue';
 import { MusicListener, type SceneReading } from './listener';
 import type { PhrasePlan } from './composer';
+import { describeRule, makeRule, type BandRule, type RuleDraft } from './bandRules';
 import { DEFAULT_AMOUNTS, MusicPlayer, answerSeconds, lineAnswerSeconds, type MusicAmounts } from './player';
 import { ScribeEar, type ScribeScore } from './scribeScore';
 import { normalizeTone, type BandTone } from './tone';
@@ -22,6 +23,7 @@ import { normalizeTone, type BandTone } from './tone';
 const PREF = 'seloai.music.on';
 const TONE_PREF = 'seloai.music.tone';
 const AMOUNTS_PREF = 'seloai.music.amounts';
+const RULES_PREF = 'seloai.music.rules';
 /** The music keeps its level under speech: the players thin out instead (see the player). */
 const DUCK = 1;
 
@@ -56,6 +58,8 @@ export interface MusicStatus {
  * the Loom draws as a piano roll. `cutAt` is when a line began and the players gave way.
  */
 export interface MusicPhrase {
+  /** For pointing at it (from the Loom, or Spinner): `phrase-<t0>`. */
+  id: string;
   t0: number;
   t1: number;
   part: 'ambience' | 'between' | 'song';
@@ -68,7 +72,7 @@ export interface MusicPhrase {
 /** An instruction the band was given, or a reading of the story it took up. */
 export interface MusicEvent {
   t: number;
-  kind: 'direction' | 'release' | 'reading' | 'amounts' | 'tone' | 'on' | 'off';
+  kind: 'direction' | 'release' | 'reading' | 'amounts' | 'tone' | 'on' | 'off' | 'rule';
   text: string;
 }
 
@@ -147,13 +151,14 @@ class VillageMusic {
         amounts: this.amountsNow,
       });
       this.player.setCue(this.cue());
+      this.player.setRules(this.rulesNow);
       this.player.setSpeaking(this.speakingNow);
       const player = this.player;
       player.onPhrase((plan, at) => {
         // On the story's clock, so the Loom can lay it beside what was said.
         const t0 = Date.now() + (at - player.ctx.currentTime) * 1000;
         this.record({ t0, t1: t0 + plan.length * 1000, part: player.part, label: plan.label });
-        this.phrases.push({ t0, t1: t0 + plan.length * 1000, part: player.part, plan, cue: this.cue() });
+        this.phrases.push({ id: `phrase-${Math.round(t0)}`, t0, t1: t0 + plan.length * 1000, part: player.part, plan, cue: this.cue() });
         if (this.phrases.length > TIMELINE_MAX) this.phrases.splice(0, this.phrases.length - TIMELINE_MAX);
         this.changed();
       });
@@ -303,6 +308,77 @@ class VillageMusic {
     if (this.events.length > TIMELINE_MAX) this.events.splice(0, this.events.length - TIMELINE_MAX);
   }
 
+  private rulesNow: BandRule[] = readRules();
+
+  /** The band's standing rules: what to keep doing and what to leave out (see `bandRules.ts`). */
+  get rules(): readonly BandRule[] {
+    return this.rulesNow;
+  }
+
+  /** Adds a rule (or replaces one with the same id). Remembered on this device. */
+  addRule(draft: RuleDraft): BandRule {
+    const rule = makeRule(draft);
+    this.rulesNow = [...this.rulesNow.filter((r) => r.id !== rule.id), rule];
+    this.log('rule', `new rule: ${describeRule(rule)}${rule.reason ? ` (${rule.reason})` : ''}`);
+    this.rulesChanged();
+    return rule;
+  }
+
+  removeRule(id: string): boolean {
+    const rule = this.rulesNow.find((r) => r.id === id);
+    if (!rule) return false;
+    this.rulesNow = this.rulesNow.filter((r) => r.id !== id);
+    this.log('rule', `rule dropped: ${describeRule(rule)}`);
+    this.rulesChanged();
+    return true;
+  }
+
+  clearRules() {
+    if (!this.rulesNow.length) return;
+    this.rulesNow = [];
+    this.log('rule', 'all rules dropped');
+    this.rulesChanged();
+  }
+
+  private rulesChanged() {
+    this.player?.setRules(this.rulesNow);
+    save(RULES_PREF, JSON.stringify(this.rulesNow));
+    this.changed();
+  }
+
+  findPhrase(id: string): MusicPhrase | undefined {
+    return this.phrases.find((p) => p.id === id);
+  }
+
+  /**
+   * A rule to keep the figure of a phrase heard on the Loom: the notes it played (up to where a
+   * line cut it), on its melodic instrument, in moments like it (its mood and part, unless told).
+   */
+  keepFigure(phraseId: string, opts: { instrument?: 'kaval' | 'gaida'; name?: string; mood?: MusicPhrase['plan']['mood'] | 'any'; part?: MusicPhrase['part'] | 'any'; weight?: number; reason?: string } = {}): BandRule {
+    const p = this.findPhrase(phraseId);
+    if (!p) throw new Error(`No phrase "${phraseId}" in the record: take its id from the Loom (or the probe).`);
+    const end = ((p.cutAt ?? p.t1) - p.t0) / 1000;
+    const pickFrom = opts.instrument ?? (p.plan.kaval.length || !p.plan.gaida.length ? 'kaval' : 'gaida');
+    const notes = p.plan[pickFrom].filter((n) => n.t < end).map((n) => ({ ...n }));
+    if (!notes.length) throw new Error(`That phrase has no ${pickFrom} notes to keep.`);
+    const t0 = notes[0].t;
+    for (const n of notes) n.t -= t0;
+    return this.addRule({
+      kind: 'keep-figure',
+      name: opts.name?.trim() || `${pickFrom} figure, ${p.plan.mood} ${p.plan.mode}`,
+      instrument: pickFrom,
+      notes,
+      mode: p.plan.mode,
+      unit: p.plan.unit,
+      weight: opts.weight ?? 0.5,
+      when: {
+        mood: opts.mood === 'any' ? undefined : opts.mood ?? p.plan.mood,
+        part: opts.part === 'any' ? undefined : opts.part ?? (p.part === 'ambience' ? undefined : p.part),
+      },
+      reason: opts.reason,
+    });
+  }
+
   /** Every phrase played and every instruction given, for the Loom's music lane and the probe. */
   score(): { phrases: readonly MusicPhrase[]; events: readonly MusicEvent[] } {
     return { phrases: this.phrases, events: this.events };
@@ -391,6 +467,20 @@ function readJson(key: string): unknown {
   } catch {
     return null;
   }
+}
+
+function readRules(): BandRule[] {
+  const raw = readJson(RULES_PREF);
+  if (!Array.isArray(raw)) return [];
+  const out: BandRule[] = [];
+  for (const r of raw) {
+    try {
+      out.push(makeRule(r as RuleDraft, (r as BandRule).at));
+    } catch {
+      // a rule from an older version: left out
+    }
+  }
+  return out;
 }
 
 function readAmounts(): MusicAmounts {

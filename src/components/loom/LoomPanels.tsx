@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { momentText, noteName, type Moment } from '../../engine/moment';
 import type { ModelSettings } from '../../engine/types';
-import { describeCue, type MusicEvent, type MusicPhrase } from '../../music/villageMusic';
+import { describeCue, villageMusic, type MusicEvent, type MusicPhrase } from '../../music/villageMusic';
+import { describeRule, type RuleDraft } from '../../music/bandRules';
+import { DANCES } from '../../music/theory';
 import { AskBox } from './AskBox';
 
 function when(t: number, now: number) {
@@ -171,6 +173,7 @@ export function PhrasePanel({ phrase, events, now, settings, onClose }: { phrase
           <div className="break-all font-mono text-[10px] leading-snug">{tapan.map((h) => `${h.kind === 'dum' ? 'DUM' : 'tek'}@${h.t.toFixed(2)}`).join(' ')}</div>
         </section>
       )}
+      <KeepOrLeave phrase={phrase} />
       <section className="space-y-1">
         <div className="font-semibold">Talk about this phrase</div>
         <AskBox
@@ -178,7 +181,7 @@ export function PhrasePanel({ phrase, events, now, settings, onClose }: { phrase
           settings={settings}
           scribeLabel="Ask the Scribe"
           placeholder="e.g. Keep this kaval figure for her scenes; drop the tapan under the lament."
-          spinnerPreface="About one phrase the village band played (from the Loom's music lane in the Control Room). I want to talk about what to keep and what to change in the music."
+          spinnerPreface="About one phrase the village band played (from the Loom's music lane in the Control Room). I want to talk about what to keep and what to change in the music. To make it stick, use band_rules (keep_figure with this phrase's id, or add a rule), and say what you set."
         />
         <button type="button" className="glyph-button rounded-sm px-1.5 py-0.5" onClick={() => void navigator.clipboard?.writeText(text)}>
           Copy the phrase as text
@@ -194,11 +197,14 @@ export function phraseText(phrase: MusicPhrase, events: readonly MusicEvent[]): 
   const end = phrase.cutAt ?? phrase.t1;
   const played = (t: number) => phrase.t0 + t * 1000 < end;
   const lines = [
-    `A phrase of the village band at ${new Date(phrase.t0).toLocaleTimeString()}: ${phrase.part}, "${p.label}".`,
+    `A phrase of the village band at ${new Date(phrase.t0).toLocaleTimeString()} (phrase_id ${phrase.id}): ${phrase.part}, "${p.label}".`,
     `mood ${p.mood}, mode ${p.mode}, dance ${p.dance}, texture ${p.texture}, intensity ${p.intensity.toFixed(2)}, length ${((end - phrase.t0) / 1000).toFixed(1)}s${phrase.cutAt ? ' (cut short by a line)' : ''}, drone ${p.drone.toFixed(2)}${p.droneDegree ? ` on degree ${p.droneDegree}` : ''}.`,
     `The band was asked for: ${describeCue(phrase.cue)}.`,
   ];
   if (events.length) lines.push(`Instructions around it: ${events.map((e) => `${e.kind}: ${e.text}`).join('; ')}.`);
+  const shaped = (p.rules ?? []).map((id) => villageMusic.rules.find((r) => r.id === id)).filter(Boolean);
+  if (shaped.length) lines.push(`Band rules that shaped it: ${shaped.map((r) => describeRule(r!)).join('; ')}.`);
+  if (villageMusic.rules.length) lines.push(`All the band's rules now: ${villageMusic.rules.map((r) => `${r.id}: ${describeRule(r)}`).join('; ')}.`);
   for (const inst of ['kaval', 'gaida'] as const) {
     if (inst === 'gaida' && !p.gaidaOn) continue;
     const notes = p[inst].filter((n) => played(n.t));
@@ -207,4 +213,125 @@ export function phraseText(phrase: MusicPhrase, events: readonly MusicEvent[]): 
   const hits = p.tapan.filter((h) => played(h.t));
   if (hits.length) lines.push(`tapan: ${hits.map((h) => `${h.kind}@${h.t.toFixed(2)}`).join(' ')}`);
   return lines.join('\n');
+}
+
+/**
+ * Keep it or leave it out: one click makes a standing rule for the band from this phrase,
+ * held to moments like it (its mood and part). The rules that shaped it, and all of them, below.
+ */
+function KeepOrLeave({ phrase }: { phrase: MusicPhrase }) {
+  useSyncExternalStore(villageMusic.subscribe, villageMusic.getVersion);
+  const [note, setNote] = useState<string | null>(null);
+  const p = phrase.plan;
+  const when = { mood: p.mood, part: phrase.part };
+  const scope = `${p.mood}, ${phrase.part === 'between' ? 'in-between' : phrase.part}`;
+  const add = (draft: RuleDraft) => {
+    try {
+      const r = villageMusic.addRule(draft);
+      setNote(`Set: ${describeRule(r)}.`);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const keep = (instrument: 'kaval' | 'gaida') => {
+    try {
+      const r = villageMusic.keepFigure(phrase.id, { instrument });
+      setNote(`Set: ${describeRule(r)}.`);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const shaped = (p.rules ?? []).map((id) => villageMusic.rules.find((r) => r.id === id)).filter((r) => r !== undefined);
+  const btn = 'glyph-button rounded-sm px-1.5 py-0.5 text-left';
+  const melodic = phrase.part !== 'ambience' && p.texture !== 'drone';
+  return (
+    <section className="space-y-1">
+      <div className="font-semibold">
+        Keep or leave out <span className="stitch-muted font-normal">· in {scope}</span>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {melodic && p.kaval.length > 0 && (
+          <button type="button" className={btn} onClick={() => keep('kaval')} title="The band plays this kaval figure again in moments like this, moved into their mode">
+            Keep this kaval figure
+          </button>
+        )}
+        {melodic && p.gaidaOn && p.gaida.length > 0 && (
+          <button type="button" className={btn} onClick={() => keep('gaida')}>
+            Keep this gaida figure
+          </button>
+        )}
+        {p.tapan.length > 0 && (
+          <>
+            <button type="button" className={btn} onClick={() => add({ kind: 'thin', instrument: 'tapan', amount: 0.5, when })}>
+              Less tapan
+            </button>
+            <button type="button" className={btn} onClick={() => add({ kind: 'thin', instrument: 'tapan', amount: 1, when })}>
+              No tapan
+            </button>
+          </>
+        )}
+        {p.gaidaOn && p.gaida.length > 0 && (
+          <button type="button" className={btn} onClick={() => add({ kind: 'thin', instrument: 'gaida', amount: 1, when })}>
+            No gaida
+          </button>
+        )}
+        {p.kaval.some((n) => n.graces?.length || n.glideFrom !== undefined || n.trillTo !== undefined) && (
+          <button type="button" className={btn} onClick={() => add({ kind: 'no-ornaments', instrument: 'kaval', ornaments: ['graces', 'glide', 'trill'], when })}>
+            Plain kaval, no ornaments
+          </button>
+        )}
+        {p.drone > 0.05 && (
+          <button type="button" className={btn} onClick={() => add({ kind: 'thin', instrument: 'drone', amount: 0.5, when })}>
+            Softer drone
+          </button>
+        )}
+        {p.dance !== 'free' && (
+          <>
+            <button type="button" className={btn} onClick={() => add({ kind: 'prefer-dance', dance: p.dance, when: { mood: p.mood } })}>
+              Always this dance in {p.mood}
+            </button>
+            <button type="button" className={btn} onClick={() => add({ kind: 'avoid-dance', dance: p.dance, when: { mood: p.mood } })}>
+              Not the {DANCES[p.dance].label.split(' (')[0]} in {p.mood}
+            </button>
+          </>
+        )}
+      </div>
+      {note && <div className="stitch-muted leading-snug">{note}</div>}
+      {shaped.length > 0 && (
+        <div className="leading-snug">
+          <span className="stitch-muted">Shaped by: </span>
+          {shaped.map((r) => describeRule(r)).join('; ')}
+        </div>
+      )}
+      <BandRulesList />
+    </section>
+  );
+}
+
+/** Every standing rule of the band, each with a way to drop it. */
+export function BandRulesList() {
+  useSyncExternalStore(villageMusic.subscribe, villageMusic.getVersion);
+  const rules = villageMusic.rules;
+  if (rules.length === 0) return null;
+  return (
+    <div className="space-y-0.5 border-t border-dashed border-borderFolk pt-1">
+      <div className="font-semibold">
+        The band's rules <span className="stitch-muted font-normal">· {rules.length}</span>
+      </div>
+      <ol className="space-y-0.5">
+        {rules.map((r) => (
+          <li key={r.id} className="flex items-start gap-1 leading-snug">
+            <span className="min-w-0 flex-1">
+              <span className="stitch-thread">§ </span>
+              {describeRule(r)}
+              {r.reason ? <span className="stitch-muted"> · {r.reason}</span> : null}
+            </span>
+            <button type="button" aria-label="Drop this rule" title="Drop this rule" className="glyph-button rounded-sm px-1 leading-none" onClick={() => villageMusic.removeRule(r.id)}>
+              ×
+            </button>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }

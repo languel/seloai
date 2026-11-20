@@ -44,7 +44,7 @@ export function piToolSpecs(all: SeloToolDefinition[], set: PiToolSet): PiToolSp
   const wanted = new Set<string>(
     set === 'small'
       ? PI_TOOL_NAMES
-      : [...AUTHORING_TOOL_DEFINITIONS.map((t) => t.name).filter((n) => n !== 'authoring_guide'), 'instruct_world', 'list_settings', 'change_setting', 'change_settings', 'ui_state', 'ui_action', 'pointer', 'draw', 'clear_drawings', 'narrate', 'mixer', 'perform', 'performance_status', 'stop_performance', 'guided_tour', 'start_recording', 'stop_recording', 'remove_character', 'undo_world_edit', 'redo_world_edit', 'control_simulation'],
+      : [...AUTHORING_TOOL_DEFINITIONS.map((t) => t.name).filter((n) => n !== 'authoring_guide'), 'instruct_world', 'list_settings', 'change_setting', 'change_settings', 'ui_state', 'ui_action', 'pointer', 'draw', 'clear_drawings', 'narrate', 'mixer', 'music', 'band_rules', 'perform', 'performance_status', 'stop_performance', 'guided_tour', 'start_recording', 'stop_recording', 'remove_character', 'undo_world_edit', 'redo_world_edit', 'control_simulation'],
   );
   return all
     .filter((t) => wanted.has(t.name))

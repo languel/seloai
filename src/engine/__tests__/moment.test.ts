@@ -6,6 +6,7 @@ import { momentAt, momentText, noteName, type MomentSources } from '../moment';
 import { frameAt, type WorldlineFrame } from '../worldlines';
 
 const phrase = (t0: number, t1: number, part: MusicPhrase['part'], extra: Partial<MusicPhrase> = {}): MusicPhrase => ({
+  id: `phrase-${t0}`,
   t0,
   t1,
   part,

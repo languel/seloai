@@ -58,6 +58,7 @@ const EVENT_MARK: Record<MusicEvent['kind'], string> = {
   tone: '~',
   on: '♪',
   off: '×',
+  rule: '§',
 };
 
 export function drawMusicLane(m: MusicLaneInput) {
@@ -263,6 +264,14 @@ export function drawMusicLane(m: MusicLaneInput) {
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = palette.inks.dark;
     ctx.fillRect(x(p.t0), top + head.h, 1, h - head.h);
+  }
+  // A phrase a band rule shaped carries a small § at its start.
+  for (const p of visible) {
+    if (!p.plan.rules?.length) continue;
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = lineLook ? palette.inks.dark : palette.inks.accent;
+    ctx.font = 'bold 10px Georgia, serif';
+    ctx.fillText('§', x(p.t0) + 2, top + head.h + 10);
   }
   if (m.selected && m.selected.t1 >= t0 && m.selected.t0 <= t1) {
     const p = m.selected;
