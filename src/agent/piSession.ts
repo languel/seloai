@@ -7,14 +7,15 @@ import type { ModelSettings } from '../engine/types';
 import { PiAgent, piToolSpecs, toolOutcome, type PiEvent } from './piAgent';
 import { apiPiModel, localPi, localPiModel, type PiModel } from './piModel';
 
+/** `at`: when it happened (ms, the story's clock), so the Loom can lay Spinner's work on its lane. */
 export type PiItem =
-  | { id: number; kind: 'user'; text: string }
-  | { id: number; kind: 'pi'; text: string; streaming?: boolean }
-  | { id: number; kind: 'tool'; label: string; ok?: boolean; detail?: string; done?: string; notDone?: string }
-  | { id: number; kind: 'note'; text: string; error?: boolean };
+  | { id: number; at: number; kind: 'user'; text: string }
+  | { id: number; at: number; kind: 'pi'; text: string; streaming?: boolean }
+  | { id: number; at: number; kind: 'tool'; label: string; ok?: boolean; detail?: string; done?: string; notDone?: string }
+  | { id: number; at: number; kind: 'note'; text: string; error?: boolean };
 
-/** An item before it has an id (Omit spread over each kind). */
-type NewItem = PiItem extends infer T ? (T extends PiItem ? Omit<T, 'id'> : never) : never;
+/** An item before it has an id or a time (Omit spread over each kind). */
+type NewItem = PiItem extends infer T ? (T extends PiItem ? Omit<T, 'id' | 'at'> : never) : never;
 
 export type PiBrain = 'local' | 'api';
 
@@ -128,7 +129,7 @@ class PiSession {
   }
 
   private push(item: NewItem) {
-    this.items = [...this.items, { ...item, id: this.nextId++ } as PiItem];
+    this.items = [...this.items, { ...item, id: this.nextId++, at: Date.now() } as PiItem];
     this.changed();
   }
 

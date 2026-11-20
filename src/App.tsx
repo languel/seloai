@@ -1,5 +1,6 @@
 import { startSimulationDriver } from './app/simulationDriver';
 import { startScheduleRunner } from './app/scheduleRunner';
+import { startMusicEar } from './app/musicEar';
 import type { WorldCommand } from './world/commands';
 import { WorldStore } from './world/worldStore';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, tileSemanticsForMap } from './world/packs';
@@ -329,9 +330,11 @@ export function App() {
     if (!ready) return;
     const stopDriver = startSimulationDriver(() => simRef.current);
     const stopSchedule = startScheduleRunner(() => simRef.current);
+    const stopEar = startMusicEar(() => simRef.current);
     return () => {
       stopDriver();
       stopSchedule();
+      stopEar();
     };
   }, [ready]);
 

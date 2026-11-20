@@ -85,10 +85,9 @@ import {
   SPEECH_BUBBLE_LINE_H_PX,
   type DeferredCanvasDraw,
 } from '../engine/renderer';
-import { estimateLineDurationMs, type VillageSimulation } from '../engine/simulation';
+import type { VillageSimulation } from '../engine/simulation';
+import { isDancing } from '../engine/dancing';
 import { villageMusic } from '../music/villageMusic';
-import { getAudioDebugStats } from '../ai/audioPipeline';
-import type { StoryLine } from '../music/listener';
 import type {
   ModelSettings,
   PointOfInterest,
@@ -250,30 +249,6 @@ function serializeComposerText(root: HTMLElement | null): string {
 const HAND_NAMES = { script: 'Script', ductus: 'Hand-sewn', satin: 'Satin', counted: 'Counted' } as const;
 
 /** A #rrggbb colour darkened by `amount` (0..1). */
-const DANCE_WORDS = /\b(danc\w*|khoro|horo|celebrat\w*|festiv\w*|wedding|feast|music)\b/i;
-const danceGrounds = new WeakMap<object, Array<[number, number, number, number]>>();
-
-/**
- * Whether a character is dancing: standing still and not talking, either because what they
- * are doing is a dance or a celebration, or because they stand on a dancing ground.
- * Everyone else keeps their arms down.
- */
-function isDancing(sim: VillageSimulation, body: { id: string; tileX: number; tileY: number; tileDim: number; moving: boolean; state?: string }): boolean {
-  if (body.moving || body.state === 'speaking' || body.state === 'walking' || body.state === 'thinking') return false;
-  const label = sim.runtimes.get(body.id)?.activityLabel ?? '';
-  if (DANCE_WORDS.test(label)) return true;
-  const scene = sim.map.scene;
-  if (!scene) return false;
-  let grounds = danceGrounds.get(scene);
-  if (!grounds) {
-    grounds = bakeScene(scene).model.features.filter((f) => f.kind === 'star').map((f): [number, number, number, number] => [f.x - 0.5, f.y - 0.5, f.x + f.w + 0.5, f.y + f.h + 0.5]);
-    danceGrounds.set(scene, grounds);
-  }
-  const x = body.tileX / body.tileDim + 0.5;
-  const y = body.tileY / body.tileDim + 0.5;
-  return grounds.some(([x0, y0, x1, y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
-}
-
 /** The stitch kit's scope around a part of the interface, when the world is drawn as cloth. */
 function MaybeStitch({ on, look, children }: { on: boolean; look: PaletteName; children: React.ReactNode }) {
   return on ? <StitchScope look={look}>{children}</StitchScope> : <>{children}</>;
@@ -563,83 +538,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
   // The band: it listens to the story about once a second and plays to it.
   useSyncExternalStore(villageMusic.subscribe, villageMusic.getVersion);
   const music = villageMusic.status();
-  useEffect(() => {
-    // Browsers let sound start only after a click: the band starts on the first one if it was left on.
-    const start = () => villageMusic.resume();
-    window.addEventListener('pointerdown', start, { once: true });
-    // The Scribe's model is the band's ear when one is loaded: it names the mood of the moment.
-    // It never asks while the model is wanted for the story itself (someone thinking or speaking,
-    // a voice playing): the story's lines and voices come first.
-    villageMusic.setScorer((lines) => {
-      const busy = Boolean(brainRouter.activeSpeechInfo) || [...sim.runtimes.values()].some((rt) => rt.state === 'thinking' || rt.state === 'speaking');
-      return busy ? Promise.resolve(null) : brainRouter.scoreMusic({ lines, world: sim.world, settings: sim.modelSettings });
-    });
-    const timer = window.setInterval(() => {
-      if (!villageMusic.enabled) return;
-      const cutoff = Date.now() - 180_000;
-      const lines: StoryLine[] = [];
-      for (const conv of sim.conversations) {
-        for (let i = conv.messages.length - 1; i >= 0; i--) {
-          const m = conv.messages[i];
-          if (m.timestamp < cutoff) break;
-          lines.push({ text: m.text, kind: m.kind ?? 'speech', speaker: m.senderName, at: m.timestamp / 1000 });
-        }
-      }
-      let speaking = 0;
-      let dancing = 0;
-      const dim = sim.map.tileDim;
-      for (const rt of sim.runtimes.values()) {
-        if (rt.state === 'speaking') speaking++;
-        const moving = rt.state === 'walking' || rt.path.length > 0;
-        if (isDancing(sim, { id: rt.id, tileX: rt.x * dim, tileY: rt.y * dim, tileDim: dim, moving, state: rt.state })) dancing++;
-      }
-      villageMusic.hear({
-        now: Date.now() / 1000,
-        lines,
-        activeConversations: sim.conversations.filter((c) => c.active).length,
-        speaking,
-        dancing,
-        backdrop: sim.world?.premise,
-      });
-    }, 1000);
-    // Whether a line is being said right now, checked often so the band can answer each line:
-    // a voice playing (any voice, the guide's too), a character speaking, or a line still
-    // within its reading time.
-    const speechTimer = window.setInterval(() => {
-      if (!villageMusic.enabled) return;
-      let speaking =
-        Boolean(brainRouter.activeSpeechInfo) ||
-        getAudioDebugStats().activeSourcesCount > 0 ||
-        (typeof window.speechSynthesis !== 'undefined' && window.speechSynthesis.speaking);
-      if (!speaking) for (const rt of sim.runtimes.values()) if (rt.state === 'speaking') speaking = true;
-      if (!speaking) {
-        const now = Date.now();
-        for (const conv of sim.conversations) {
-          const m = conv.messages[conv.messages.length - 1];
-          if (m && m.kind !== 'thought' && now - m.timestamp < estimateLineDurationMs(m.text) / Math.max(0.25, Math.abs(sim.speedMultiplier) || 1)) {
-            speaking = true;
-            break;
-          }
-        }
-      }
-      // A line by the Scribe that just ended is a passage of the teller: the band answers it.
-      let newest: { at: number; kind?: string } | null = null;
-      for (const conv of sim.conversations) {
-        const m = conv.messages[conv.messages.length - 1];
-        if (m && m.kind !== 'thought' && (!newest || m.timestamp > newest.at)) newest = { at: m.timestamp, kind: m.kind };
-      }
-      villageMusic.setSpeaking(speaking && !sim.paused, { answer: newest?.kind === 'narration' });
-    }, 150);
-    // After a passage of the Scribe the story pauses for the band's answer, as in a sung story.
-    sim.setMusicPause((after) => villageMusic.answerPauseMs(after));
-    return () => {
-      window.removeEventListener('pointerdown', start);
-      window.clearInterval(timer);
-      window.clearInterval(speechTimer);
-      villageMusic.setScorer(null);
-      sim.setMusicPause(null);
-    };
-  }, [sim]);
+  // The band's ear on the story lives at app level (src/app/musicEar.ts), so it listens in every view.
   /** Speech and thoughts embroidered onto the cloth, when the woven text style is on. */
   const wovenRef = useRef(new WovenText());
   /** The Scribe's band along the bottom of the cloth (woven text style), and its current line. */

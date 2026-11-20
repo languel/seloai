@@ -2,6 +2,7 @@ import { findNamedCharacter } from './names';
 import { inferSentiment } from './observatory';
 import { placeKey, placeRef } from './placeNames';
 import type { VillageSimulation } from './simulation';
+import { frameAt, type WorldlineFrame } from './worldlines';
 
 /**
  * Psychohistory: the world at this moment as a web of who and where. Where the Loom keeps the
@@ -72,8 +73,27 @@ export interface Psychohistory {
 const AT_REACH = 4;
 const PLACE_COLOR = '#c98a3b';
 
-/** Builds the web of the world as it stands now. */
-export function buildPsychohistory(sim: VillageSimulation, now = Date.now()): Psychohistory {
+/**
+ * Looking back: build the web as it stood at `t`, from the worldline recorder's frames (where
+ * each was, their state and intention) and only what had been said and remembered by then.
+ */
+export interface PsychoAsOf {
+  t: number;
+  frames: Map<string, readonly WorldlineFrame[]>;
+}
+
+/** Builds the web of the world as it stands now, or as it stood at `asOf.t`. */
+export function buildPsychohistory(sim: VillageSimulation, now = Date.now(), asOf?: PsychoAsOf): Psychohistory {
+  if (asOf) now = asOf.t;
+  const until = asOf ? asOf.t : Infinity;
+  const conversations = asOf
+    ? sim.conversations
+        .map((c) => {
+          const messages = c.messages.filter((m) => m.timestamp <= until);
+          return { ...c, messages, updatedAt: messages[messages.length - 1]?.timestamp ?? c.updatedAt };
+        })
+        .filter((c) => c.messages.length > 0)
+    : sim.conversations;
   const nodes: PsychoNode[] = [];
   const links = new Map<string, PsychoLink>();
   const places = (sim.map.pointsOfInterest ?? []).map((p) => ({ id: `place:${p.id}`, label: p.label || p.tag, tag: p.tag, x: p.x, y: p.y, about: p.description ?? '' }));
@@ -107,7 +127,7 @@ export function buildPsychohistory(sim: VillageSimulation, now = Date.now()): Ps
   };
 
   // Who has talked with whom, how much and in what tone.
-  for (const conv of sim.conversations) {
+  for (const conv of conversations) {
     const people = conv.participantIds.filter((id) => sim.configs.has(id)).sort();
     if (people.length < 2) continue;
     const said = conv.messages.filter((m) => m.kind !== 'narration' && m.kind !== 'thought');
@@ -135,10 +155,26 @@ export function buildPsychohistory(sim: VillageSimulation, now = Date.now()): Ps
   }
 
   for (const cfg of cast) {
-    const rt = sim.runtimes.get(cfg.id);
-    if (!rt) continue;
+    const live = sim.runtimes.get(cfg.id);
+    if (!live) continue;
+    // In the past, the character as their frame then shows them; the rest as they are.
+    const f = asOf ? frameAt(asOf.frames.get(cfg.id), asOf.t) : undefined;
+    const rt = f
+      ? {
+          ...live,
+          x: f.x,
+          y: f.y,
+          state: f.state as typeof live.state,
+          currentIntention: f.intention,
+          errand: f.errand ? { targetId: f.errand, tries: 0 } : undefined,
+          path: f.goal ? [f.goal] : [],
+          memories: live.memories.filter((m) => m.timestamp <= until),
+        }
+      : asOf
+        ? { ...live, memories: live.memories.filter((m) => m.timestamp <= until) }
+        : live;
     const intention = rt.currentIntention || cfg.plan;
-    const ownLines = sim.conversations.flatMap((c) => c.messages.filter((m) => m.senderId === cfg.id && m.kind === 'speech')).slice(-3);
+    const ownLines = conversations.flatMap((c) => c.messages.filter((m) => m.senderId === cfg.id && m.kind === 'speech')).slice(-3);
     nodes.push({
       id: cfg.id,
       kind: 'character',
@@ -149,7 +185,7 @@ export function buildPsychohistory(sim: VillageSimulation, now = Date.now()): Ps
       mapY: rt.y,
       state: rt.state,
       intention,
-      released: sim.releasedFrom(cfg.id) ?? undefined,
+      released: asOf ? undefined : sim.releasedFrom(cfg.id) ?? undefined,
       mood: ownLines.length ? inferSentiment(ownLines.map((m) => m.text)) : undefined,
       activity: rt.state === 'speaking' ? 1 : rt.state === 'thinking' || rt.state === 'conversing' || rt.state === 'listening' ? 0.75 : rt.state === 'walking' ? 0.5 : 0.25,
       degree: 0,

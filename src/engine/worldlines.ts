@@ -24,9 +24,38 @@ const SAMPLE_EVERY_MS = 1500;
 const NEAR_PLACE = 4.5;
 const MAX_SAMPLES = 6000;
 
+/** A character as they were at one moment, for looking back (the probe, Psychohistory). */
+export interface WorldlineFrame {
+  t: number;
+  x: number;
+  y: number;
+  state: string;
+  intention: string;
+  /** Who they were walking to, if anyone. */
+  errand: string | null;
+  /** The end of their path, in cells, if walking. */
+  goal: { x: number; y: number } | null;
+}
+
+/** The frame at or before t (the first one if t is earlier than all). */
+export function frameAt(frames: readonly WorldlineFrame[] | undefined, t: number): WorldlineFrame | undefined {
+  if (!frames || frames.length === 0) return undefined;
+  if (t < frames[0].t) return undefined;
+  let lo = 0;
+  let hi = frames.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (frames[mid].t <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return frames[lo];
+}
+
 /** Remembers where every character was, a sample every second and a half. */
 export class WorldlineRecorder {
   readonly samples = new Map<string, WorldlineSample[]>();
+  /** Every sample's fuller picture: position, state and intention, for looking back. */
+  readonly frames = new Map<string, WorldlineFrame[]>();
   /** Where each walker is heading, as a place id, for basting. */
   readonly heading = new Map<string, string | null>();
   private last = -Infinity;
@@ -59,6 +88,23 @@ export class WorldlineRecorder {
       if (list.length > MAX_SAMPLES) list.splice(0, list.length - MAX_SAMPLES);
       this.samples.set(rt.id, list);
       const goal = rt.path[rt.path.length - 1];
+      const frames = this.frames.get(rt.id) ?? [];
+      const last = frames[frames.length - 1];
+      const intention = rt.currentIntention ?? '';
+      const errand = rt.errand?.targetId ?? null;
+      // A new frame when they moved, changed, or a while has passed.
+      if (
+        !last ||
+        Math.hypot(last.x - rt.x, last.y - rt.y) > 0.4 ||
+        last.state !== rt.state ||
+        last.intention !== intention ||
+        last.errand !== errand ||
+        t - last.t > 20000
+      ) {
+        frames.push({ t, x: rt.x, y: rt.y, state: rt.state, intention, errand, goal: goal ? { x: goal.x, y: goal.y } : null });
+        if (frames.length > MAX_SAMPLES) frames.splice(0, frames.length - MAX_SAMPLES);
+        this.frames.set(rt.id, frames);
+      }
       this.heading.set(rt.id, goal ? nearest(goal.x, goal.y) : null);
     }
   }

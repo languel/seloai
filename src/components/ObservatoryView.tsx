@@ -53,6 +53,23 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
   onJumpToVillage,
 }) => {
   const [subTab, setSubTab] = useState<ObservatorySubTab>('weave');
+  // Psychohistory under the Loom, both on the same probe. Remembered on this device.
+  const [webBeside, setWebBeside] = useState(() => {
+    try {
+      return localStorage.getItem('seloai.loom.web') === 'on';
+    } catch {
+      return false;
+    }
+  });
+  const toggleWeb = () =>
+    setWebBeside((on) => {
+      try {
+        localStorage.setItem('seloai.loom.web', on ? 'off' : 'on');
+      } catch {
+        // no storage
+      }
+      return !on;
+    });
   const [, setTick] = useState(0);
 
 
@@ -272,8 +289,15 @@ export const ObservatoryView: React.FC<ObservatoryViewProps> = ({
 
       {/* The Loom */}
       {subTab === 'weave' && (
-        <div className="min-h-0 flex-1">
-          <LoomView sim={sim} look={look} onJumpToVillage={onJumpToVillage} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className={webBeside ? 'min-h-0 basis-[58%]' : 'min-h-0 flex-1'}>
+            <LoomView sim={sim} look={look} onJumpToVillage={onJumpToVillage} webBeside={webBeside} onToggleWeb={toggleWeb} />
+          </div>
+          {webBeside && (
+            <div className="min-h-0 flex-1 border-t border-dashed border-borderFolk">
+              <PsychohistoryView sim={sim} look={look} onJumpToVillage={onJumpToVillage} compact />
+            </div>
+          )}
         </div>
       )}
 

@@ -64,3 +64,42 @@ describe('Psychohistory: the world as it stands', () => {
     for (const b of layout.bodies.values()) expect(Number.isFinite(b.x) && Number.isFinite(b.y)).toBe(true);
   });
 });
+
+describe('Psychohistory looking back', () => {
+  it('as of a moment: where people were then, and only the talk that had happened by then', async () => {
+    const sim = await village();
+    const well = sim.map.pointsOfInterest!.find((p) => /well/i.test(p.label))!;
+    const far = sim.map.pointsOfInterest!.find((p) => Math.hypot(p.x - well.x, p.y - well.y) > 8)!;
+    const frames = new Map([
+      [
+        'baba-rada',
+        [
+          { t: 1_000, x: well.x, y: well.y, state: 'idle', intention: 'Wait by the well', errand: null, goal: null },
+          { t: 9_000, x: far.x, y: far.y, state: 'walking', intention: 'Go home', errand: null, goal: null },
+        ],
+      ],
+    ]);
+    sim.conversations = [
+      {
+        id: 'c1',
+        participantIds: ['baba-rada', 'stoyan'],
+        startedAt: 5_000,
+        updatedAt: 6_000,
+        active: false,
+        messages: [
+          { id: 'm1', senderId: 'baba-rada', senderName: 'Baba Rada', text: 'Good morning.', timestamp: 5_000 },
+          { id: 'm2', senderId: 'stoyan', senderName: 'Stoyan', text: 'And to you.', timestamp: 6_000 },
+        ],
+      },
+    ] as never;
+    const before = buildPsychohistory(sim, Date.now(), { t: 3_000, frames });
+    expect(before.at).toBe(3_000);
+    expect(before.links.some((l) => l.kind === 'talked')).toBe(false);
+    expect(before.links.find((l) => l.kind === 'at' && l.source === 'baba-rada')?.target).toBe(`place:${well.id}`);
+    expect(before.nodes.find((n) => n.id === 'baba-rada')).toMatchObject({ state: 'idle', intention: 'Wait by the well' });
+    const after = buildPsychohistory(sim, Date.now(), { t: 7_000, frames });
+    expect(after.links.find((l) => l.kind === 'talked')?.note).toMatch(/2 lines/);
+    const later = buildPsychohistory(sim, Date.now(), { t: 10_000, frames });
+    expect(later.links.find((l) => l.kind === 'at' && l.source === 'baba-rada')?.target).not.toBe(`place:${well.id}`);
+  });
+});

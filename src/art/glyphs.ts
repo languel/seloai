@@ -54,7 +54,11 @@ export type GlyphName =
   | 'lock'
   | 'patternBrush'
   | 'schedule'
-  | 'span';
+  | 'span'
+  | 'rowsTaller'
+  | 'rowsShorter'
+  | 'probe'
+  | 'web';
 
 const W = 1.1; // the usual stroke weight
 const line = (points: Pt[], ink: Ink = 'dark', weight = W, closed = false): Shape => ({ kind: 'line', points, ink, weight, closed });
@@ -348,6 +352,43 @@ const GLYPHS: Record<GlyphName, () => Shape[]> = {
     line([[-4, 0], [-2, 0]], 'primary', 1.2),
     line([[-0.9, 0], [0.9, 0]], 'primary', 1.2),
     line([[2, 0], [4, 0]], 'primary', 1.2),
+  ],
+  // Three rows with stitched arrows pushing them apart, or drawing them together.
+  rowsTaller: () => [
+    line([[-6.5, -2], [2.5, -2]], 'dark'),
+    line([[-6.5, 0.5], [2.5, 0.5]], 'secondary'),
+    line([[-6.5, 3], [2.5, 3]], 'dark'),
+    line([[5.5, -2.5], [5.5, -7]], 'primary', 1.2),
+    line([[3.8, -5.3], [5.5, -7], [7.2, -5.3]], 'primary', 1.2),
+    line([[5.5, 3.5], [5.5, 7.5]], 'primary', 1.2),
+    line([[3.8, 5.8], [5.5, 7.5], [7.2, 5.8]], 'primary', 1.2),
+  ],
+  rowsShorter: () => [
+    line([[-6.5, -1.5], [2.5, -1.5]], 'dark'),
+    line([[-6.5, 0.5], [2.5, 0.5]], 'secondary'),
+    line([[-6.5, 2.5], [2.5, 2.5]], 'dark'),
+    line([[5.5, -7], [5.5, -3]], 'primary', 1.2),
+    line([[3.8, -4.7], [5.5, -3], [7.2, -4.7]], 'primary', 1.2),
+    line([[5.5, 7], [5.5, 3]], 'primary', 1.2),
+    line([[3.8, 4.7], [5.5, 3], [7.2, 4.7]], 'primary', 1.2),
+  ],
+  // A second needle with a square head, set into the cloth to look at one moment.
+  probe: () => [
+    line([[0, -3.5], [0, 7]], 'dark', 1.3),
+    area(rect(-2.6, -7, 2.6, -2.4), 'accent2', Math.PI / 2),
+    line([[-6.5, 4], [-3, 4]], 'secondary', 0.8),
+    line([[3, 4], [6.5, 4]], 'secondary', 0.8),
+  ],
+  // Knots tied together by threads: the web of Psychohistory.
+  web: () => [
+    line([[-5, -4], [4, -5]], 'secondary', 0.8),
+    line([[-5, -4], [-1, 5]], 'secondary', 0.8),
+    line([[4, -5], [-1, 5]], 'secondary', 0.8),
+    line([[4, -5], [6, 3]], 'secondary', 0.8),
+    knot([-5, -4], 1.5, 'primary'),
+    knot([4, -5], 1.5, 'accent'),
+    knot([-1, 5], 1.5, 'gold'),
+    knot([6, 3], 1.1, 'primary'),
   ],
   lock: () => [line(rect(-4.5, -0.5, 4.5, 6), 'dark', 1.1, true), line(arc([0, -0.5], 3.2, Math.PI, Math.PI * 2, 10), 'dark', 1.1), knot([0, 2.8], 0.9, 'primary')],
   // A grid with crossed-out cells: where one can and cannot walk.

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { figureLooksFor, figurePortrait } from '../art/gameLook';
 import { PALETTES, paintLinen, type PaletteName } from '../art/looks';
+import { probeTime, setProbe, subscribeProbe } from '../app/momentProbe';
+import { worldlineRecorderFor } from '../engine/worldlines';
+import { ProbeStrip } from './ProbeStrip';
 import { RELATION_KINDS, buildPsychohistory, type PsychoLink, type PsychoNode, type RelationKind, type Tone } from '../engine/psychohistory';
 import { createLayout, stepLayout, syncLayout, warmLayout, type LayoutState } from '../engine/psychohistoryLayout';
 import type { VillageSimulation } from '../engine/simulation';
@@ -20,6 +23,8 @@ interface PsychohistoryViewProps {
   sim: VillageSimulation;
   look: PaletteName;
   onJumpToVillage: (villagerId?: string) => void;
+  /** Shown beside the Loom: leave out the long explanation. */
+  compact?: boolean;
 }
 
 const RELATION_LABELS: Record<RelationKind, { label: string; hint: string }> = {
@@ -48,7 +53,7 @@ function hash(text: string) {
   return h >>> 0;
 }
 
-export default function PsychohistoryView({ sim, look, onJumpToVillage }: PsychohistoryViewProps) {
+export default function PsychohistoryView({ sim, look, onJumpToVillage, compact }: PsychohistoryViewProps) {
   const [tick, setTick] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -81,7 +86,30 @@ export default function PsychohistoryView({ sim, look, onJumpToVillage }: Psycho
     });
   }, [sim]);
 
-  const web = useMemo(() => buildPsychohistory(sim), [sim, tick]);
+  // The probe on the Loom: when one is placed, the web shows that moment unless asked for now.
+  const [probe, setProbeState] = useState<number | null>(probeTime);
+  const [showNow, setShowNow] = useState(false);
+  // Moving the probe (here or on the Loom) shows its moment.
+  useEffect(
+    () =>
+      subscribeProbe(() => {
+        setProbeState(probeTime());
+        setShowNow(false);
+      }),
+    [],
+  );
+  const asOfProbe = probe !== null && !showNow;
+  const recorder = useMemo(() => worldlineRecorderFor(sim), [sim]);
+  const web = useMemo(
+    () => (asOfProbe ? buildPsychohistory(sim, Date.now(), { t: probe!, frames: recorder.frames }) : buildPsychohistory(sim)),
+    [sim, tick, asOfProbe, probe, recorder],
+  );
+  const historyStart = useMemo(() => {
+    let t = Date.now() - 60_000;
+    for (const f of recorder.frames.values()) if (f[0]) t = Math.min(t, f[0].t);
+    for (const c of sim.conversations) for (const m of c.messages) t = Math.min(t, m.timestamp);
+    return t;
+  }, [sim, recorder, tick]);
   const byId = useMemo(() => new Map(web.nodes.map((n) => [n.id, n])), [web]);
   const links = useMemo(() => web.links.filter((l) => shown.has(l.kind)), [web, shown]);
   const webRef = useRef(web);
@@ -588,6 +616,39 @@ export default function PsychohistoryView({ sim, look, onJumpToVillage }: Psycho
           <GlyphButton glyph="zoomIn" label="Zoom in" onClick={() => zoomBy(1.25)} />
           <GlyphButton glyph="wholeMap" label="The whole web" onClick={fit} tipSide="below-left" />
         </StitchPanel>
+        <StitchPanel className="flex items-center gap-2 px-3 py-1 text-xs">
+          <button
+            type="button"
+            aria-pressed={!asOfProbe}
+            onClick={() => setShowNow(true)}
+            title="The world as it stands now"
+            className={`glyph-button whitespace-nowrap rounded-sm px-1.5 py-0.5 ${!asOfProbe ? 'glyph-on' : ''}`}
+          >
+            Now
+          </button>
+          <button
+            type="button"
+            aria-pressed={asOfProbe}
+            onClick={() => {
+              if (probe === null) setProbe(Date.now() - 30_000);
+              setShowNow(false);
+            }}
+            title="The world as it stood at the probe (placed on the Loom, or here)"
+            className={`glyph-button whitespace-nowrap rounded-sm px-1.5 py-0.5 ${asOfProbe ? 'glyph-on' : ''}`}
+          >
+            The probe
+          </button>
+          <ProbeStrip
+            start={historyStart}
+            now={Date.now()}
+            probe={probe}
+          />
+          {probe !== null && (
+            <button type="button" aria-label="Take the probe away" title="Take the probe away" className="glyph-button rounded-sm px-1" onClick={() => setProbe(null)}>
+              ×
+            </button>
+          )}
+        </StitchPanel>
         <div ref={wrapRef} className="relative min-h-0 flex-1 overflow-hidden rounded-sm">
           <canvas
             ref={canvasRef}
@@ -608,7 +669,7 @@ export default function PsychohistoryView({ sim, look, onJumpToVillage }: Psycho
             </div>
           )}
         </div>
-        <div className="stitch-muted px-1 text-[10px]">
+        <div className={`stitch-muted px-1 text-[10px] ${compact ? 'hidden' : ''}`}>
           The world as it stands now. People are their portraits, places are medallions, held near where they lie on the map. A running stitch is a conversation (red warm, dark tense, blue curious), gold satin is where someone is, doubled gold where they keep to, loose basting where they are heading, a faint dotted thread who or what is on their mind. Drag the cloth to move, scroll to zoom, drag a node to place it (double-click to let it go), click to read it.
         </div>
       </div>
@@ -625,7 +686,7 @@ export default function PsychohistoryView({ sim, look, onJumpToVillage }: Psycho
             {sel.kind === 'character' && (
               <div className="space-y-1 leading-snug">
                 <div>
-                  <span className="stitch-muted">Now: </span>
+                  <span className="stitch-muted">{asOfProbe ? 'Then: ' : 'Now: '}</span>
                   {sel.state}
                   {sel.mood ? <span className="stitch-muted"> · {TONE_WORD[sel.mood]} of late</span> : null}
                 </div>
@@ -669,7 +730,7 @@ export default function PsychohistoryView({ sim, look, onJumpToVillage }: Psycho
           </>
         ) : (
           <>
-            <div className="font-display text-sm">The world now</div>
+            <div className="font-display text-sm">{asOfProbe ? 'The world at the probe' : 'The world now'}</div>
             <span className="stitch-muted leading-snug">
               Click a person or a place to see how they stand to everyone and everything else. {web.nodes.filter((n) => n.kind === 'character').length} people, {web.nodes.filter((n) => n.kind === 'place').length} places, {web.links.length} threads.
             </span>

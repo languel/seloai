@@ -1,5 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { villageMusic } from '../music/villageMusic';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { piSession } from '../agent/piSession';
+import { probeTime, setProbe, subscribeProbe } from '../app/momentProbe';
+import { momentSourcesFor, spinnerRecord } from '../app/momentSources';
+import { momentAt } from '../engine/moment';
+import { villageMusic, type MusicPhrase } from '../music/villageMusic';
+import { drawMusicLane, phraseAt } from './loom/drawMusic';
+import { PhrasePanel, ProbePanel } from './loom/LoomPanels';
+import { MUSIC_ROLL_MIN, buildTracks, clampScroll, clothY, placeTracks, scrollToTrack, trackAt, zoomRows } from './loom/tracks';
 import { PALETTES, paintLinen, type PaletteName } from '../art/looks';
 import type { Ink } from '../art/shapes';
 import type { VillageSimulation } from '../engine/simulation';
@@ -23,15 +30,15 @@ interface LoomViewProps {
   sim: VillageSimulation;
   look: PaletteName;
   onJumpToVillage: (villagerId?: string) => void;
+  /** Whether Psychohistory is shown beside the Loom, following the probe; and the switch for it. */
+  webBeside?: boolean;
+  onToggleWeb?: () => void;
 }
 
 const THREAD_INKS: Ink[] = ['primary', 'secondary', 'accent', 'accent2', 'gold', 'dark'];
 const TOP = 30;
 /** The ruler along the top: dragging here selects a span of time. */
 const RULER_H = TOP + 4;
-const BOTTOM_PLAIN = 10;
-/** Room along the bottom for the music strip, when it is shown. */
-const MUSIC_LANE = 40;
 const RIGHT_PAD = 8;
 const MIN_SPAN = 5_000;
 const MAX_SPAN_FLOOR = 6 * 3600_000;
@@ -62,7 +69,10 @@ const KIND_MARK: Record<CueKind, string> = { message: '✉', music: '♪', note:
 type Side =
   | { mode: 'moment' }
   | { mode: 'span' }
-  | { mode: 'cue'; id: string | null; atSimMs: number };
+  | { mode: 'cue'; id: string | null; atSimMs: number }
+  | { mode: 'probe' }
+  | { mode: 'phrase' }
+  | { mode: 'spinner'; t: number };
 
 interface CueForm {
   kind: CueKind;
@@ -74,12 +84,42 @@ interface CueForm {
   hold: string;
 }
 
+/** Draws text wrapped into at most `lines` lines within `maxW`, ending in … when it runs over. */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, lines: number, lineH: number) {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  let line = '';
+  let row = 0;
+  for (let i = 0; i < words.length; i++) {
+    const next = line ? `${line} ${words[i]}` : words[i];
+    if (ctx.measureText(next).width <= maxW || !line) {
+      line = next;
+      continue;
+    }
+    if (row === lines - 1) {
+      let cut = line;
+      while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxW) cut = cut.slice(0, -1);
+      ctx.fillText(`${cut}…`, x, y + row * lineH);
+      return;
+    }
+    ctx.fillText(line, x, y + row * lineH);
+    row++;
+    line = words[i];
+  }
+  if (line) {
+    let cut = line;
+    while (cut.length > 1 && ctx.measureText(cut).width > maxW) cut = cut.slice(0, -1);
+    ctx.fillText(cut === line ? line : `${cut}…`, x, y + row * lineH);
+  }
+}
+
 /**
- * The Loom: the world's whole history as a piece of weaving. Threads are characters, bands
- * are places, stitches are what was said. Ahead of the needle, cues a person has placed wait
- * for the world clock to reach them.
+ * The Loom: the world's whole history as a piece of weaving, in lanes. The Scribe's passages
+ * and Spinner's work run along the top; the cloth's threads are characters through bands of
+ * places, its stitches what was said; the music runs along the bottom and opens into a piano
+ * roll. A second needle, the probe, looks back at one moment. Ahead of the live needle, cues a
+ * person has placed wait for the world clock to reach them.
  */
-export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) {
+export default function LoomView({ sim, look, onJumpToVillage, webBeside, onToggleWeb }: LoomViewProps) {
   const recorder = useMemo(() => worldlineRecorderFor(sim), [sim]);
   const schedule = useMemo(() => scheduleFor(sim), [sim]);
   const [arrangement, setArrangement] = useState<LoomArrangement>('place');
@@ -91,7 +131,22 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
   const [span, setSpan] = useState<{ t0: number; t1: number } | null>(null);
   const [side, setSide] = useState<Side>({ mode: 'moment' });
   const [form, setForm] = useState<CueForm | null>(null);
-  // The music strip: what the band played, under what was said. Remembered on this device.
+  // The lane zoomed on its own (it takes most of the view), and the phrase of music chosen.
+  const [focus, setFocus] = useState<string | null>(null);
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const [phrase, setPhrase] = useState<MusicPhrase | null>(null);
+  const [probe, setProbeState] = useState<number | null>(probeTime);
+  useEffect(
+    () =>
+      subscribeProbe(() => {
+        setProbeState(probeTime());
+        redraw();
+      }),
+    [],
+  );
+  useSyncExternalStore(piSession.subscribe, piSession.snapshot);
+  // The music lane: what the band played, under what was said. Remembered on this device.
   const [showMusic, setShowMusic] = useState(() => {
     try {
       return localStorage.getItem('seloai.loom.music') !== 'off';
@@ -108,7 +163,6 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       }
       return !on;
     });
-  const BOTTOM = showMusic ? BOTTOM_PLAIN + MUSIC_LANE : BOTTOM_PLAIN;
   const [tick, setTick] = useState(0);
   const [clockState, setClockState] = useState(() => `${sim.paused}|${sim.speedMultiplier}`);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -116,10 +170,14 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
   // The visible stretch of time, as [start, end] timestamps, and where "now" sits in it while following.
   const view = useRef<{ t0: number; t1: number } | null>(null);
   const nowFrac = useRef(0.8);
+  // Vertical zoom and scroll of the lanes.
+  const rows = useRef({ vzoom: 1, scroll: 0 });
   const drag = useRef<
-    | { kind: 'pan'; x: number; t0: number; t1: number; moved: boolean }
-    | { kind: 'span'; x: number; from: number; moved: boolean }
+    | { kind: 'pan'; x: number; y: number; t0: number; t1: number; scroll: number; moved: boolean }
+    | { kind: 'span'; x: number; from: number; moved: boolean; onRuler: boolean }
     | { kind: 'cue'; id: string; x: number; moved: boolean }
+    | { kind: 'probe'; x: number; moved: boolean }
+    | { kind: 'rows'; y: number; scroll: number; moved: boolean }
     | null
   >(null);
   const hoverX = useRef<number | null>(null);
@@ -148,6 +206,8 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
   names.set('narrator', sim.modelSettings.narratorName || 'Scribe');
   names.set(sim.player.id, sim.player.name);
   const recipientName = (to?: string) => (to === 'all' ? 'everyone' : names.get(to || 'narrator') ?? to ?? 'the Scribe');
+  const spinnerItems = spinnerRecord();
+  const score = villageMusic.score();
 
   const cueX = (c: ScheduledCue) => (c.firedAtWall !== undefined ? c.firedAtWall : cueWallTime(c, simNow, layout.now));
   const lastCueT = cues.reduce((m, c) => Math.max(m, cueX(c)), layout.now);
@@ -181,18 +241,34 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     return () => observer.disconnect();
   }, []);
 
-  // Geometry helpers shared by drawing and hit-testing. The place labels narrow on a narrow loom.
+  // Geometry shared by drawing and hit-testing: time across, lanes down. The labels narrow on a narrow loom.
   const geom = () => {
     const canvas = canvasRef.current!;
     const ratio = window.devicePixelRatio || 1;
     const W = canvas.width / ratio;
     const H = canvas.height / ratio;
     const labelW = W < 560 ? 86 : 132;
+    const viewH = Math.max(40, H - TOP);
+    const tracks = buildTracks({ bands: layout.bands, showMusic, viewH });
+    const { placed, total } = placeTracks(tracks, rows.current.vzoom, focusRef.current, viewH);
+    rows.current.scroll = clampScroll(rows.current.scroll, total, viewH);
+    const scroll = rows.current.scroll;
+    const sy = (contentY: number) => TOP + contentY - scroll;
     const { t0, t1 } = view.current!;
     const x = (t: number) => labelW + ((t - t0) / (t1 - t0)) * (W - labelW - RIGHT_PAD);
     const tOf = (px: number) => t0 + ((px - labelW) / (W - labelW - RIGHT_PAD)) * (t1 - t0);
-    const y = (v: number) => TOP + v * (H - TOP - BOTTOM);
-    return { W, H, x, y, tOf, ratio, labelW };
+    const y = (v: number) => sy(clothY(placed, layout.bands.length, v));
+    const trackUnder = (py: number) => (py < TOP ? undefined : trackAt(placed, py - TOP + scroll));
+    const bandsBottom = (() => {
+      const bands = placed.filter((t) => t.kind === 'band');
+      const last = bands[bands.length - 1];
+      return last ? sy(last.top + last.h) : TOP;
+    })();
+    const bandsTop = (() => {
+      const first = placed.find((t) => t.kind === 'band');
+      return first ? sy(first.top) : TOP;
+    })();
+    return { W, H, x, y, tOf, ratio, labelW, viewH, placed, total, sy, trackUnder, bandsTop, bandsBottom };
   };
 
   /** Sets the view, keeping it within sensible bounds; following stays on only if now is still in view. */
@@ -224,11 +300,43 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     redraw();
   };
 
+  /** Taller or shorter lanes (k above 1 taller), keeping what is under `anchorY` (canvas px) in place. */
+  const zoomLanes = (k: number, anchorY?: number) => {
+    const { viewH } = geom();
+    const r = zoomRows(rows.current.vzoom, rows.current.scroll, k, (anchorY ?? TOP + viewH / 2) - TOP);
+    rows.current = r;
+    redraw();
+  };
+
+  const scrollLanes = (dy: number) => {
+    rows.current.scroll += dy;
+    redraw();
+  };
+
+  /** Zooms one lane to fill most of the view, or lets it go back. */
+  const toggleFocus = (id: string) => {
+    const next = focusRef.current === id ? null : id;
+    focusRef.current = next;
+    setFocus(next);
+    if (next) {
+      // Bring it into view once it has its new height.
+      requestAnimationFrame(() => {
+        const { placed, total, viewH } = geom();
+        const t = placed.find((p) => p.id === next);
+        if (t) rows.current.scroll = scrollToTrack(t, total, viewH);
+        redraw();
+      });
+    }
+  };
+
   const fitAll = () => {
     const t0 = layout.start - 10_000;
     const t1 = Math.max(layout.now + 30_000, lastCueT + 20_000);
     view.current = { t0, t1 };
     nowFrac.current = (layout.now - t0) / (t1 - t0);
+    rows.current = { vzoom: 1, scroll: 0 };
+    focusRef.current = null;
+    setFocus(null);
     setFollowNow(true);
     redraw();
   };
@@ -241,12 +349,18 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     setFollowNow(false);
   };
 
+  const placeProbe = (t: number) => {
+    setProbe(t);
+    setSide({ mode: 'probe' });
+  };
+
   // Drawing.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !view.current) return;
     const ctx = canvas.getContext('2d')!;
-    const { W, H, x, y, ratio, labelW: LABEL_W } = geom();
+    const g = geom();
+    const { W, H, x, y, ratio, labelW: LABEL_W, placed, sy, bandsTop, bandsBottom } = g;
     const palette = PALETTES[look];
     const lineLook = look === 'ink' || look === 'night';
     // Each thread is the character's own colour (their dot), or a palette thread without one.
@@ -263,35 +377,12 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       paintLinen(ctx, W, H, { unit: 6, origin: [0, 0], palette, seed: 3 });
     }
     const { t0, t1 } = view.current;
-    const labelChars = Math.max(6, Math.floor((LABEL_W - 12) / 6));
-
-    // Bands: faint alternating cloth, with a running stitch between them.
-    ctx.font = '11px Georgia, serif';
-    layout.bands.forEach((b, i) => {
-      if (i % 2) {
-        ctx.fillStyle = lineLook ? 'rgba(127,127,127,0.06)' : 'rgba(120, 90, 50, 0.06)';
-        ctx.fillRect(LABEL_W, y(b.y0), W - LABEL_W, y(b.y1) - y(b.y0));
-      }
-      ctx.strokeStyle = lineLook ? palette.inks.dark : palette.inks.secondary;
-      ctx.globalAlpha = 0.28;
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(LABEL_W, y(b.y0));
-      ctx.lineTo(W, y(b.y0));
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 0.85;
-      ctx.fillStyle = palette.inks.dark;
-      const label = b.label.length > labelChars ? `${b.label.slice(0, labelChars - 1)}…` : b.label;
-      ctx.fillText(label, 8, (y(b.y0) + y(b.y1)) / 2 + 4);
-      ctx.globalAlpha = 1;
-    });
+    const w = t1 - t0;
+    const usable = W - LABEL_W - RIGHT_PAD;
+    const pxPerSec = usable / (w / 1000);
 
     // The ruler along the top: marks before now and ahead of it.
-    const w = t1 - t0;
-    const STEPS = [5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000, 7_200_000, 21_600_000, 43_200_000, 86_400_000];
-    const usable = W - LABEL_W - RIGHT_PAD;
+    const STEPS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000, 7_200_000, 21_600_000, 43_200_000, 86_400_000];
     const stepMs = STEPS.find((st) => (st / w) * usable >= 64) ?? STEPS[STEPS.length - 1];
     ctx.fillStyle = palette.inks.dark;
     ctx.globalAlpha = 0.6;
@@ -308,44 +399,155 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     }
     ctx.globalAlpha = 1;
 
+    // Everything below the ruler scrolls with the lanes.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, TOP, W, H - TOP);
+    ctx.clip();
+
+    // Lanes: faint alternating cloth with a running stitch between, and their names in the gutter.
+    const labelChars = Math.max(6, Math.floor((LABEL_W - 12) / 6));
+    placed.forEach((tr, i) => {
+      const top = sy(tr.top);
+      if (top > H || top + tr.h < TOP) return;
+      if (tr.kind === 'scribe' || tr.kind === 'spinner') {
+        ctx.fillStyle = lineLook ? 'rgba(127,127,127,0.08)' : 'rgba(150, 110, 40, 0.07)';
+        ctx.fillRect(0, top, W, tr.h);
+      } else if (i % 2) {
+        ctx.fillStyle = lineLook ? 'rgba(127,127,127,0.06)' : 'rgba(120, 90, 50, 0.06)';
+        ctx.fillRect(LABEL_W, top, W - LABEL_W, tr.h);
+      }
+      ctx.strokeStyle = lineLook ? palette.inks.dark : palette.inks.secondary;
+      ctx.globalAlpha = tr.kind === 'band' && placed[i - 1]?.kind === 'band' ? 0.28 : 0.5;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, top);
+      ctx.lineTo(W, top);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (tr.kind === 'music') return;
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = palette.inks.dark;
+      ctx.font = tr.kind === 'band' ? '11px Georgia, serif' : 'italic 11px Georgia, serif';
+      const label = tr.label.length > labelChars ? `${tr.label.slice(0, labelChars - 1)}…` : tr.label;
+      ctx.fillText(label, 8, top + Math.min(tr.h / 2 + 4, 15));
+      if (focus === tr.id) {
+        ctx.fillStyle = lineLook ? palette.inks.dark : palette.inks.accent;
+        ctx.fillRect(2, top + 3, 2, tr.h - 6);
+      }
+      ctx.globalAlpha = 1;
+    });
+
     // The future: a little paler, past the needle.
     const nowX = x(layout.now);
     ctx.fillStyle = lineLook ? 'rgba(127,127,127,0.07)' : 'rgba(255,255,255,0.22)';
     ctx.fillRect(Math.max(LABEL_W, nowX), TOP, W - Math.max(LABEL_W, nowX), H - TOP);
 
-    ctx.save();
     ctx.beginPath();
-    ctx.rect(LABEL_W, 0, W - LABEL_W, H);
+    ctx.rect(LABEL_W, TOP, W - LABEL_W, H - TOP);
     ctx.clip();
 
-    // A selected span: a wash across the cloth, with its two edges stitched.
+    // A selected span: a wash across the lanes, with its two edges stitched.
     if (span) {
       const a = x(span.t0);
       const b = x(span.t1);
       ctx.fillStyle = lineLook ? 'rgba(127,127,127,0.12)' : 'rgba(70, 100, 160, 0.08)';
-      ctx.fillRect(a, 0, b - a, H);
+      ctx.fillRect(a, TOP, b - a, H);
       ctx.strokeStyle = lineLook ? palette.inks.dark : palette.inks.primary;
       ctx.lineWidth = 1.4;
       ctx.setLineDash([5, 3]);
       for (const ex of [a, b]) {
         ctx.beginPath();
-        ctx.moveTo(ex, 2);
-        ctx.lineTo(ex, H - BOTTOM);
+        ctx.moveTo(ex, TOP);
+        ctx.lineTo(ex, H);
         ctx.stroke();
       }
       ctx.setLineDash([]);
     }
 
-    // Narration: gold laid across the whole width.
-    for (const s of layout.stitches) {
-      if (s.kind !== 'narration' || s.t < t0 || s.t > t1) continue;
+    // The Scribe's lane: a gold satin stitch for each passage, its words beside it when there is room.
+    const scribeLane = placed.find((p) => p.kind === 'scribe');
+    const narrations = layout.stitches.filter((s) => s.kind === 'narration' && s.t >= t0 - 60_000 && s.t <= t1);
+    if (scribeLane) {
+      const top = sy(scribeLane.top);
+      const mid = top + scribeLane.h / 2;
+      narrations.forEach((s, k) => {
+        const sx = x(s.t);
+        const lit = matches(s) || (side.mode === 'moment' && opened?.id === s.id);
+        ctx.strokeStyle = lineLook ? palette.inks.dark : palette.inks.gold;
+        ctx.globalAlpha = lit ? 1 : 0.85;
+        ctx.lineWidth = lit ? 3 : 2;
+        ctx.beginPath();
+        ctx.moveTo(sx, mid - Math.min(9, scribeLane.h * 0.3));
+        ctx.lineTo(sx, mid + Math.min(9, scribeLane.h * 0.3));
+        ctx.stroke();
+        const next = narrations[k + 1];
+        const room = (next ? x(next.t) : W) - sx - 10;
+        if (room > 40) {
+          ctx.fillStyle = palette.inks.dark;
+          ctx.globalAlpha = 0.8;
+          ctx.font = 'italic 10px Georgia, serif';
+          const lines = Math.max(1, Math.min(6, Math.floor((scribeLane.h - 6) / 12)));
+          wrapText(ctx, s.text, sx + 5, top + 12, room, lines, 12);
+        }
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    // Spinner's lane: what it was asked (an open ring), what it said (a knot), what it did (a small square).
+    const spinnerLane = placed.find((p) => p.kind === 'spinner');
+    if (spinnerLane) {
+      const top = sy(spinnerLane.top);
+      const mid = top + spinnerLane.h / 2;
+      const shown = spinnerItems.filter((it) => it.t >= t0 - 60_000 && it.t <= t1);
+      shown.forEach((it, k) => {
+        const sx = x(it.t);
+        const colour = lineLook ? palette.inks.dark : it.kind === 'pi' ? palette.inks.primary : it.kind === 'tool' ? palette.inks.secondary : palette.inks.dark;
+        ctx.globalAlpha = side.mode === 'spinner' && side.t === it.t ? 1 : 0.85;
+        ctx.strokeStyle = colour;
+        ctx.fillStyle = colour;
+        ctx.lineWidth = 1.5;
+        if (it.kind === 'user') {
+          ctx.beginPath();
+          ctx.arc(sx, mid, 3.5, 0, Math.PI * 2);
+          ctx.stroke();
+        } else if (it.kind === 'tool') {
+          ctx.fillRect(sx - 2, mid - 2, 4, 4);
+        } else {
+          ctx.beginPath();
+          ctx.arc(sx, mid, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (it.kind === 'tool') return;
+        const next = shown.slice(k + 1).find((o) => o.kind !== 'tool');
+        const room = (next ? x(next.t) : W) - sx - 10;
+        if (room > 40) {
+          ctx.fillStyle = palette.inks.dark;
+          ctx.globalAlpha = 0.75;
+          ctx.font = it.kind === 'user' ? 'italic 10px Georgia, serif' : '10px Georgia, serif';
+          const lines = Math.max(1, Math.min(6, Math.floor((spinnerLane.h - 6) / 12)));
+          wrapText(ctx, it.text, sx + 6, lines > 1 ? top + 12 : mid + 3, room, lines, 12);
+        }
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    // The cloth.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(LABEL_W, Math.max(TOP, bandsTop), W - LABEL_W, Math.max(0, bandsBottom - Math.max(TOP, bandsTop)));
+    ctx.clip();
+
+    // The Scribe's passages, faint across the cloth, so the story's turns line up with the threads.
+    for (const s of narrations) {
       ctx.strokeStyle = lineLook ? palette.inks.dark : palette.inks.gold;
-      ctx.globalAlpha = matches(s) ? 0.9 : 0.35;
-      ctx.lineWidth = matches(s) ? 2.2 : 1.2;
-      ctx.setLineDash([2, 3]);
+      ctx.globalAlpha = matches(s) ? 0.8 : 0.22;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
       ctx.beginPath();
-      ctx.moveTo(x(s.t), TOP);
-      ctx.lineTo(x(s.t), H - BOTTOM);
+      ctx.moveTo(x(s.t), bandsTop);
+      ctx.lineTo(x(s.t), bandsBottom);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -397,11 +599,10 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     }
 
     // Stitches: what was said, between speaker and listener.
-    const pxPerSec = usable / (w / 1000);
     for (const s of layout.stitches) {
       if (s.kind === 'narration' || s.t < t0 || s.t > t1) continue;
       const sx = x(s.t);
-      const sy = y(s.y);
+      const sY = y(s.y);
       const lit = matches(s);
       const involved = !pulled || s.from === pulled || s.to.includes(pulled);
       ctx.globalAlpha = q.length > 1 && !lit ? 0.25 : involved ? 1 : 0.2;
@@ -412,8 +613,8 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
         ctx.strokeStyle = colour;
         ctx.lineWidth = 1.6;
         ctx.beginPath();
-        ctx.moveTo(sx - 2, sy - 4);
-        ctx.lineTo(sx + 2, sy - 7);
+        ctx.moveTo(sx - 2, sY - 4);
+        ctx.lineTo(sx + 2, sY - 7);
         ctx.stroke();
         continue;
       }
@@ -423,7 +624,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       ctx.setLineDash([1.5, 2]);
       for (const ty of s.toY) {
         ctx.beginPath();
-        ctx.moveTo(sx, sy);
+        ctx.moveTo(sx, sY);
         ctx.lineTo(sx, y(ty));
         ctx.stroke();
         ctx.fillStyle = colour;
@@ -436,28 +637,28 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       if (lit) {
         ctx.fillStyle = lineLook ? 'rgba(127,127,127,0.25)' : 'rgba(214, 170, 60, 0.45)';
         ctx.beginPath();
-        ctx.arc(sx, sy, r + 4, 0, Math.PI * 2);
+        ctx.arc(sx, sY, r + 4, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.lineWidth = 1.8;
       ctx.strokeStyle = colour;
       ctx.beginPath();
       if (s.motif === 'question') {
-        ctx.arc(sx, sy, r * 0.8, 0, Math.PI * 2);
+        ctx.arc(sx, sY, r * 0.8, 0, Math.PI * 2);
       } else if (s.motif === 'exclaim') {
         for (let k = 0; k < 4; k++) {
           const a = (k / 4) * Math.PI;
-          ctx.moveTo(sx - Math.cos(a) * r, sy - Math.sin(a) * r);
-          ctx.lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+          ctx.moveTo(sx - Math.cos(a) * r, sY - Math.sin(a) * r);
+          ctx.lineTo(sx + Math.cos(a) * r, sY + Math.sin(a) * r);
         }
       } else {
-        ctx.moveTo(sx - r, sy - r);
-        ctx.lineTo(sx + r, sy + r);
-        ctx.moveTo(sx + r, sy - r);
-        ctx.lineTo(sx - r, sy + r);
+        ctx.moveTo(sx - r, sY - r);
+        ctx.lineTo(sx + r, sY + r);
+        ctx.moveTo(sx + r, sY - r);
+        ctx.lineTo(sx - r, sY + r);
         if (s.motif === 'long') {
-          ctx.moveTo(sx - r, sy);
-          ctx.lineTo(sx + r, sy);
+          ctx.moveTo(sx - r, sY);
+          ctx.lineTo(sx + r, sY);
         }
       }
       ctx.stroke();
@@ -465,10 +666,32 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       if (pxPerSec > 9 && involved) {
         ctx.fillStyle = palette.inks.dark;
         ctx.font = '10px Georgia, serif';
-        const words = s.text.split(/\s+/).slice(0, Math.min(10, Math.floor(pxPerSec / 2.5))).join(' ');
-        ctx.fillText(words, sx + r + 3, sy - r - 2);
+        const words = s.text.split(/\s+/).slice(0, Math.min(14, Math.floor(pxPerSec / 2.5))).join(' ');
+        ctx.fillText(words, sx + r + 3, sY - r - 2);
       }
       ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+
+    // The music lane.
+    const musicLane = placed.find((p) => p.kind === 'music');
+    if (musicLane) {
+      const top = sy(musicLane.top);
+      if (top < H && top + musicLane.h > TOP) {
+        // Out of the cloth's clip, so its names can sit in the gutter; then back into it.
+        ctx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, TOP, W, H - TOP);
+        ctx.clip();
+        const { spans, speech } = villageMusic.timeline();
+        drawMusicLane({ ctx, x, t0, t1, top, h: musicLane.h, labelW: LABEL_W, W, palette, lineLook, spans, speech, phrases: score.phrases, events: score.events, selected: side.mode === 'phrase' ? phrase : null });
+        ctx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(LABEL_W, TOP, W - LABEL_W, H - TOP);
+        ctx.clip();
+      }
     }
 
     // Cues: a pin stood in the cloth with a knot at its head; ones gone off are faded.
@@ -484,7 +707,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       ctx.setLineDash([6, 3]);
       ctx.beginPath();
       ctx.moveTo(cx, TOP + 4);
-      ctx.lineTo(cx, H - BOTTOM);
+      ctx.lineTo(cx, H);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = cueInk;
@@ -502,32 +725,27 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       ctx.font = '11px Georgia, serif';
       ctx.fillStyle = palette.inks.dark;
       const head = c.kind === 'message' ? `${KIND_MARK.message} ${recipientName(c.to)}` : c.kind === 'music' ? `${KIND_MARK.music} music` : KIND_MARK.note;
-      const body = c.text ? `: ${c.text}` : '';
-      const label = `${head}${body}`;
+      const label = `${head}${c.text ? `: ${c.text}` : ''}`;
       // Beside the pin, on whichever side has room.
       const right = W - cx - 14;
       const leftRoom = cx - LABEL_W - 14;
       const onLeft = right < 140 && leftRoom > right;
       const room = Math.max(40, Math.min(220, onLeft ? leftRoom : right));
-      let shown = label;
-      while (shown.length > 4 && ctx.measureText(shown).width > room) shown = `${shown.slice(0, -2)}…`;
+      let shownLabel = label;
+      while (shownLabel.length > 4 && ctx.measureText(shownLabel).width > room) shownLabel = `${shownLabel.slice(0, -2)}…`;
       ctx.textAlign = onLeft ? 'right' : 'left';
-      ctx.fillText(shown, onLeft ? cx - 8 : cx + 8, TOP + 20);
+      ctx.fillText(shownLabel, onLeft ? cx - 8 : cx + 8, TOP + 20);
       ctx.textAlign = 'left';
       ctx.globalAlpha = 1;
     }
 
-    // The needle at now, and the hover needle.
+    // The needle at now.
     ctx.strokeStyle = lineLook ? palette.inks.dark : palette.inks.gold;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(nowX, TOP - 2);
-    ctx.lineTo(nowX, H - BOTTOM);
+    ctx.lineTo(nowX, H);
     ctx.stroke();
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.beginPath();
-    ctx.arc(nowX, TOP - 3, 3.5, 0, Math.PI * 2);
-    ctx.fill();
     if (isStopped(sim)) {
       ctx.font = 'italic 10px Georgia, serif';
       ctx.fillStyle = palette.inks.dark;
@@ -535,6 +753,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       ctx.fillText('held', nowX + 6, TOP + 10);
       ctx.globalAlpha = 1;
     }
+    // The hover needle.
     if (hoverX.current !== null && hoverX.current > LABEL_W) {
       ctx.strokeStyle = palette.inks.dark;
       ctx.globalAlpha = 0.35;
@@ -542,67 +761,72 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(hoverX.current, TOP);
-      ctx.lineTo(hoverX.current, H - BOTTOM);
+      ctx.lineTo(hoverX.current, H);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
     ctx.restore();
 
-    // The music strip: ambience faint, the in-between stronger, song strongest; above it, when lines were said.
-    if (showMusic) {
-      const { spans, speech } = villageMusic.timeline();
-      const top = H - MUSIC_LANE + 4;
-      const laneH = MUSIC_LANE - 14;
-      ctx.save();
-      ctx.fillStyle = palette.inks.dark;
-      ctx.globalAlpha = 0.85;
-      ctx.font = '11px Georgia, serif';
-      ctx.fillText('Music', 8, top + laneH / 2 + 6);
-      ctx.globalAlpha = 0.6;
-      ctx.font = '9px Georgia, serif';
-      ctx.fillText('speech above', 8, top + laneH / 2 + 17);
+    // The needles' heads sit on the ruler, above the lanes.
+    ctx.fillStyle = lineLook ? palette.inks.dark : palette.inks.gold;
+    if (nowX >= LABEL_W) {
       ctx.beginPath();
-      ctx.rect(LABEL_W, top - 4, W - LABEL_W, MUSIC_LANE);
-      ctx.clip();
-      ctx.globalAlpha = 1;
-      const music = lineLook ? palette.inks.dark : palette.inks.primary;
-      const strength = { ambience: 0.16, between: 0.55, song: 0.9 } as const;
-      for (const sp of spans) {
-        if (sp.t1 < t0 || sp.t0 > t1) continue;
-        const x0 = Math.max(LABEL_W, x(sp.t0));
-        const x1 = Math.min(W, x(sp.t1));
-        if (x1 - x0 < 0.5) continue;
-        ctx.globalAlpha = strength[sp.part];
-        ctx.fillStyle = sp.part === 'song' && !lineLook ? palette.inks.gold : music;
-        const inset = sp.part === 'ambience' ? laneH * 0.3 : 0;
-        ctx.fillRect(x0, top + 6 + inset, x1 - x0, laneH - 6 - inset * 2);
-        if (x1 - x0 > 70 && sp.part !== 'ambience') {
-          ctx.globalAlpha = 0.95;
-          ctx.fillStyle = sp.part === 'song' || lineLook ? palette.inks.dark : palette.ground;
-          ctx.font = '9px Georgia, serif';
-          ctx.fillText(sp.label.split(' · ').slice(0, 2).join(' · '), x0 + 3, top + 6 + laneH / 2);
-        }
-      }
-      // When lines were being said.
-      ctx.globalAlpha = 0.75;
-      ctx.fillStyle = palette.inks.dark;
-      for (const sp of speech) {
-        if (sp.t1 < t0 || sp.t0 > t1) continue;
-        const x0 = Math.max(LABEL_W, x(sp.t0));
-        ctx.fillRect(x0, top, Math.max(1, x(sp.t1) - x0), 3);
-      }
-      ctx.restore();
+      ctx.arc(nowX, TOP - 3, 3.5, 0, Math.PI * 2);
+      ctx.fill();
     }
-  }, [frame, layout, look, pulled, q, showMusic, span, cues, side, clockState, simNow]);
+    // The probe: a second needle with a square head, and how long before now it is.
+    if (probe !== null) {
+      const px = x(probe);
+      if (px >= LABEL_W && px <= W) {
+        const probeInk = lineLook ? palette.inks.dark : palette.inks.accent2 ?? palette.inks.primary;
+        ctx.strokeStyle = probeInk;
+        ctx.fillStyle = probeInk;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(px, TOP - 6);
+        ctx.lineTo(px, H);
+        ctx.stroke();
+        ctx.fillRect(px - 4.5, TOP - 13, 9, 9);
+        ctx.font = '10px Georgia, serif';
+        const label = markLabel(probe, layout.now);
+        const lw = ctx.measureText(label).width;
+        const lx = px + 8 + lw > W ? px - 8 - lw : px + 8;
+        ctx.fillStyle = lineLook ? palette.ground : 'rgba(250, 245, 235, 0.9)';
+        ctx.fillRect(lx - 2, TOP - 15, lw + 4, 12);
+        ctx.fillStyle = probeInk;
+        ctx.fillText(label, lx, TOP - 6);
+      }
+    }
+    // Lanes scrolled out of view: a hint along the right edge.
+    if (g.total > g.viewH) {
+      const frac = g.viewH / g.total;
+      const at = rows.current.scroll / g.total;
+      ctx.fillStyle = palette.inks.dark;
+      ctx.globalAlpha = 0.25;
+      ctx.fillRect(W - 4, TOP + at * g.viewH, 3, Math.max(12, frac * g.viewH));
+      ctx.globalAlpha = 1;
+    }
+  }, [frame, layout, look, pulled, q, showMusic, span, cues, side, clockState, simNow, focus, probe, phrase, spinnerItems.length, opened]);
 
-  // Wheel and trackpad: up and down (or a pinch) zooms about the pointer, sideways pans.
-  // A native listener, so the page itself does not scroll or zoom.
+  // Wheel and trackpad: over the cloth, up and down (or a pinch) zooms time about the pointer and
+  // sideways pans it; over the lane names, up and down scrolls the lanes; with Alt (Option), the
+  // lanes grow or shrink. A native listener, so the page itself does not scroll or zoom.
   const wheelRef = useRef<(e: WheelEvent) => void>(() => {});
   wheelRef.current = (e: WheelEvent) => {
     e.preventDefault();
     const { tOf, W, labelW } = geom();
     const rect = canvasRef.current!.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    if (e.altKey) {
+      zoomLanes(Math.exp(-e.deltaY * 0.004), py);
+      return;
+    }
+    if (px < labelW && py >= TOP) {
+      scrollLanes(e.deltaY);
+      return;
+    }
     const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY) || (e.shiftKey && !e.ctrlKey);
     if (sideways) {
       const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
@@ -610,8 +834,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       panBy((d / (W - labelW - RIGHT_PAD)) * (v.t1 - v.t0));
       return;
     }
-    const at = tOf(e.clientX - rect.left);
-    zoomBy(Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.0016)), at);
+    zoomBy(Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.0016)), tOf(px));
   };
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -632,50 +855,80 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     return best?.c ?? null;
   };
 
+  const nearProbeHead = (px: number, py: number) => {
+    if (probe === null || py > TOP + 2) return false;
+    return Math.abs(geom().x(probe) - px) < 8;
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     canvasRef.current!.setPointerCapture(e.pointerId);
     const rect = canvasRef.current!.getBoundingClientRect();
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
+    const g = geom();
+    if (nearProbeHead(px, py)) {
+      drag.current = { kind: 'probe', x: e.clientX, moved: false };
+      return;
+    }
+    if (px < g.labelW && py >= TOP) {
+      drag.current = { kind: 'rows', y: e.clientY, scroll: rows.current.scroll, moved: false };
+      return;
+    }
     const cue = pendingCueAt(px, py);
     if (cue) {
       drag.current = { kind: 'cue', id: cue.id, x: e.clientX, moved: false };
       return;
     }
     if (spanMode || e.shiftKey || py < RULER_H) {
-      drag.current = { kind: 'span', x: e.clientX, from: geom().tOf(px), moved: false };
+      drag.current = { kind: 'span', x: e.clientX, from: g.tOf(px), moved: false, onRuler: py < RULER_H };
       return;
     }
-    drag.current = { kind: 'pan', x: e.clientX, t0: view.current!.t0, t1: view.current!.t1, moved: false };
+    drag.current = { kind: 'pan', x: e.clientX, y: e.clientY, t0: view.current!.t0, t1: view.current!.t1, scroll: rows.current.scroll, moved: false };
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
     hoverX.current = px;
     const d = drag.current;
     const canvas = canvasRef.current!;
+    const g = geom();
     if (!d) {
-      const py = e.clientY - rect.top;
       const cue = pendingCueAt(px, py);
-      canvas.style.cursor = cue ? (cue.firedAtSimMs === undefined ? 'ew-resize' : 'pointer') : spanMode || e.shiftKey || py < RULER_H ? 'text' : 'grab';
+      canvas.style.cursor = nearProbeHead(px, py)
+        ? 'ew-resize'
+        : px < g.labelW && py >= TOP
+          ? 'ns-resize'
+          : cue
+            ? cue.firedAtSimMs === undefined
+              ? 'ew-resize'
+              : 'pointer'
+            : spanMode || e.shiftKey || py < RULER_H
+              ? 'text'
+              : 'grab';
     }
     if (d) {
-      const dx = e.clientX - d.x;
-      if (Math.abs(dx) > 3) d.moved = true;
+      const dx = e.clientX - (d.kind === 'rows' ? e.clientX : d.x);
+      const dy = d.kind === 'rows' || d.kind === 'pan' ? e.clientY - d.y : 0;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
       if (d.kind === 'pan') {
-        if (d.moved) setFollowNow(false);
-        const { W, labelW } = geom();
-        const dt = (dx / (W - labelW - RIGHT_PAD)) * (d.t1 - d.t0);
+        if (d.moved && Math.abs(dx) > 3) setFollowNow(false);
+        const dt = (dx / (g.W - g.labelW - RIGHT_PAD)) * (d.t1 - d.t0);
         view.current = { t0: d.t0 - dt, t1: d.t1 - dt };
+        rows.current.scroll = d.scroll - dy;
+      } else if (d.kind === 'rows') {
+        rows.current.scroll = d.scroll - dy;
+      } else if (d.kind === 'probe') {
+        setProbe(Math.min(Date.now(), g.tOf(px)));
       } else if (d.kind === 'span' && d.moved) {
-        const t = geom().tOf(px);
+        const t = g.tOf(px);
         setSpan({ t0: Math.min(d.from, t), t1: Math.max(d.from, t) });
       } else if (d.kind === 'cue' && d.moved) {
         const c = schedule.get(d.id);
         if (c && c.firedAtSimMs === undefined) {
-          const at = Math.max(sim.simTimeMs + 1000, wallToSimTime(geom().tOf(px), sim.simTimeMs, Date.now()));
+          const at = Math.max(sim.simTimeMs + 1000, wallToSimTime(g.tOf(px), sim.simTimeMs, Date.now()));
           schedule.update(d.id, { atSimMs: at }, sim.simTimeMs);
         }
       }
@@ -699,6 +952,21 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     const d = drag.current;
     drag.current = null;
     if (!d) return;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const g = geom();
+    if (d.kind === 'probe') {
+      setSide({ mode: 'probe' });
+      return;
+    }
+    if (d.kind === 'rows') {
+      if (!d.moved) {
+        const tr = g.trackUnder(py);
+        if (tr) toggleFocus(tr.id);
+      }
+      return;
+    }
     if (d.kind === 'cue') {
       const c = schedule.get(d.id);
       if (c && (!d.moved || side.mode === 'cue')) openCue(c, c.atSimMs);
@@ -706,18 +974,46 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     }
     if (d.kind === 'span') {
       if (!d.moved) {
-        setSpan(null);
-        if (side.mode === 'span') setSide({ mode: 'moment' });
+        // A click on the ruler sets the probe there; elsewhere it lets the span go.
+        if (d.onRuler && px >= g.labelW) placeProbe(Math.min(Date.now(), g.tOf(px)));
+        else {
+          setSpan(null);
+          if (side.mode === 'span') setSide({ mode: 'moment' });
+        }
       } else {
         setSide({ mode: 'span' });
       }
       return;
     }
     if (d.moved) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const { x, y, tOf } = geom();
+    const { x, y, tOf } = g;
+    const tr = g.trackUnder(py);
+    const t = tOf(px);
+    if (tr?.kind === 'scribe') {
+      const hit = layout.stitches.filter((s) => s.kind === 'narration').map((s) => ({ s, d: Math.abs(x(s.t) - px) })).sort((a, b) => a.d - b.d)[0];
+      if (hit && hit.d < 10) {
+        setOpened(hit.s);
+        setSide({ mode: 'moment' });
+      }
+      return;
+    }
+    if (tr?.kind === 'spinner') {
+      const hit = spinnerItems.map((it) => ({ it, d: Math.abs(x(it.t) - px) })).sort((a, b) => a.d - b.d)[0];
+      if (hit && hit.d < 10) setSide({ mode: 'spinner', t: hit.it.t });
+      return;
+    }
+    if (tr?.kind === 'music') {
+      if (tr.h < MUSIC_ROLL_MIN) {
+        toggleFocus(tr.id);
+        return;
+      }
+      const p = phraseAt(score.phrases, t);
+      if (p) {
+        setPhrase(p);
+        setSide({ mode: 'phrase' });
+      }
+      return;
+    }
     // A stitch under the pointer opens the moment; else a thread near it is pulled out.
     const hit = layout.stitches
       .filter((s) => s.kind !== 'narration')
@@ -728,13 +1024,6 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
       setSide({ mode: 'moment' });
       return;
     }
-    const narr = layout.stitches.find((s) => s.kind === 'narration' && Math.abs(x(s.t) - px) < 4);
-    if (narr) {
-      setOpened(narr);
-      setSide({ mode: 'moment' });
-      return;
-    }
-    const t = tOf(px);
     let best: { id: string; d: number } | null = null;
     for (const th of layout.threads) {
       const p = th.points.filter((pt) => pt.t <= t).pop() ?? th.points[0];
@@ -745,10 +1034,13 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     setPulled(best && best.id !== pulled ? best.id : null);
   };
 
-  // A double-click ahead of the needle places a cue there.
+  // A double-click ahead of the needle places a cue there; on a lane's name, it zooms that lane.
   const onDoubleClick = (e: React.MouseEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect();
-    const t = geom().tOf(e.clientX - rect.left);
+    const g = geom();
+    const px = e.clientX - rect.left;
+    if (px < g.labelW) return;
+    const t = g.tOf(px);
     if (t <= Date.now() + 500) return;
     openCue(null, wallToSimTime(t, sim.simTimeMs, Date.now()));
   };
@@ -759,16 +1051,29 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
     const k = e.key;
     if (k === '+' || k === '=') zoomBy(1 / 1.4);
     else if (k === '-' || k === '_') zoomBy(1.4);
+    else if (k === ']') zoomLanes(1.25);
+    else if (k === '[') zoomLanes(0.8);
     else if (k === '0' || k === 'f') fitAll();
     else if (k === 'ArrowLeft') panBy(-(v.t1 - v.t0) * 0.15);
     else if (k === 'ArrowRight') panBy((v.t1 - v.t0) * 0.15);
+    else if (k === 'ArrowUp') scrollLanes(-60);
+    else if (k === 'ArrowDown') scrollLanes(60);
+    else if (k === 'p') placeProbe(Math.min(Date.now(), hoverX.current !== null ? geom().tOf(hoverX.current) : (v.t0 + v.t1) / 2));
     else if (k === ' ') togglePause(sim);
     else if (k === 'Escape') {
-      setSpan(null);
-      setSpanMode(false);
+      if (span || spanMode) {
+        setSpan(null);
+        setSpanMode(false);
+      } else if (probe !== null) {
+        setProbe(null);
+        if (side.mode === 'probe') setSide({ mode: 'moment' });
+      }
     } else return;
     e.preventDefault();
   };
+
+  // The probed moment, read from the records.
+  const probed = useMemo(() => (probe === null ? null : momentAt(momentSourcesFor(sim), probe)), [probe, sim, tick]);
 
   // The moment a stitch opens onto: its whole conversation, in order.
   const moment = useMemo(() => {
@@ -895,14 +1200,35 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
             onClick={() => openCue(null, sim.simTimeMs + 60_000)}
             tipSide="below-left"
           />
-          <GlyphButton glyph="music" label="Show the music: ambience, in-between and song, under what was said" pressed={showMusic} dimOff onClick={toggleMusic} tipSide="below-left" />
+          <GlyphButton glyph="music" label="Show the music lane (click its name to open the piano roll)" pressed={showMusic} dimOff onClick={toggleMusic} tipSide="below-left" />
+          <KnotDivider className="mx-0.5 h-5" />
+          <span className="inline-flex items-center gap-0.5" role="group" aria-label="The lanes">
+            <GlyphButton glyph="rowsShorter" label="Shorter lanes ([, or Alt-scroll)" onClick={() => zoomLanes(0.8)} tipSide="below-left" />
+            <GlyphButton glyph="rowsTaller" label="Taller lanes (], or Alt-scroll)" onClick={() => zoomLanes(1.25)} tipSide="below-left" />
+          </span>
+          <GlyphButton
+            glyph="probe"
+            label={probe === null ? 'Set the probe: a second needle to look back at a moment (or click the ruler, or P)' : 'Take the probe away (Escape)'}
+            pressed={probe !== null}
+            onClick={() => {
+              if (probe === null) {
+                const v = view.current!;
+                placeProbe(Math.min(Date.now() - 1000, (v.t0 + v.t1) / 2));
+              } else {
+                setProbe(null);
+                if (side.mode === 'probe') setSide({ mode: 'moment' });
+              }
+            }}
+            tipSide="below-left"
+          />
+          {onToggleWeb && <GlyphButton glyph="web" label={webBeside ? 'Hide Psychohistory' : 'Psychohistory beside the Loom, at the probe'} pressed={webBeside} onClick={onToggleWeb} tipSide="below-left" />}
         </StitchPanel>
         <div
           ref={wrapRef}
           tabIndex={0}
           onKeyDown={onKeyDown}
           aria-label="The Loom: the world's history as cloth"
-          className="relative min-h-[180px] flex-1 overflow-hidden rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-sage"
+          className="relative min-h-[160px] flex-1 overflow-hidden rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-sage"
         >
           <canvas
             ref={canvasRef}
@@ -919,12 +1245,44 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
           />
           {span && <SpanBar span={span} geom={geom} count={inSpan.length} onZoom={zoomToSpan} onShow={() => setSide({ mode: 'span' })} onClear={() => setSpan(null)} />}
         </div>
-        <div className="stitch-muted px-1 text-[10px] leading-snug">
-          Scroll or pinch to zoom, drag or swipe sideways to move along time; drag the ruler (or shift-drag) to select a span. Click a thread to pull it out, a stitch to open the moment. Double-click ahead of the needle to place a cue; drag a cue's pin to move it. ✕ a plain line, ○ a question, ✳ an exclamation, a barred ✕ a long speech; dashed gold is the Scribe; long loose stitches ahead of now are where someone is heading. Along the bottom, the music.
+        <div className={`stitch-muted px-1 text-[10px] leading-snug ${webBeside ? 'hidden' : ''}`}>
+          Scroll or pinch to zoom through time, swipe sideways or drag to move along it (dragging also moves the lanes up and down); over the lane names, scroll moves the lanes, Alt-scroll makes them taller or shorter, and a click zooms one lane on its own (the music opens into a piano roll: click a phrase for its notes). Click the ruler to set the probe, a second needle for looking back; drag the ruler to select a span. Click a thread to pull it out, a stitch to open the moment. Double-click ahead of now to place a cue. ✕ a plain line, ○ a question, ✳ an exclamation, a barred ✕ a long speech.
         </div>
       </div>
       <StitchPanel className="flex max-h-[45%] min-h-0 w-full shrink-0 flex-col gap-2 overflow-hidden p-3 text-xs lg:max-h-none lg:w-72">
-        {side.mode === 'cue' && form ? (
+        {side.mode === 'probe' && probed ? (
+          <ProbePanel
+            moment={probed}
+            now={layout.now}
+            settings={sim.modelSettings}
+            onClear={() => {
+              setProbe(null);
+              setSide({ mode: 'moment' });
+            }}
+            onFocusMusic={() => {
+              if (focus !== 'lane:music') toggleFocus('lane:music');
+              const v = view.current!;
+              const w = Math.min(v.t1 - v.t0, 40_000);
+              setFollowNow(false);
+              view.current = { t0: probed.t - w / 2, t1: probed.t + w / 2 };
+              redraw();
+            }}
+          />
+        ) : side.mode === 'phrase' && phrase ? (
+          <PhrasePanel phrase={phrase} events={score.events} now={layout.now} settings={sim.modelSettings} onClose={() => setSide({ mode: probe !== null ? 'probe' : 'moment' })} />
+        ) : side.mode === 'spinner' ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto thin-scroll">
+            <div className="font-display text-sm">Spinner</div>
+            {spinnerItems
+              .filter((it) => Math.abs(it.t - side.t) < 20_000)
+              .map((it, k) => (
+                <div key={k} className={`leading-snug ${it.t === side.t ? '' : 'opacity-60'}`}>
+                  <span className="stitch-muted">{it.kind === 'user' ? 'asked' : it.kind === 'pi' ? 'said' : it.kind === 'tool' ? 'did' : 'note'} · {ago(layout.now - it.t)}</span>
+                  <div className={it.kind === 'tool' ? 'font-mono text-[10px]' : ''}>{it.text}</div>
+                </div>
+              ))}
+          </div>
+        ) : side.mode === 'cue' && form ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto thin-scroll">
             <div className="font-display text-sm">{editingCue ? (editingCue.firedAtSimMs !== undefined ? 'A cue that went off' : 'A cue ahead') : 'Place a cue ahead'}</div>
             <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="What kind of cue">
@@ -1097,7 +1455,7 @@ export default function LoomView({ sim, look, onJumpToVillage }: LoomViewProps) 
             )}
           </>
         )}
-        {side.mode !== 'cue' && (pending.length > 0 || gone.length > 0) && (
+        {side.mode !== 'cue' && side.mode !== 'probe' && side.mode !== 'phrase' && (pending.length > 0 || gone.length > 0) && (
           <div className="flex max-h-[45%] shrink-0 flex-col gap-1 border-t border-dashed border-borderFolk pt-2">
             <div className="font-display text-sm">Ahead</div>
             <ol className="min-h-0 space-y-1 overflow-y-auto thin-scroll">

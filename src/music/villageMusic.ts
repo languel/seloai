@@ -2,6 +2,7 @@ import { getAudioContext } from '../ai/audioPipeline';
 import { busInput } from '../ai/mixer';
 import { clamp01, type MusicCue } from './cue';
 import { MusicListener, type SceneReading } from './listener';
+import type { PhrasePlan } from './composer';
 import { DEFAULT_AMOUNTS, MusicPlayer, answerSeconds, lineAnswerSeconds, type MusicAmounts } from './player';
 import { ScribeEar, type ScribeScore } from './scribeScore';
 import { normalizeTone, type BandTone } from './tone';
@@ -50,6 +51,27 @@ export interface MusicStatus {
   part: 'ambience' | 'between' | 'song' | null;
 }
 
+/**
+ * One phrase the band played, on the story's clock (ms), with every note it wrote: the score
+ * the Loom draws as a piano roll. `cutAt` is when a line began and the players gave way.
+ */
+export interface MusicPhrase {
+  t0: number;
+  t1: number;
+  part: 'ambience' | 'between' | 'song';
+  plan: PhrasePlan;
+  /** What the band was asked to play then: the story's cue, with any direction over it. */
+  cue: MusicCue;
+  cutAt?: number;
+}
+
+/** An instruction the band was given, or a reading of the story it took up. */
+export interface MusicEvent {
+  t: number;
+  kind: 'direction' | 'release' | 'reading' | 'amounts' | 'tone' | 'on' | 'off';
+  text: string;
+}
+
 /** Asks a model what the latest lines feel like (the app wires in the Scribe's). */
 /** One stretch of what the band played, on the story's clock (ms), for the Loom. */
 export interface MusicSpan {
@@ -96,6 +118,7 @@ class VillageMusic {
 
   /** Turns the music on or off (remembered on this device). Call from a click, so audio may start. */
   setEnabled(on: boolean) {
+    if (on !== this.on) this.log(on ? 'on' : 'off', on ? 'the music is on' : 'the music is off');
     this.on = on;
     try {
       localStorage.setItem(PREF, on ? '1' : '0');
@@ -130,6 +153,8 @@ class VillageMusic {
         // On the story's clock, so the Loom can lay it beside what was said.
         const t0 = Date.now() + (at - player.ctx.currentTime) * 1000;
         this.record({ t0, t1: t0 + plan.length * 1000, part: player.part, label: plan.label });
+        this.phrases.push({ t0, t1: t0 + plan.length * 1000, part: player.part, plan, cue: this.cue() });
+        if (this.phrases.length > TIMELINE_MAX) this.phrases.splice(0, this.phrases.length - TIMELINE_MAX);
         this.changed();
       });
     }
@@ -150,12 +175,14 @@ class VillageMusic {
     const { holdSeconds, ...cue } = d;
     if (cue.intensity !== undefined) cue.intensity = clamp01(cue.intensity);
     this.dir = { ...cue, until: holdSeconds ? Date.now() + holdSeconds * 1000 : null };
+    this.log('direction', describeCue(cue) + (holdSeconds ? `, for ${holdSeconds}s` : ', until released'));
     this.player?.setCue(this.cue());
     this.changed();
   }
 
   /** Lets the story lead again. */
   release() {
+    if (this.dir) this.log('release', 'the story leads again');
     this.dir = null;
     this.player?.setCue(this.cue());
     this.changed();
@@ -178,6 +205,7 @@ class VillageMusic {
     });
     this.player?.setTone(this.toneNow);
     save(TONE_PREF, JSON.stringify(this.toneNow));
+    this.log('tone', `the band's sound: ${Object.keys(patch).join(', ')}`);
     this.changed();
   }
 
@@ -193,6 +221,7 @@ class VillageMusic {
     const next = { ...this.amountsNow };
     for (const k of ['ambience', 'between', 'song'] as const) if (typeof patch[k] === 'number' && Number.isFinite(patch[k])) next[k] = clamp01(patch[k]!);
     this.amountsNow = next;
+    this.log('amounts', `ambience ${pct(next.ambience)}, in-between ${pct(next.between)}, song ${pct(next.song)}`);
     this.player?.setAmounts(next);
     save(AMOUNTS_PREF, JSON.stringify(next));
     this.changed();
@@ -220,6 +249,7 @@ class VillageMusic {
       void this.ear.ask(reading.now, () => scorer(lines)).then((score) => {
         if (!score) return;
         this.listener.adopt(score.mood, this.lastReading?.now ?? reading.now);
+        this.log('reading', `the Scribe hears ${score.mood}, intensity ${score.intensity.toFixed(2)}${score.reason ? `: ${score.reason}` : ''}`);
         if (this.lastReading) this.update(this.lastReading, true);
         this.changed();
       });
@@ -249,6 +279,10 @@ class VillageMusic {
         // Whatever the band was playing gives way here.
         const last = this.spans[this.spans.length - 1];
         if (last && last.part !== 'ambience' && last.t1 > now) last.t1 = now;
+        for (let i = this.phrases.length - 1; i >= 0 && this.phrases[i].t1 > now; i--) {
+          const p = this.phrases[i];
+          if (p.part !== 'ambience' && p.t0 < now) p.cutAt = now;
+        }
       } else {
         const open = this.speech[this.speech.length - 1];
         if (open) open.t1 = now;
@@ -261,6 +295,18 @@ class VillageMusic {
 
   private spans: MusicSpan[] = [];
   private speech: Array<{ t0: number; t1: number }> = [];
+  private phrases: MusicPhrase[] = [];
+  private events: MusicEvent[] = [];
+
+  private log(kind: MusicEvent['kind'], text: string) {
+    this.events.push({ t: Date.now(), kind, text });
+    if (this.events.length > TIMELINE_MAX) this.events.splice(0, this.events.length - TIMELINE_MAX);
+  }
+
+  /** Every phrase played and every instruction given, for the Loom's music lane and the probe. */
+  score(): { phrases: readonly MusicPhrase[]; events: readonly MusicEvent[] } {
+    return { phrases: this.phrases, events: this.events };
+  }
 
   private record(span: MusicSpan) {
     const last = this.spans[this.spans.length - 1];
@@ -320,6 +366,22 @@ class VillageMusic {
       part: this.player?.playing ? this.player.part : null,
     };
   }
+}
+
+function pct(n: number) {
+  return `${Math.round(n * 100)}%`;
+}
+
+/** A direction in words: "mood dread, intensity 0.80, dance free, urgent (why)". */
+export function describeCue(cue: Partial<MusicCue>): string {
+  const parts: string[] = [];
+  if (cue.mood) parts.push(`mood ${cue.mood}`);
+  if (cue.intensity !== undefined) parts.push(`intensity ${cue.intensity.toFixed(2)}`);
+  if (cue.dance) parts.push(`dance ${cue.dance}`);
+  if (cue.lead) parts.push(`lead ${cue.lead}`);
+  if (cue.urgent) parts.push('urgent');
+  const what = parts.join(', ') || 'as the story goes';
+  return cue.reason ? `${what} (${cue.reason})` : what;
 }
 
 function readJson(key: string): unknown {
