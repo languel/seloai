@@ -81,4 +81,4 @@ More: [developers](docs/DEVELOPERS.md) · [agents and MCP](docs/AGENTS.md) ·
 Seloai's first prototype started from [AI Town](https://github.com/a16z-infra/ai-town), which was
 inspired by [*Generative Agents*](https://arxiv.org/abs/2304.03442). Seloai has since been rebuilt
 from scratch for a different purpose, designing and studying your own simulations. The models are
-LFM3 by Liquid AI and Kokoro by hexgrad, under their own licences.
+LFM3 by [Liquid AI](https://www.liquid.ai) and Kokoro by hexgrad, under their own licences.
