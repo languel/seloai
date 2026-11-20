@@ -30,8 +30,14 @@ Make your own place in the World Editor, your own people in Characters, and the 
 story file. Spinner, the assistant in the app, can help with any of it. **Help & Guides → Make
 your own story** walks you through a first one.
 
-The **Control Room** is where you study a run: the whole history as woven cloth, a probe to look
-back at any moment, and the music note by note.
+The **Control Room** is where you study a run, with tools for psychohistory:
+
+- **The Loom**: the whole history as woven cloth, characters as threads, every line a stitch, the
+  music note by note.
+- **Psychohistory**: the web of who stands where with whom, who is on whose mind, and how it all
+  shifts.
+- **The probe**: set it on any moment to see the world as it was then, and ask the Scribe or
+  Spinner about it.
 
 ## The demo
 
