@@ -14,7 +14,9 @@ nothing to install. Chrome or Edge works best.
 
 - **Village brain.** A single small model (about 2B parameters) runs on the GPU in your browser
   and plays every character. It decides what each one thinks and says, keeps their memories and
-  speaks in their voice. It also plays the Scribe, the narrator.
+  speaks in their voice. It also plays the Scribe, the narrator. The preferred models are
+  [Liquid AI](https://www.liquid.ai)'s LFM3, but you can bring your own, local (Ollama, LM Studio)
+  or online with your own key.
 - **Story engine.** The story runs on a world clock you can pause, speed up or rewind. The engine
   decides who meets, who talks and for how long, and turns what you say to a character into what
   they do next.
