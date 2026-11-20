@@ -12,38 +12,38 @@ nothing to install. Chrome or Edge works best.
 
 ## How it works
 
-- **The village brain.** One AI model, running in your browser, plays every character: what
-  they think, say and remember, in their own voice. It is also the Scribe, who narrates.
-- **The adaptive story engine.** Paces the story on a world clock you can pause, speed up or
-  rewind; decides who meets, who talks and for how long; and turns what you say into what
-  characters do next.
-- **The adaptive music engine.** A village band composes live to the mood of the story, steps
-  back when someone speaks, and takes direction.
+- **The village brain.** One AI model runs in your browser and plays every character. It
+  decides what each one thinks and says, remembers what happened to them, and speaks with their
+  voice. It also plays the Scribe, who narrates.
+- **The adaptive story engine.** The story runs on a world clock you can pause, speed up or
+  rewind. The engine decides who meets and talks and for how long, and what you tell a character
+  changes what they do next.
+- **The adaptive music engine.** A village band composes music live to the mood of the story,
+  holds back when someone speaks, and follows your direction.
 
-Seloai is a virtual village, not a game: there is nothing to win. Set up a situation, run it,
-look at what happened, change something, run it again. It also makes a foundation to build on: a
-game, an interactive experience, a simulation, a virtual social experiment.
+Seloai is a virtual village with nothing to win. You set up a situation, run it, see what
+happened, change something and run it again. You can also build on it, for example a game, an
+interactive piece, a simulation or a social experiment.
 
 ## Bring your own story
 
-Make your own place in the World Editor, your own people in Characters, and the premise as a short
-story file. Spinner, the assistant in the app, can help with any of it. **Help & Guides → Make
-your own story** walks you through a first one.
+Make a place in the World Editor, people in Characters, and write the premise as a short story
+file. Spinner, the assistant in the app, can help with any of it. **Help & Guides → Make your own
+story** walks you through a first one.
 
-The **Control Room** is where you study a run, with tools for psychohistory:
+The **Control Room** has tools for studying a run:
 
-- **The Loom**: the whole history as woven cloth, characters as threads, every line a stitch, the
-  music note by note.
-- **Psychohistory**: the web of who stands where with whom, who is on whose mind, and how it all
-  shifts.
-- **The probe**: set it on any moment to see the world as it was then, and ask the Scribe or
-  Spinner about it.
+- **The Loom** shows the whole history as woven cloth. Characters are threads, each line is a
+  stitch, and the music runs alongside, note by note.
+- **Psychohistory** maps who is where, who is with whom and who is on whose mind.
+- **The probe** marks a moment. Both views then show the world as it was at that moment, and you
+  can ask the Scribe or Spinner about it.
 
 ## The demo
 
-**Zmeyovo** is the default world and a full worked example: a village in drought, a serpent coiled
-around its well, and six characters who each want something different from the crisis. Copy it,
-take it apart, or start from one of the other worlds in the menu.
+**Zmeyovo** is the default world. A village is in drought, a serpent has coiled around its well,
+and six characters each want something different from the crisis. Use it as an example to copy or
+take apart, or start from one of the other worlds in the menu.
 
 ## Getting started
 
@@ -53,8 +53,8 @@ take it apart, or start from one of the other worlds in the menu.
 
 ## Privacy
 
-Everything runs and is saved in your browser. Connecting an online model with your own key is
-optional; keys never leave your browser or go into exported files.
+Everything runs and is saved in your browser. You can connect an online model with your own key
+if you like. Keys stay in your browser and are left out of exported files.
 
 ## Run it yourself
 
@@ -71,7 +71,7 @@ More: [developers](docs/DEVELOPERS.md) · [agents and MCP](docs/AGENTS.md) ·
 
 ## Acknowledgements
 
-Seloai's first prototype started from [AI Town](https://github.com/a16z-infra/ai-town), itself
+Seloai's first prototype started from [AI Town](https://github.com/a16z-infra/ai-town), which was
 inspired by [*Generative Agents*](https://arxiv.org/abs/2304.03442). Seloai has since been rebuilt
-as its own thing for a different purpose: designing and studying your own simulations, not visiting
-a town. Models: LFM3 by Liquid AI, Kokoro by hexgrad, under their own licences.
+from scratch for a different purpose, designing and studying your own simulations. The models are
+LFM3 by Liquid AI and Kokoro by hexgrad, under their own licences.
