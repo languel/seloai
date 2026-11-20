@@ -12,32 +12,39 @@ nothing to install. Chrome or Edge works best.
 
 ## How it works
 
-- **The village brain.** One AI model runs in your browser and plays every character. It
-  decides what each one thinks and says, remembers what happened to them, and speaks with their
-  voice. It also plays the Scribe, who narrates.
-- **The adaptive story engine.** The story runs on a world clock you can pause, speed up or
-  rewind. The engine decides who meets and talks and for how long, and what you tell a character
-  changes what they do next.
-- **The adaptive music engine.** A village band composes music live to the mood of the story,
-  holds back when someone speaks, and follows your direction.
+- **Village brain.** A single small model (about 2B parameters) runs on the GPU in your browser
+  and plays every character. It decides what each one thinks and says, keeps their memories and
+  speaks in their voice. It also plays the Scribe, the narrator.
+- **Story engine.** The story runs on a world clock you can pause, speed up or rewind. The engine
+  decides who meets, who talks and for how long, and turns what you say to a character into what
+  they do next.
+- **Music engine.** A three-piece folk band composes live from the mood of the story, in
+  traditional modes and dance meters, and goes quiet when someone speaks.
 
 Seloai is a virtual village with nothing to win. You set up a situation, run it, see what
-happened, change something and run it again. You can also build on it, for example a game, an
-interactive piece, a simulation or a social experiment.
+happened, change something and run it again.
 
-## Bring your own story
+## Studying a run
+
+The **Control Room** keeps the whole run:
+
+- **The Loom** lays the history out as woven cloth. Characters are threads, each line is a stitch,
+  and the music runs alongside, note by note.
+- **Psychohistory** maps who is where, who is with whom and who is on whose mind.
+- **The probe** marks a past moment. Both views show the world as it was then, and you can ask
+  the Scribe or Spinner about it.
+
+You can step in at any time, or place events ahead on the timeline ("in one minute, a storm").
+
+## Making your own
 
 Make a place in the World Editor, people in Characters, and write the premise as a short story
-file. Spinner, the assistant in the app, can help with any of it. **Help & Guides → Make your own
-story** walks you through a first one.
+file. Spinner, the assistant in the app, can help with any of it, and **Help & Guides → Make your
+own story** walks you through a first one. Other agents can build and drive worlds over MCP, and
+the story engine can run headless from the command line with a fixed seed.
 
-The **Control Room** has tools for studying a run:
-
-- **The Loom** shows the whole history as woven cloth. Characters are threads, each line is a
-  stitch, and the music runs alongside, note by note.
-- **Psychohistory** maps who is where, who is with whom and who is on whose mind.
-- **The probe** marks a moment. Both views then show the world as it was at that moment, and you
-  can ask the Scribe or Spinner about it.
+Seloai can also be the base for a game, an interactive piece, a simulation or a social
+experiment.
 
 ## The demo
 
