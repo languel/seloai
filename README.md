@@ -30,6 +30,8 @@ happened, change something and run it again.
 
 The **Control Room** keeps the whole run:
 
+![The Loom above Psychohistory: the Scribe's passages, each character's thread and the music along time, and below, the web of who is where with whom](docs/images/control-room.webp)
+
 - **The Loom** lays the history out as woven cloth. Characters are threads, each line is a stitch,
   and the music runs alongside, note by note.
 - **Psychohistory** maps who is where, who is with whom and who is on whose mind.
