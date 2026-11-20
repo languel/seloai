@@ -21,7 +21,8 @@ nothing to install. Chrome or Edge works best.
   back when someone speaks, and takes direction.
 
 Seloai is a virtual village, not a game: there is nothing to win. Set up a situation, run it,
-look at what happened, change something, run it again.
+look at what happened, change something, run it again. It also makes a foundation to build on: a
+game, an interactive experience, a simulation, a virtual social experiment.
 
 ## Bring your own story
 
