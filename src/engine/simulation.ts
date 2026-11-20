@@ -241,6 +241,8 @@ export class VillageSimulation {
   public speedMultiplier = 1;
   public tickCount = 0;
   public simTimeMs = 0;
+  /** Goes up each time the world clock starts again from zero (a new story, a load). */
+  public clockEpoch = 0;
   public fps = 60;
   public modelSettings: ModelSettings;
   public focalWorldlineId: string | 'traveler' = 'traveler';
@@ -1053,6 +1055,7 @@ export class VillageSimulation {
   private resetTimelineHistory() {
     this.timeline = [];
     this.simTimeMs = 0;
+    this.clockEpoch++;
     this.lastConvSignature = '';
     this.lastDiscreteConvSig = '';
     this.lastCachedConvSnapshot = [];

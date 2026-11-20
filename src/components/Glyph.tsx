@@ -23,10 +23,65 @@ const TIP_POSITION: Record<TipSide, string> = {
   above: 'left-1/2 bottom-full mb-1 -translate-x-1/2',
 };
 
+/** The box a tip can be seen in: the window, cut down by every ancestor that clips. */
+function visibleBox(el: HTMLElement): { left: number; top: number; right: number; bottom: number } {
+  const box = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const cs = getComputedStyle(p);
+    if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+    const r = p.getBoundingClientRect();
+    if (cs.overflowX !== 'visible') {
+      box.left = Math.max(box.left, r.left);
+      box.right = Math.min(box.right, r.right);
+    }
+    if (cs.overflowY !== 'visible') {
+      box.top = Math.max(box.top, r.top);
+      box.bottom = Math.min(box.bottom, r.bottom);
+    }
+  }
+  return box;
+}
+
+/**
+ * Nudges a tip back inside what can be seen when it would run past an edge (or under a
+ * clipping panel): sideways first, then flipped to the other side of its button.
+ */
+export function keepTipInView(tip: HTMLElement) {
+  tip.style.translate = '';
+  const r = tip.getBoundingClientRect();
+  if (!r.width) return;
+  const box = visibleBox(tip);
+  const pad = 4;
+  let dx = 0;
+  if (r.right > box.right - pad) dx = box.right - pad - r.right;
+  if (r.left + dx < box.left + pad) dx = box.left + pad - r.left;
+  let dy = 0;
+  const host = tip.parentElement?.getBoundingClientRect();
+  if (host) {
+    if (r.bottom > box.bottom - pad && r.top > host.top) dy = host.top - 4 - r.bottom;
+    else if (r.top < box.top + pad && r.bottom < host.bottom) dy = host.bottom + 4 - r.top;
+  }
+  if (dx || dy) tip.style.translate = `${Math.round(dx)}px ${Math.round(dy)}px`;
+}
+
 /** A hover tip styled as a small stitched patch rather than a dark slab. */
 export function GlyphTip({ children, side = 'below' }: { children: React.ReactNode; side?: TipSide }) {
+  const ref = React.useRef<HTMLSpanElement>(null);
+  React.useEffect(() => {
+    const tip = ref.current;
+    const host = tip?.parentElement;
+    if (!tip || !host) return;
+    const place = () => keepTipInView(tip);
+    host.addEventListener('pointerenter', place);
+    host.addEventListener('focusin', place);
+    return () => {
+      host.removeEventListener('pointerenter', place);
+      host.removeEventListener('focusin', place);
+    };
+  }, []);
   return (
     <span
+      ref={ref}
       role="tooltip"
       className={`glyph-tip pointer-events-none absolute z-50 whitespace-nowrap px-1.5 py-0.5 text-[10px] font-medium opacity-0 transition-opacity delay-150 group-hover:opacity-100 group-focus-visible:opacity-100 ${TIP_POSITION[side]}`}
     >

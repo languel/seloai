@@ -1,4 +1,5 @@
 import { startSimulationDriver } from './app/simulationDriver';
+import { startScheduleRunner } from './app/scheduleRunner';
 import type { WorldCommand } from './world/commands';
 import { WorldStore } from './world/worldStore';
 import { DEFAULT_WORLD_PACK_ID, WORLD_PACKS, findWorldPack, inferWorldContext, tileSemanticsForMap } from './world/packs';
@@ -326,7 +327,12 @@ export function App() {
   // The world keeps running whichever workspace tab is showing.
   useEffect(() => {
     if (!ready) return;
-    return startSimulationDriver(() => simRef.current);
+    const stopDriver = startSimulationDriver(() => simRef.current);
+    const stopSchedule = startScheduleRunner(() => simRef.current);
+    return () => {
+      stopDriver();
+      stopSchedule();
+    };
   }, [ready]);
 
   // The store is the single path for changing the authored world. Every change, whoever

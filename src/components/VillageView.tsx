@@ -97,6 +97,7 @@ import type {
 } from '../engine/types';
 import { abbreviatePersonName, tokenizeRichText } from '../utils/formatNames';
 import { SPEED_LOG_MARKS } from '../utils/speedSlider';
+import { setSpeed, togglePause } from '../engine/timeControl';
 
 interface VillageViewProps {
   sim: VillageSimulation;
@@ -726,7 +727,6 @@ export const VillageView: React.FC<VillageViewProps> = ({
     /** A place the camera is gliding to (world pixels), set by a double-click on a name. */
     glide?: { x: number; y: number } | null;
   }>({ x: 0, y: 0, zoom: 1.15, targetZoom: 1.15, anchor: null, glide: null });
-  const lastActiveSpeedRef = useRef<number>(1);
   const dragRef = useRef<{ active: boolean; moved: boolean; lastX: number; lastY: number }>({
     active: false,
     moved: false,
@@ -2204,14 +2204,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               label={sim.paused || Math.abs(sim.speedMultiplier) < 0.001 ? 'Resume simulation' : 'Pause simulation'}
               size={17}
               onClick={() => {
-                if (sim.paused) {
-                  if (Math.abs(sim.speedMultiplier) < 0.001) {
-                    sim.speedMultiplier = lastActiveSpeedRef.current || 1;
-                  }
-                  sim.paused = false;
-                } else {
-                  sim.paused = true;
-                }
+                togglePause(sim);
                 setTick((t) => t + 1);
               }}
             />
@@ -2225,14 +2218,7 @@ export const VillageView: React.FC<VillageViewProps> = ({
               const isRewinding = effectiveSpeed < 0;
               const isStopped = Math.abs(effectiveSpeed) < 0.001;
               const applySpeed = (nextSpeed: number) => {
-                if (Math.abs(nextSpeed) < 0.001) {
-                  sim.speedMultiplier = 0;
-                  sim.paused = true;
-                } else {
-                  lastActiveSpeedRef.current = nextSpeed;
-                  sim.speedMultiplier = nextSpeed;
-                  sim.paused = false;
-                }
+                setSpeed(sim, nextSpeed);
                 setTick((t) => t + 1);
               };
               const speedBadgeStyle: React.CSSProperties = stitchHud
